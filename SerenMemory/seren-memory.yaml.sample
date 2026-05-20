@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  seren-memory.yaml - config for SerenMemory
+# ═══════════════════════════════════════════════════════════════════════
+#
+#  Copy to seren-memory.yaml, edit, and run:
+#     python -m seren_memory --config seren-memory.yaml
+#
+#  Or just run with no config at all - the defaults below are baked in, so
+#  `python -m seren_memory` works zero-config for a local dev spin.
+#
+#  Env vars override file values (handy for Docker/systemd):
+#     SEREN_MEMORY_PORT, SEREN_MEMORY_HOST, SEREN_MEMORY_BEARER_TOKEN,
+#     SEREN_MEMORY_PERSIST_DIR, SEREN_MEMORY_MODEL_URL,
+#     SEREN_MEMORY_MODEL_NAME, SEREN_MEMORY_CONSOLIDATOR_ENABLED
+#
+# ═══════════════════════════════════════════════════════════════════════
+
+server:
+  host: 0.0.0.0
+  port: 7420
+  # Leave empty for no auth (trusted LAN / dev). Set a token to require
+  #   Authorization: Bearer <token>
+  # on every endpoint except / and /health.
+  bearer_token: ""
+
+storage:
+  # Where chroma persists. ~ is expanded. Created if missing.
+  persist_dir: ~/.seren-memory/chroma
+  # Collection names - rarely need changing.
+  short_collection: seren_short
+  near_collection: seren_near
+  long_collection: seren_long
+  brief_collection: seren_briefs
+  # Embedding model. Leave null for chroma's default (all-MiniLM-L6-v2,
+  # ~80MB, CPU-friendly, downloaded on first use).
+  embedding_model: null
+
+lifetimes:
+  # ShortTerm entries older than this become eligible to age out during
+  # consolidation (unless promoted or pinned). 8 days = a week plus drift.
+  # 691200 = 8 * 24 * 3600.
+  short_term_seconds: 691200
+  # NearTerm intents with no explicit expiry get REVIEWED (not auto-deleted)
+  # after this long unfulfilled. 30 days.
+  near_term_review_seconds: 2592000
+
+consolidator:
+  enabled: true
+
+  # "thread" = runs as a background loop inside this process (simple).
+  # "external" = you drive it by POSTing /consolidate/run on a schedule
+  #              (e.g. a separate systemd timer or Seren's scheduler).
+  mode: thread
+
+  # How often the consolidation window opens. ~20 hours, NOT 24, on
+  # purpose: the window drifts through the day over a week so it never
+  # aligns to a 'day boundary' that doesn't exist for the system. This
+  # number is load-bearing - resist the urge to 'fix' it to 24h.
+  # 72000 = 20 * 3600.
+  interval_seconds: 72000
+
+  # OpenAI-compatible inference endpoint for the consolidation model.
+  # The consolidator does classification + light summarization, so a
+  # 2B-4B model is plenty. Point this at Seren's llama-server, ollama,
+  # a remote API - anything that speaks /v1/chat/completions.
+  model_url: http://localhost:8090/v1
+  model_name: default
+  model_timeout_seconds: 120
+
+  # Never process more than this many short-term entries per window
+  # (prevents a runaway run hammering the model). Rest wait for next window.
+  max_entries_per_run: 500
+
+  # A topic cluster needs at least this many short-term entries to be
+  # promoted to long-term - unless a brief promote-hint or a pin overrides.
+  # This is the main "how eager is consolidation" knob.
+  promote_min_evidence: 3
+
+  # Before deleting aged-out short-term entries, copy them to a 'pruned'
+  # collection for this many days as insurance. 0 = no safety net.
+  # Recommended > 0 until you trust the heuristic.
+  pruned_safety_days: 14
