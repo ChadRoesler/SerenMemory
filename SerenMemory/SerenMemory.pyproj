@@ -43,8 +43,6 @@
     <Compile Include="tests\test_smoke.py" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include=".github\" />
-    <Folder Include=".github\workflows\" />
     <Folder Include="seren_memory\" />
     <Folder Include="seren_memory\models\" />
     <Folder Include="seren_memory\routes\" />
@@ -53,7 +51,6 @@
     <Folder Include="viewer\" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include=".github\workflows\release.yml" />
     <Content Include=".gitignore" />
     <Content Include="pyproject.toml" />
     <Content Include="README.md" />
