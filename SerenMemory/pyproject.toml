@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "seren-memory"
-version = "1.1.0"
+dynamic = ["version"]
 description = "Three-tier LLM memory with consolidation. The Halls of Memory."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,6 +39,11 @@ include = ["seren_memory*"]
 # silently breaks once installed - the classic package-data gotcha).
 [tool.setuptools.package-data]
 seren_memory = ["viewer/*.html"]
+
+[tool.setuptools_scm]
+# Derives version from git tags (e.g. v1.2.0 → 1.2.0).
+# Untagged commits get a dev suffix: 1.2.0.dev3+gabcdef
+version_scheme = "release-branch-semver"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
