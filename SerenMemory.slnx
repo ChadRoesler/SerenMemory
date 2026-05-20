@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="SerenMemory/SerenMemory.pyproj" Type="888888a0-9f3d-457c-b088-3a5042f75d52" Id="b1e7c0de-5e12-4a7b-9f3a-5e7e7a5e7e7a">
+    <Build Project="false" />
+  </Project>
+</Solution>
