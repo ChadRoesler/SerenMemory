@@ -27,7 +27,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Body, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 from .config import MemoryConfig, load_config
 from .collections import MemoryStore
@@ -134,6 +134,32 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
     @app.get("/health")
     async def health():
         return {"ok": True, "ts": time.time()}
+
+    # ── The Halls viewer ──
+    # Serves the introspection UI same-origin. This isn't just a debug tool -
+    # it's the window into the consolidator: are memories clustering sensibly,
+    # is near-term filling with stale loops, did a fact actually supersede the
+    # old one. Serving it FROM the memory service (rather than opening the
+    # file:// directly) also kills the CORS problem - the viewer's fetch calls
+    # are same-origin, so the browser doesn't block them.
+    @app.get("/viewer")
+    async def viewer():
+        # halls.html ships INSIDE the package (seren_memory/viewer/halls.html)
+        # so it travels with the wheel - Path(__file__).parent is the package
+        # dir whether running from a dev checkout or an installed site-packages.
+        from pathlib import Path
+        pkg_dir = Path(__file__).resolve().parent
+        candidates = [
+            pkg_dir / "viewer" / "halls.html",          # in-package (installed + dev)
+            pkg_dir.parent / "viewer" / "halls.html",    # repo-root (older dev layout)
+        ]
+        html_path = next((p for p in candidates if p.is_file()), None)
+        if html_path is None:
+            return JSONResponse(
+                {"error": "viewer not found",
+                 "hint": "halls.html missing from the package; reinstall or grab it from the repo"},
+                status_code=404)
+        return FileResponse(html_path, media_type="text/html")
 
     # ── Brief submission ──
     @app.post("/brief")

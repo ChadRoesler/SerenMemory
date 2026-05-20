@@ -1,0 +1,126 @@
+"""
+Validation / bad-input tests.
+
+Every endpoint that accepts a body should reject garbage gracefully (422),
+and certain semantic rules (e.g. forget requires a reason) should return 400.
+This file documents the contract for callers - and catches regressions when
+schemas change.
+"""
+from __future__ import annotations
+
+import tempfile
+
+import pytest
+from fastapi.testclient import TestClient
+
+from seren_memory.app import create_app
+from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+
+
+class FakeEmbedder(EmbeddingFunction):
+    _DIM = 64
+
+    def __call__(self, input: Documents) -> Embeddings:
+        out = []
+        for text in input:
+            vec = [0.0] * self._DIM
+            for tok in text.lower().split():
+                vec[hash(tok) % self._DIM] += 1.0
+            mag = sum(v * v for v in vec) ** 0.5 or 1.0
+            out.append([v / mag for v in vec])
+        return out
+
+
+@pytest.fixture
+def client():
+    tmp = tempfile.mkdtemp()
+    cfg = MemoryConfig(
+        storage=StorageConfig(persist_dir=tmp),
+        consolidator=ConsolidatorConfig(enabled=False),
+    )
+    app = create_app(cfg, embedding_function=FakeEmbedder())
+    with TestClient(app) as c:
+        yield c
+
+
+# ── /short ────────────────────────────────────────────────────────────────
+
+def test_short_missing_content_is_422(client):
+    r = client.post("/short", json={"topic": "no_content_field"})
+    assert r.status_code == 422
+
+
+def test_short_empty_body_is_422(client):
+    r = client.post("/short", json={})
+    assert r.status_code == 422
+
+
+def test_short_non_json_body_is_422(client):
+    r = client.post("/short", content=b"not json at all", headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+
+
+# ── /near ─────────────────────────────────────────────────────────────────
+
+def test_near_missing_intent_is_422(client):
+    r = client.post("/near", json={"topic": "no_intent"})
+    assert r.status_code == 422
+
+
+def test_near_empty_body_is_422(client):
+    r = client.post("/near", json={})
+    assert r.status_code == 422
+
+
+# ── /search ───────────────────────────────────────────────────────────────
+
+def test_search_missing_query_is_422(client):
+    r = client.post("/search", json={"n_results": 5})
+    assert r.status_code == 422
+
+
+def test_search_n_results_zero_is_422(client):
+    r = client.post("/search", json={"query": "something", "n_results": 0})
+    assert r.status_code == 422
+
+
+def test_search_n_results_over_limit_is_422(client):
+    r = client.post("/search", json={"query": "something", "n_results": 9999})
+    assert r.status_code == 422
+
+
+def test_search_empty_body_is_422(client):
+    r = client.post("/search", json={})
+    assert r.status_code == 422
+
+
+# ── /long forget ──────────────────────────────────────────────────────────
+
+def test_forget_missing_reason_is_400(client):
+    r = client.post("/long/nonexistent/forget", json={})
+    assert r.status_code == 400
+
+
+def test_forget_empty_reason_is_400(client):
+    r = client.post("/long/nonexistent/forget", json={"reason": ""})
+    assert r.status_code == 400
+
+
+# ── /brief ────────────────────────────────────────────────────────────────
+
+def test_brief_missing_summary_is_422(client):
+    r = client.post("/brief", json={"promote_hints": ["something"]})
+    assert r.status_code == 422
+
+
+def test_brief_empty_body_is_422(client):
+    r = client.post("/brief", json={})
+    assert r.status_code == 422
+
+
+# ── method not allowed ────────────────────────────────────────────────────
+
+def test_post_long_directly_is_405(client):
+    r = client.post("/long", json={"content": "should not work"})
+    assert r.status_code == 405

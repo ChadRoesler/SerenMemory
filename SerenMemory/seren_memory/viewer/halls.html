@@ -198,7 +198,7 @@
 <header>
     <h1>Halls of Memory <span class="sub">· SerenMemory peek</span></h1>
     <div class="conn">
-        <input type="text" id="base-url" placeholder="http://localhost:7420" value="http://localhost:7420" size="22" />
+        <input type="text" id="base-url" placeholder="(same origin — leave blank if served from SerenMemory)" value="" size="32" />
         <input type="password" id="token" placeholder="bearer token (if any)" size="18" />
         <button id="refresh">refresh</button>
         <div class="counts" id="counts"></div>
@@ -244,8 +244,13 @@
 // State
 // ──────────────────────────────────────────────────────────────────────
 const state = {
-    tab: 'short',         // short | near | long | search
-    baseUrl: 'http://localhost:7420',
+    tab: 'short',
+    // Base URL resolution:
+    //  - Served from SerenMemory (http/https origin): use '' = relative =
+    //    same-origin fetches. No CORS, works on any host/port automatically.
+    //  - Opened as a file:// (standalone debugging): fall back to the
+    //    canonical localhost:7420 so it still works off-cluster.
+    baseUrl: (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:7420',
     token: '',
 };
 
@@ -465,7 +470,15 @@ document.querySelectorAll('.tab').forEach(t =>
 // Connection + refresh
 // ──────────────────────────────────────────────────────────────────────
 async function refresh() {
-    state.baseUrl = $('base-url').value.trim() || 'http://localhost:7420';
+    // Blank input = use the smart default (same-origin when served, localhost
+    // when file://). Only override if the user typed something explicit.
+    const typed = $('base-url').value.trim();
+    if (typed) {
+        state.baseUrl = typed;
+    } else {
+        state.baseUrl = (location.protocol === 'http:' || location.protocol === 'https:')
+            ? '' : 'http://localhost:7420';
+    }
     state.token = $('token').value.trim();
     clearError();
     try {
