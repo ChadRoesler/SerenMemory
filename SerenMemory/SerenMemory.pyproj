@@ -54,7 +54,9 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include=".github\workflows\release.yml" />
+    <Content Include=".gitignore" />
     <Content Include="pyproject.toml" />
+    <Content Include="README.md" />
     <Content Include="seren-memory.yaml.sample" />
     <Content Include="seren-memory.service.sample" />
     <Content Include="viewer\halls.html" />
