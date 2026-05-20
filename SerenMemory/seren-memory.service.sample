@@ -1,0 +1,37 @@
+# SerenMemory systemd unit (sample)
+#
+# Install:
+#   1. Edit __TARGET_USER__ and paths below
+#   2. sudo cp seren-memory.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now seren-memory
+#
+# Logs:  journalctl -u seren-memory -f
+
+[Unit]
+Description=SerenMemory - three-tier LLM memory with consolidation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__TARGET_USER__
+WorkingDirectory=/home/__TARGET_USER__/seren-memory
+
+# Use the venv's python. Adjust the venv path to wherever you installed.
+ExecStart=/home/__TARGET_USER__/seren-venvs/memory/bin/python -m seren_memory --config /home/__TARGET_USER__/seren-memory/seren-memory.yaml
+
+# Config can also come from env - uncomment + set as needed:
+# Environment=SEREN_MEMORY_PORT=7420
+# Environment=SEREN_MEMORY_MODEL_URL=http://localhost:8090/v1
+# Environment=SEREN_MEMORY_BEARER_TOKEN=
+
+Restart=on-failure
+RestartSec=5
+
+# The consolidation loop and chroma keep some state in memory; give it
+# room but cap it so a runaway can't OOM the box.
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

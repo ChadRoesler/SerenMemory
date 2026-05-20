@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seren-memory"
+version = "0.1.0"
+description = "Three-tier LLM memory with consolidation. The Halls of Memory."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Chad Roesler" }]
+keywords = ["llm", "memory", "vector-db", "chromadb", "consolidation", "seren"]
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pyyaml>=6.0.2",
+    "httpx>=0.27.0",
+    "chromadb>=0.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+seren-memory = "seren_memory.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["seren_memory*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
