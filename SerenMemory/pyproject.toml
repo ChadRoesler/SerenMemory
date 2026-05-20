@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seren-memory"
-version = "0.1.0"
+version = "1.1.0"
 description = "Three-tier LLM memory with consolidation. The Halls of Memory."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Chad Roesler" }]
 keywords = ["llm", "memory", "vector-db", "chromadb", "consolidation", "seren"]
 
@@ -33,6 +33,12 @@ seren-memory = "seren_memory.__main__:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["seren_memory*"]
+
+# Ship the viewer HTML inside the wheel. Without this, pip strips non-.py
+# files and GET /viewer 404s on an installed copy (works in dev checkout,
+# silently breaks once installed - the classic package-data gotcha).
+[tool.setuptools.package-data]
+seren_memory = ["viewer/*.html"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

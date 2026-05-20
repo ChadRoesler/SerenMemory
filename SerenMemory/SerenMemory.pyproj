@@ -12,7 +12,7 @@
     <OutputPath>.</OutputPath>
     <Name>SerenMemory</Name>
     <RootNamespace>seren_memory</RootNamespace>
-    <InterpreterId>Global|PythonCore|3.10</InterpreterId>
+    <InterpreterId>Global|PythonCore|3.11</InterpreterId>
     <IsWindowsApplication>False</IsWindowsApplication>
     <Description>Three-tier LLM memory with consolidation. The Halls of Memory.</Description>
     <TestFramework>Pytest</TestFramework>
@@ -40,23 +40,33 @@
     <Compile Include="seren_memory\routes\search.py" />
     <Compile Include="seren_memory\consolidator\__init__.py" />
     <Compile Include="seren_memory\consolidator\service.py" />
+    <Compile Include="tests\test_auth.py" />
+    <Compile Include="tests\test_brief.py" />
+    <Compile Include="tests\test_near_listing.py" />
+    <Compile Include="tests\test_search.py" />
     <Compile Include="tests\test_smoke.py" />
+    <Compile Include="tests\test_validation.py" />
+    <Compile Include="tests\__init__.py" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="seren_memory\" />
     <Folder Include="seren_memory\models\" />
     <Folder Include="seren_memory\routes\" />
     <Folder Include="seren_memory\consolidator\" />
+    <Folder Include="seren_memory\viewer\" />
     <Folder Include="tests\" />
-    <Folder Include="viewer\" />
+    <Folder Include="tests\__pycache__\" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include=".gitignore" />
     <Content Include="pyproject.toml" />
-    <Content Include="README.md" />
     <Content Include="seren-memory.yaml.sample" />
     <Content Include="seren-memory.service.sample" />
-    <Content Include="viewer\halls.html" />
+    <Content Include="seren_memory\viewer\halls.html" />
+    <Content Include="tests\__pycache__\test_smoke.cpython-311-pytest-9.0.3.pyc" />
+    <Content Include="tests\__pycache__\__init__.cpython-311.pyc" />
+  </ItemGroup>
+  <ItemGroup>
+    <InterpreterReference Include="Global|PythonCore|3.11" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
 </Project>
