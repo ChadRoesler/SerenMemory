@@ -41,8 +41,8 @@ include = ["seren_memory*"]
 seren_memory = ["viewer/*.html"]
 
 [tool.setuptools_scm]
-# Derives version from git tags (e.g. v1.2.0 → 1.2.0).
-# Untagged commits get a dev suffix: 1.2.0.dev3+gabcdef
+# .git is one level above pyproject.toml (repo root, not the SerenMemory subdir)
+root = ".."
 version_scheme = "release-branch-semver"
 
 [tool.pytest.ini_options]
