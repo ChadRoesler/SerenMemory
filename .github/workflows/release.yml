@@ -31,6 +31,8 @@ jobs:
       - name: Install package and dev deps
         run: pip install -e ".[dev]"
         working-directory: SerenMemory
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
 
       - name: Run tests
         run: python -m pytest tests/ -v
