@@ -213,3 +213,53 @@ class SearchResponse(BaseModel):
     query: str
     hits: list[SearchHit]
     searched_tiers: list[str]
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Consolidator runs - operational record of each dream-cycle.
+#
+#  Each call to Consolidator.run_once() emits one of these on completion
+#  (success, error, OR noop - the try/finally guarantees it). Persisting
+#  these gives the cluster a durable answer to "when did I last consolidate"
+#  and a substrate for the Halls viewer's operational dashboard panel
+#  (promotion rates over time, run duration trend, etc.).
+#
+#  The fields mirror the report dict run_once() already builds - we're not
+#  adding new instrumentation, just persisting what's already being computed.
+# ─────────────────────────────────────────────────────────────────────────
+class ConsolidatorRunStatus(str, Enum):
+    """Outcome of one consolidation pass."""
+    SUCCESS = "success"   # ran and did work
+    NOOP = "noop"         # ran cleanly but nothing needed doing
+    ERROR = "error"       # raised an exception (recorded anyway)
+
+
+class ConsolidatorRun(BaseModel):
+    """One consolidator pass, recorded for observability."""
+
+    started_at: float
+    finished_at: float
+    duration_seconds: float
+    status: ConsolidatorRunStatus
+
+    # Counters - same as report dict in run_once()
+    promoted: int = 0
+    aged_out: int = 0
+    near_expired: int = 0
+    near_completed_promoted: int = 0
+    forget_flags_handled: int = 0
+    pruned_swept: int = 0
+
+    # Which brief steered this run, and whether the assistant left it (push)
+    # or the consolidator had to fabricate one from short-term (pull).
+    brief_id_used: Optional[str] = None
+    brief_was_pulled: bool = False
+
+    # If status == ERROR, the exception message (type + str)
+    error: Optional[str] = None
+
+    # Counts AFTER the run (mirrors report["counts_after"]; JSON-encoded
+    # into chroma metadata by _clean_meta).
+    counts_after: dict[str, Any] = Field(default_factory=dict)
+
+    created_at: float = Field(default_factory=_now)
+    id: str = Field(default_factory=_new_id)

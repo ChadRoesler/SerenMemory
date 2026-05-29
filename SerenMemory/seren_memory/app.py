@@ -18,6 +18,7 @@ ENDPOINTS:
     GET  /long                  - list                     (read-open)
     POST /long/{id}/forget      - flag for consolidator    (the Lacuna gate)
     POST /search                - unified ranked recall
+    GET  /consolidator/status   - last run, recent runs, counts, config
     POST /brief                 - submit a daily brief (steers consolidation)
     POST /consolidate/run       - trigger consolidation now (manual / external mode)
 """
@@ -160,6 +161,28 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
                  "hint": "halls.html missing from the package; reinstall or grab it from the repo"},
                 status_code=404)
         return FileResponse(html_path, media_type="text/html")
+
+    # ── Consolidator operational status ──
+    @app.get("/consolidator/status")
+    async def consolidator_status(request: Request):
+        """Operational snapshot: when did the consolidator last run, how did
+        it go, what's the current cluster state. Backs the MCP
+        get_consolidator_status tool and the Halls viewer's operational
+        panel. last_run is null if the consolidator has never run on this
+        deployment.
+        """
+        store = request.app.state.store
+        return {
+            "last_run": store.get_latest_run(),
+            "recent_runs": store.get_recent_runs(limit=10),
+            "latest_brief": store.get_latest_brief(),
+            "counts": store.counts(),
+            "config": {
+                "enabled": cfg.consolidator.enabled,
+                "mode": cfg.consolidator.mode,
+                "interval_seconds": cfg.consolidator.interval_seconds,
+            },
+        }
 
     # ── Brief submission ──
     @app.post("/brief")

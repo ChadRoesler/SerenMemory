@@ -36,8 +36,8 @@ from .models.schemas import (
     ShortTermEntry,
     DailyBrief,
     Source,
+    ConsolidatorRun,
 )
-
 
 # Chroma metadata can't hold None. We drop None-valued keys on write and
 # treat their absence as None on read. This sentinel marks "this key was
@@ -109,6 +109,10 @@ class MemoryStore:
         # configurable window before true deletion. Insurance against a
         # bad consolidation heuristic.
         self.pruned = self._client.get_or_create_collection("seren_pruned", **ef_kwargs)
+        # Consolidator run history - one record per run_once() call (success,
+        # error, or noop). Gives 'last_consolidation_at' a durable answer
+        # and the Halls viewer enough data for an operational panel.
+        self.runs = self._client.get_or_create_collection("seren_consolidator_runs", **ef_kwargs)
 
     # ──────────────────────────────────────────────────────────────────
     #  ShortTerm
@@ -269,6 +273,55 @@ class MemoryStore:
         return len(stale)
 
     # ──────────────────────────────────────────────────────────────────
+    #  Consolidator run history
+    # ──────────────────────────────────────────────────────────────────
+    def add_run(self, run: "ConsolidatorRun") -> "ConsolidatorRun":
+        """Record one consolidation pass. The document text is a short
+        human-readable summary (good for the embedding + viewer); the full
+        numbers live in metadata."""
+        summary_text = (
+            f"Consolidator run {run.status.value}: "
+            f"promoted={run.promoted}, aged_out={run.aged_out}, "
+            f"near_expired={run.near_expired}, "
+            f"completed_promoted={run.near_completed_promoted}, "
+            f"forget_handled={run.forget_flags_handled}, "
+            f"pruned_swept={run.pruned_swept}, "
+            f"duration={run.duration_seconds:.2f}s"
+        )
+        meta = _clean_meta({
+            "started_at": run.started_at,
+            "finished_at": run.finished_at,
+            "duration_seconds": run.duration_seconds,
+            "status": run.status.value,
+            "promoted": run.promoted,
+            "aged_out": run.aged_out,
+            "near_expired": run.near_expired,
+            "near_completed_promoted": run.near_completed_promoted,
+            "forget_flags_handled": run.forget_flags_handled,
+            "pruned_swept": run.pruned_swept,
+            "brief_id_used": run.brief_id_used,
+            "brief_was_pulled": run.brief_was_pulled,
+            "error": run.error,
+            "counts_after": run.counts_after,
+        })
+        self.runs.add(documents=[summary_text], metadatas=[meta], ids=[run.id])
+        return run
+
+    def get_latest_run(self) -> Optional[dict[str, Any]]:
+        """Most recent run by finished_at. None if the consolidator never ran."""
+        rows = _zip_get(self.runs.get(include=["documents", "metadatas"]), None)
+        if not rows:
+            return None
+        rows.sort(key=lambda r: r["metadata"].get("finished_at", 0), reverse=True)
+        return rows[0]
+
+    def get_recent_runs(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Most recent N runs by finished_at. For the Halls viewer's run-history panel."""
+        rows = _zip_get(self.runs.get(include=["documents", "metadatas"]), None)
+        rows.sort(key=lambda r: r["metadata"].get("finished_at", 0), reverse=True)
+        return rows[:limit]
+
+    # ──────────────────────────────────────────────────────────────────
     #  Query - used by the unified search route
     # ──────────────────────────────────────────────────────────────────
     def query(self, collection_name: str, query_text: str, n: int) -> list[dict[str, Any]]:
@@ -306,6 +359,7 @@ class MemoryStore:
             "long": self.long.count(),
             "briefs": self.briefs.count(),
             "pruned": self.pruned.count(),
+            "runs": self.runs.count(),
         }
 
 
