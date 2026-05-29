@@ -57,7 +57,13 @@ import httpx
 
 from ..collections import MemoryStore
 from ..config import MemoryConfig
-from ..models.schemas import LongTermEntry, Source
+from ..models.schemas import (
+    ConsolidatorRun,
+    ConsolidatorRunStatus,
+    DailyBrief,
+    LongTermEntry,
+    Source,
+)
 
 
 class Consolidator:
@@ -70,6 +76,17 @@ class Consolidator:
     #  Entry point - one full consolidation pass.
     # ──────────────────────────────────────────────────────────────────
     def run_once(self) -> dict[str, Any]:
+        """One full consolidation pass.
+
+        ALWAYS produces a ConsolidatorRun record - success, error, or noop -
+        via the try/finally below. That's what gives 'last_consolidation_at'
+        a durable, queryable answer instead of a runtime-only detail.
+
+        Brief acquisition follows the push-wins-pull-is-fallback pattern:
+        if the assistant left a fresh brief (created after our last
+        successful run), use it; otherwise pull one ad-hoc from recent
+        short-term via the consolidator's own model (Oliver-Twist).
+        """
         start = time.time()
         self._log("consolidation window opening")
         report: dict[str, Any] = {
@@ -82,26 +99,228 @@ class Consolidator:
             "pruned_swept": 0,
         }
 
-        brief = self._store.get_latest_brief()
-        promote_hints = set((brief or {}).get("metadata", {}).get("promote_hints", []) or [])
-        noise_hints = set((brief or {}).get("metadata", {}).get("noise_hints", []) or [])
-        if brief:
-            self._log(f"using brief from {brief['metadata'].get('created_at')}: "
-                      f"{len(promote_hints)} promote-hints, {len(noise_hints)} noise-hints")
+        # Captured for the run record regardless of success/failure path.
+        brief_id_used: Optional[str] = None
+        brief_was_pulled = False
+        status = ConsolidatorRunStatus.SUCCESS
+        error_msg: Optional[str] = None
 
-        report["forget_flags_handled"] = self._handle_forget_flags()
-        report["promoted"] = self._promote_short_term(promote_hints, noise_hints)
-        report["aged_out"] = self._age_out_short_term()
-        near = self._maintain_near_term()
-        report["near_expired"] = near["expired"]
-        report["near_completed_promoted"] = near["completed_promoted"]
-        report["pruned_swept"] = self._store.sweep_pruned(
-            self._cfg.consolidator.pruned_safety_days * 24 * 3600)
+        try:
+            # ── Brief acquisition: push wins, pull is the Oliver-Twist fallback ──
+            brief = self._ensure_fresh_brief()
+            if brief:
+                brief_id_used = brief.get("id")
+                brief_was_pulled = brief.get("_pulled", False)
+                promote_hints = set(brief.get("metadata", {}).get("promote_hints", []) or [])
+                noise_hints = set(brief.get("metadata", {}).get("noise_hints", []) or [])
+                self._log(
+                    f"using brief id={brief_id_used} pulled={brief_was_pulled}: "
+                    f"{len(promote_hints)} promote-hints, {len(noise_hints)} noise-hints"
+                )
+            else:
+                promote_hints = set()
+                noise_hints = set()
+                self._log("no brief available (push absent + pull failed); proceeding with mechanical heuristics only")
 
-        report["duration_seconds"] = round(time.time() - start, 2)
-        report["counts_after"] = self._store.counts()
-        self._log(f"window closed: {report}")
+            # ── The existing work, unchanged ──
+            report["forget_flags_handled"] = self._handle_forget_flags()
+            report["promoted"] = self._promote_short_term(promote_hints, noise_hints)
+            report["aged_out"] = self._age_out_short_term()
+            near = self._maintain_near_term()
+            report["near_expired"] = near["expired"]
+            report["near_completed_promoted"] = near["completed_promoted"]
+            report["pruned_swept"] = self._store.sweep_pruned(
+                self._cfg.consolidator.pruned_safety_days * 24 * 3600)
+
+            # Noop detection: ran cleanly but touched nothing. Operationally
+            # distinct from "did work" - useful for the viewer to show "system
+            # is healthy and quiet" vs "system is doing things."
+            total_work = (report["forget_flags_handled"] + report["promoted"]
+                          + report["aged_out"] + report["near_expired"]
+                          + report["near_completed_promoted"] + report["pruned_swept"])
+            if total_work == 0 and not brief_was_pulled:
+                status = ConsolidatorRunStatus.NOOP
+
+        except Exception as e:  # noqa: BLE001 - record any failure
+            status = ConsolidatorRunStatus.ERROR
+            error_msg = f"{type(e).__name__}: {e}"
+            self._log(f"consolidation error: {error_msg}")
+
+        finally:
+            # ALWAYS persist a run record. This is the durable answer to
+            # "when did the consolidator last run, and how did it go."
+            finished = time.time()
+            report["duration_seconds"] = round(finished - start, 2)
+            try:
+                report["counts_after"] = self._store.counts()
+            except Exception:  # noqa: BLE001
+                report["counts_after"] = {}
+
+            try:
+                run = ConsolidatorRun(
+                    started_at=start,
+                    finished_at=finished,
+                    duration_seconds=report["duration_seconds"],
+                    status=status,
+                    promoted=report["promoted"],
+                    aged_out=report["aged_out"],
+                    near_expired=report["near_expired"],
+                    near_completed_promoted=report["near_completed_promoted"],
+                    forget_flags_handled=report["forget_flags_handled"],
+                    pruned_swept=report["pruned_swept"],
+                    brief_id_used=brief_id_used,
+                    brief_was_pulled=brief_was_pulled,
+                    error=error_msg,
+                    counts_after=report["counts_after"],
+                )
+                self._store.add_run(run)
+            except Exception as persist_err:  # noqa: BLE001
+                # Run-record persistence is observability, not core function.
+                # If it fails, log loudly but DON'T raise - the consolidator
+                # returning a report is more important than self-observation.
+                self._log(f"FAILED to persist consolidator run record: {persist_err}")
+
+            self._log(f"window closed: status={status.value} {report}")
+
+        # Preserve existing return shape, plus status & brief info for callers
+        report["status"] = status.value
+        report["brief_id_used"] = brief_id_used
+        report["brief_was_pulled"] = brief_was_pulled
+        if error_msg:
+            report["error"] = error_msg
         return report
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Step 1: brief acquisition (push wins, pull is fallback)
+    # ──────────────────────────────────────────────────────────────────
+    def _ensure_fresh_brief(self) -> Optional[dict[str, Any]]:
+        """Get a brief to steer THIS run.
+
+        A brief is FRESH if it was created after our last successful run -
+        otherwise it was already consumed last cycle and we don't double-
+        steer with stale guidance. If no fresh brief exists, the consolidator
+        pulls one ad-hoc from recent short-term (Oliver-Twist).
+
+        Returns the brief dict (chroma shape: {id, content, metadata}) with
+        an extra '_pulled' bool marking the path, or None if no brief is
+        available AND the pull failed.
+        """
+        brief = self._store.get_latest_brief()
+        last_run = self._store.get_latest_run()
+
+        # Use the existing brief if it post-dates our last run.
+        if brief is not None:
+            brief_created = brief.get("metadata", {}).get("created_at", 0)
+            last_run_finished = (
+                last_run.get("metadata", {}).get("finished_at", 0)
+                if last_run else 0
+            )
+            if brief_created > last_run_finished:
+                brief["_pulled"] = False
+                return brief
+
+        # No fresh brief - Oliver Twist time.
+        return self._pull_brief()
+
+    def _pull_brief(self) -> Optional[dict[str, Any]]:
+        """Generate a brief from recent short-term via the consolidator's own
+        model (the local Nemotron, NOT the main 9B - cross-LAN call gains
+        nothing for retroactive reconstruction).
+
+        Degrades gracefully: if the model is unreachable or returns non-JSON,
+        returns None and the cycle continues with no steering (mechanical
+        thresholds only).
+        """
+        rows = self._store.get_short_all(limit=self._cfg.consolidator.max_entries_per_run)
+        if not rows:
+            self._log("no short-term entries to pull a brief from")
+            return None
+
+        # Cap context fed to the model - on a Nano-floor cluster we can't
+        # afford to dump 500 entries into a prompt. Recent 50, each capped
+        # at 200 chars, with topic prefix to preserve clustering signal.
+        sample = rows[-50:]
+        fragments = []
+        for r in sample:
+            topic = r["metadata"].get("topic") or "untagged"
+            content = (r["content"] or "")[:200]
+            fragments.append(f"[{topic}] {content}")
+
+        prompt = (
+            "You are a memory consolidator's steering assistant. Below are "
+            "recent short-term memory fragments. Produce a brief in this "
+            "EXACT JSON shape (no markdown, no preamble, just JSON):\n"
+            '{\n'
+            '  "summary": "one short paragraph: what mattered in this period",\n'
+            '  "promote_hints": ["topic phrases that should be remembered durably"],\n'
+            '  "noise_hints": ["topic phrases that are noise and should not promote"],\n'
+            '  "completed_intents": ["intents that look done based on the fragments"]\n'
+            '}\n\n'
+            "Fragments:\n" + "\n".join(fragments) + "\n\nJSON brief:"
+        )
+
+        try:
+            raw = self._call_model(prompt, max_tokens=400)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"brief pull model call failed ({e}); proceeding without a brief")
+            return None
+
+        # Lenient JSON parse - strip markdown fences if the model added them
+        # despite the instruction (a 4B model will sometimes do this anyway).
+        import json as _json
+        txt = (raw or "").strip()
+        if txt.startswith("```"):
+            lines = txt.splitlines()
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            txt = "\n".join(lines)
+        try:
+            parsed = _json.loads(txt)
+        except _json.JSONDecodeError as e:
+            self._log(f"brief pull: model returned non-JSON ({e}); proceeding without")
+            return None
+
+        # Build a real DailyBrief and persist it. Subsequent runs then see
+        # this brief in chroma like any other - consistency over special-casing.
+        try:
+            brief_obj = DailyBrief(
+                summary=str(parsed.get("summary", "")),
+                promote_hints=[str(h) for h in (parsed.get("promote_hints") or [])],
+                noise_hints=[str(h) for h in (parsed.get("noise_hints") or [])],
+                completed_intents=[str(i) for i in (parsed.get("completed_intents") or [])],
+            )
+            self._store.add_brief(brief_obj)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"brief pull: built brief but failed to persist ({e}); using in-memory")
+            return {
+                "id": "(in-memory)",
+                "content": str(parsed.get("summary", "")),
+                "metadata": {
+                    "created_at": time.time(),
+                    "promote_hints": parsed.get("promote_hints") or [],
+                    "noise_hints": parsed.get("noise_hints") or [],
+                    "completed_intents": parsed.get("completed_intents") or [],
+                },
+                "_pulled": True,
+            }
+
+        self._log(
+            f"pulled brief: {len(brief_obj.promote_hints)} promote-hints, "
+            f"{len(brief_obj.noise_hints)} noise-hints"
+        )
+        return {
+            "id": brief_obj.id,
+            "content": brief_obj.summary,
+            "metadata": {
+                "created_at": brief_obj.created_at,
+                "promote_hints": brief_obj.promote_hints,
+                "noise_hints": brief_obj.noise_hints,
+                "completed_intents": brief_obj.completed_intents,
+            },
+            "_pulled": True,
+        }
 
     # ──────────────────────────────────────────────────────────────────
     #  Step 2: forget-flags
