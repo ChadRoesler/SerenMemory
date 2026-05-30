@@ -138,6 +138,50 @@ class MemoryStore:
     def delete_short(self, ids: list[str]) -> None:
         if ids:
             self.short.delete(ids=ids)
+    
+    def update_short_metadata(self, entry_id: str, updates: dict[str, Any]) -> bool:
+        """Update metadata on a short-term entry. Returns True if found.
+
+        Short-term is documented as 'free read/write' - this isn't the
+        Lacuna boundary protecting long-term. Used by preserve_verbatim to
+        flip the verbatim flag, and is a general-purpose seam if other
+        lightweight short-term tweaks come up later.
+        """
+        existing = self.short.get(ids=[entry_id], include=["documents", "metadatas"])
+        if not existing.get("ids"):
+            return False
+        meta = dict(existing["metadatas"][0]) if existing.get("metadatas") else {}
+        meta.update(_clean_meta(updates))
+        self.short.update(ids=[entry_id], metadatas=[meta])
+        return True
+
+    def promote_short_to_long(self, entry_id: str) -> Optional[str]:
+        """Move a short-term entry to long-term verbatim, immediately.
+
+        Bypasses the consolidator's clustering/synthesis. Content copied
+        AS-IS, source short-term entry removed. Returns the new long-term
+        ID, or None if the source doesn't exist.
+
+        This is the 'I know this is durable, don't make me wait for the
+        dream cycle' escape hatch. Use sparingly - the consolidator's
+        clustering is usually the right path; this is the override.
+        """
+        from .models.schemas import LongTermEntry, Source
+        existing = self.short.get(ids=[entry_id], include=["documents", "metadatas"])
+        if not existing.get("ids"):
+            return None
+        content = existing["documents"][0]
+        meta = dict(existing["metadatas"][0]) if existing.get("metadatas") else {}
+        long_entry = LongTermEntry(
+            content=content,
+            topic=meta.get("topic"),
+            evidence_count=1,
+            source=Source.CONSOLIDATOR,
+            extra={"promoted_directly": True, "original_short_id": entry_id},
+        )
+        self.add_long(long_entry)
+        self.short.delete(ids=[entry_id])
+        return long_entry.id
 
     # ──────────────────────────────────────────────────────────────────
     #  NearTerm
