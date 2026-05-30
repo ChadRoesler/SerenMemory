@@ -20,6 +20,8 @@ ENDPOINTS:
     POST /search                - unified ranked recall
     GET  /consolidator/status   - last run, recent runs, counts, config
     POST /brief                 - submit a daily brief (steers consolidation)
+    POST /short/{id}/preserve   - mark for verbatim promotion (next cycle)
+    POST /short/{id}/promote    - immediate verbatim promotion (skip cycle)
     POST /consolidate/run       - trigger consolidation now (manual / external mode)
 """
 from __future__ import annotations
@@ -194,6 +196,33 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
         store = request.app.state.store
         saved = store.add_brief(brief)
         return {"ok": True, "id": saved.id}
+
+    # ── Short-term agency endpoints (preserve_verbatim + promote_memory) ──
+    @app.post("/short/{entry_id}/preserve")
+    async def preserve_short_verbatim(request: Request, entry_id: str):
+        """Mark a short-term entry to be promoted VERBATIM (no synthesis,
+        no fusion) on the next consolidator cycle. Also pins it so it
+        survives aging until the cycle runs. Returns 404 if not found."""
+        store = request.app.state.store
+        ok = store.update_short_metadata(entry_id, {"verbatim": True, "pinned": True})
+        if not ok:
+            raise HTTPException(
+                status_code=404,
+                detail=f"short-term entry '{entry_id}' not found")
+        return {"ok": True, "id": entry_id, "verbatim": True, "pinned": True}
+
+    @app.post("/short/{entry_id}/promote")
+    async def promote_short_immediately(request: Request, entry_id: str):
+        """Immediately move a short-term entry to long-term verbatim,
+        bypassing the consolidator cycle entirely. The 'I know this is
+        durable, don't make me wait' override. Returns 404 if not found."""
+        store = request.app.state.store
+        long_id = store.promote_short_to_long(entry_id)
+        if long_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"short-term entry '{entry_id}' not found")
+        return {"ok": True, "long_term_id": long_id, "removed_short_id": entry_id}
 
     # ── Manual consolidation trigger ──
     @app.post("/consolidate/run")
