@@ -373,7 +373,30 @@ class Consolidator:
         promoted_ids: list[str] = []
 
         for topic, entries in clusters.items():
-            pinned = [e for e in entries if e["metadata"].get("pinned")]
+            # ── Peel off verbatim entries first ──
+            # When Rhys flagged an entry's exact phrasing as the point (not
+            # the gist), respect it. These go to long-term AS-IS, individually,
+            # no synthesis. The rest of the cluster follows the normal path.
+            verbatim_entries = [e for e in entries if e["metadata"].get("verbatim")]
+            for ve in verbatim_entries:
+                v_entry = LongTermEntry(
+                    content=ve["content"],
+                    topic=None if topic == "_untagged" else topic,
+                    evidence_count=1,
+                    source=Source.CONSOLIDATOR,
+                    extra={"preserved_verbatim": True, "original_short_id": ve["id"]},
+                )
+                self._store.add_long(v_entry)
+                promoted += 1
+                promoted_ids.append(ve["id"])
+                self._log(f"promoted verbatim entry {ve['id']} → long-term as-is")
+
+            # ── Normal cluster path for non-verbatim remainder ──
+            remaining = [e for e in entries if not e["metadata"].get("verbatim")]
+            if not remaining:
+                continue
+
+            pinned = [e for e in remaining if e["metadata"].get("pinned")]
             threshold = self._cfg.consolidator.promote_min_evidence
 
             # Brief hints adjust the threshold for this topic.
@@ -383,25 +406,24 @@ class Consolidator:
             if any(h.lower() in topic_l for h in noise_hints):
                 threshold = 999  # brief said noise → effectively never
 
-            should_promote = pinned or len(entries) >= threshold
+            should_promote = pinned or len(remaining) >= threshold
             if not should_promote:
                 continue
 
-            # Synthesize the cluster into one long-term statement.
-            synthesis = self._synthesize(topic, entries)
+            synthesis = self._synthesize(topic, remaining)
             if not synthesis:
                 continue
 
             entry = LongTermEntry(
                 content=synthesis,
                 topic=None if topic == "_untagged" else topic,
-                evidence_count=len(entries),
+                evidence_count=len(remaining),
                 source=Source.CONSOLIDATOR,
             )
             self._store.add_long(entry)
             promoted += 1
-            promoted_ids.extend(e["id"] for e in entries)
-            self._log(f"promoted topic '{topic}' ({len(entries)} entries) → long-term")
+            promoted_ids.extend(e["id"] for e in remaining)
+            self._log(f"promoted topic '{topic}' ({len(remaining)} entries) → long-term")
 
         # Promoted short-term entries are consumed (their essence now lives
         # in long-term). Remove them so they don't re-promote next cycle.
