@@ -20,6 +20,7 @@ ENDPOINTS:
     POST /search                - unified ranked recall
     GET  /consolidator/status   - last run, recent runs, counts, config
     POST /brief                 - submit a daily brief (steers consolidation)
+    GET  /brief                 - list recent briefs (debug / viewer)
     POST /short/{id}/preserve   - mark for verbatim promotion (next cycle)
     POST /short/{id}/promote    - immediate verbatim promotion (skip cycle)
     POST /consolidate/run       - trigger consolidation now (manual / external mode)
@@ -77,7 +78,13 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
                         # Run the (synchronous) consolidation off the event loop.
                         await asyncio.to_thread(app.state.consolidator.run_once)
                     except Exception as e:  # noqa: BLE001
-                        print(f"[seren-memory] consolidation error: {e}")
+                        # ConsolidatorBusy is expected when a force-run is mid-
+                        # flight; log it gently rather than as a scary error.
+                        from .consolidator.service import ConsolidatorBusy
+                        if isinstance(e, ConsolidatorBusy):
+                            print(f"[seren-memory] scheduled tick skipped: {e}")
+                        else:
+                            print(f"[seren-memory] consolidation error: {e}")
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=interval)
                     except asyncio.TimeoutError:
@@ -197,6 +204,15 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
         saved = store.add_brief(brief)
         return {"ok": True, "id": saved.id}
 
+    @app.get("/brief")
+    async def list_briefs(request: Request, limit: int = 20):
+        """List the most recent briefs, newest first. Backs the Halls
+        viewer's brief panel — lets you see steering history alongside
+        the tier collections."""
+        store = request.app.state.store
+        rows = store.get_recent_briefs(limit=limit)
+        return {"entries": rows, "count": len(rows)}
+
     # ── Short-term agency endpoints (preserve_verbatim + promote_memory) ──
     @app.post("/short/{entry_id}/preserve")
     async def preserve_short_verbatim(request: Request, entry_id: str):
@@ -229,9 +245,18 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
     async def consolidate_now(request: Request):
         """Run a consolidation pass right now. Used in 'external' mode (a
         cron/systemd timer POSTs here) or for manual testing. Runs the
-        synchronous consolidation in a thread so we don't block the loop."""
+        synchronous consolidation in a thread so we don't block the loop.
+
+        Returns 409 if a scheduled run is already in progress (the lock
+        in run_once serializes scheduled vs manual paths).
+        """
         import asyncio
-        report = await asyncio.to_thread(request.app.state.consolidator.run_once)
+        from .consolidator.service import ConsolidatorBusy
+        try:
+            report = await asyncio.to_thread(
+                request.app.state.consolidator.run_once)
+        except ConsolidatorBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         return {"ok": True, "report": report}
 
     # ── Tier routes ──

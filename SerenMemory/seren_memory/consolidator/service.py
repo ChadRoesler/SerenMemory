@@ -65,18 +65,42 @@ from ..models.schemas import (
     Source,
 )
 
+import threading
+
+class ConsolidatorBusy(RuntimeError):
+    """Raised when a force-run is requested while a scheduled run is mid-flight."""
 
 class Consolidator:
     def __init__(self, store: MemoryStore, config: MemoryConfig, log=None):
         self._store = store
         self._cfg = config
         self._log = log or (lambda m: print(f"[consolidator] {m}"))
+        self._run_lock = threading.Lock()
 
     # ──────────────────────────────────────────────────────────────────
     #  Entry point - one full consolidation pass.
     # ──────────────────────────────────────────────────────────────────
     def run_once(self) -> dict[str, Any]:
-        """One full consolidation pass.
+        """Public entry point - serializes runs via _run_lock.
+
+        Both the scheduled-loop and POST /consolidate/run call into here.
+        Without the lock they could race (scheduled tick fires while a
+        manual run is mid-flight, or vice versa) and corrupt the
+        ConsolidatorRun record / counts. Non-blocking acquire means a
+        collision raises ConsolidatorBusy rather than silently waiting -
+        callers decide whether to retry, 409, or skip.
+        """
+        if not self._run_lock.acquire(blocking=False):
+            raise ConsolidatorBusy(
+                "a consolidator run is already in progress")
+        try:
+            return self._run_once_impl()
+        finally:
+            self._run_lock.release()
+
+    def _run_once_impl(self) -> dict[str, Any]:
+        """One full consolidation pass. Called only via run_once (which
+        holds the lock).
 
         ALWAYS produces a ConsolidatorRun record - success, error, or noop -
         via the try/finally below. That's what gives 'last_consolidation_at'
@@ -369,6 +393,11 @@ class Consolidator:
             topic = r["metadata"].get("topic") or "_untagged"
             clusters.setdefault(topic, []).append(r)
 
+        # Surface cluster shape for journalctl so noop runs aren't a mystery.
+        cluster_shape = {t: len(es) for t, es in clusters.items()}
+        self._log(
+            f"clusters formed from {len(rows)} short entries: {cluster_shape}")
+
         promoted = 0
         promoted_ids: list[str] = []
 
@@ -399,15 +428,37 @@ class Consolidator:
             pinned = [e for e in remaining if e["metadata"].get("pinned")]
             threshold = self._cfg.consolidator.promote_min_evidence
 
-            # Brief hints adjust the threshold for this topic.
+            # Brief hints adjust the threshold. We check against BOTH the
+            # cluster topic AND the concatenated entry contents - brief
+            # hints describe content-semantics ("paisly pattern") while
+            # cluster topics are taxonomy labels ("preference"). Topic-only
+            # matching meant the brief correctly identified the entries but
+            # couldn't route them to promotion. The haystack bridges that
+            # gap; the "||" separator prevents accidental matches across
+            # the topic→content boundary. We use ALL entries (including
+            # verbatim ones) for hint matching because the brief was
+            # generated against the full cluster's worth of content, so
+            # the hints apply to the full cluster's worth.
             topic_l = topic.lower()
-            if any(h.lower() in topic_l for h in promote_hints):
-                threshold = 1  # brief said promote this → low bar
-            if any(h.lower() in topic_l for h in noise_hints):
-                threshold = 999  # brief said noise → effectively never
+            content_haystack = " ".join(e["content"].lower() for e in entries)
+            haystack = topic_l + " || " + content_haystack
+            if any(h.lower() in haystack for h in promote_hints):
+                threshold = 1
+                self._log(
+                    f"cluster '{topic}': promote hint matched → threshold=1")
+            if any(h.lower() in haystack for h in noise_hints):
+                threshold = 999
+                self._log(
+                    f"cluster '{topic}': noise hint matched → threshold=999")
 
+            self._log(
+                f"cluster '{topic}': entries={len(remaining)}, "
+                f"pinned={len(pinned)}, threshold={threshold}")
             should_promote = pinned or len(remaining) >= threshold
             if not should_promote:
+                self._log(
+                    f"cluster '{topic}': skipped — "
+                    f"{len(remaining)}<{threshold} and no pinned")
                 continue
 
             synthesis = self._synthesize(topic, remaining)
@@ -431,6 +482,22 @@ class Consolidator:
             self._store.delete_short(promoted_ids)
 
         return promoted
+
+    @staticmethod
+    def _strip_reasoning(text: str) -> str:
+        """Nemotron-3-Nano emits <think>...</think> blocks by default because
+        it's a reasoning model. Strip them so the long-term entry contains
+        only the synthesized conclusion.
+
+        Fallback behavior when </think> is missing: return text as-is.
+        That covers two cases — model wasn't in reasoning mode that turn,
+        or output was truncated mid-think. Returning text-as-is is safer
+        than returning empty (which would trip the fallback to longest-content
+        and silently lose the synthesis).
+        """
+        if "</think>" in text:
+            return text.split("</think>")[-1]
+        return text
 
     def _synthesize(self, topic: str, entries: list[dict]) -> Optional[str]:
         """Ask the model to fuse a cluster of short-term entries into one
@@ -457,9 +524,11 @@ class Consolidator:
 
         try:
             result = self._call_model(prompt, max_tokens=200)
+            if result:
+                result = self._strip_reasoning(result)
             return result.strip() if result else fallback
-        except Exception as e:  # noqa: BLE001 - degrade gracefully on any model error
-            self._log(f"synthesis model call failed ({e}); using fallback")
+        except Exception as exc:
+            self._log(f"_synthesize raised {type(exc).__name__}: {exc}")
             return fallback
 
     # ──────────────────────────────────────────────────────────────────

@@ -291,6 +291,13 @@ class MemoryStore:
         rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
         return rows[0]
 
+    def get_recent_briefs(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Most recent N briefs by created_at. For the Halls viewer's
+        brief panel and any caller that wants to scan steering history."""
+        rows = _zip_get(self.briefs.get(include=["documents", "metadatas"]), None)
+        rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
+        return rows[:limit]
+
     # ──────────────────────────────────────────────────────────────────
     #  Pruned safety net
     # ──────────────────────────────────────────────────────────────────
