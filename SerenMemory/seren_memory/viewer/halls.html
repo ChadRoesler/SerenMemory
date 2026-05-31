@@ -1,505 +1,766 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Halls of Memory · SerenMemory</title>
-<style>
-    /* ─────────────────────────────────────────────────────────────────
-       Theme tokens - lifted from the Seren dashboard so this peek tool
-       feels like part of the same family. Deep space navy, electric
-       purple, mint for the gated tier. Mole-man approved.
-       ───────────────────────────────────────────────────────────────── */
-    :root {
-        --bg-page: #0F1222;
-        --bg-card: #13151E;
-        --bg-row: #29326D;
-        --bg-row-alt: #161A2E;
-        --border: #1E2A78;
-        --border-hi: #6F3AFF;
-        --text-hi: #E6F0FF;
-        --text-mid: #B7C5E0;
-        --text-lo: #6A7AA0;
-        --accent: #6F3AFF;
-        --accent-strong: #FF59E6;
-        --accent-info: #00C2C7;
-        /* Tier colors - each Hall gets an identity */
-        --short: #B7FF4C;   /* electric green - working memory, alive */
-        --near: #FFD23F;    /* amber - open loops, pending */
-        --long: #6FF3D6;    /* mint - durable, gated */
-        --radius: 6px;
-        --gap: 12px;
-        --pad: 14px;
-    }
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body { margin: 0; padding: 0; }
-    body {
-        background: var(--bg-page);
-        color: var(--text-hi);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 13px;
-        line-height: 1.5;
-    }
-    a { color: var(--accent-info); }
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Halls of Memory · SerenMemory</title>
+    <style>
+         /* ─────────────────────────────────────────────────────────────────
+        Theme tokens - lifted from the Seren dashboard so this peek tool
+        feels like part of the same family. Deep space navy, electric
+        purple, mint for the gated tier. Mole-man approved.
+        ───────────────────────────────────────────────────────────────── */
+         :root {
+             --bg-page: #0F1222;
+             --bg-card: #13151E;
+             --bg-row: #29326D;
+             --bg-row-alt: #161A2E;
+             --border: #1E2A78;
+             --border-hi: #6F3AFF;
+             --text-hi: #E6F0FF;
+             --text-mid: #B7C5E0;
+             --text-lo: #6A7AA0;
+             --accent: #6F3AFF;
+             --accent-strong: #FF59E6;
+             --accent-info: #00C2C7;
+             /* Tier colors - each Hall gets an identity */
+             --short: #B7FF4C; /* electric green - working memory, alive */
+             --near: #FFD23F; /* amber - open loops, pending */
+             --long: #6FF3D6; /* mint - durable, gated */
+             --brief: #C7A6FF; /* soft lavender - steering, not memory */
+             --radius: 6px;
+             --gap: 12px;
+             --pad: 14px;
+         }
 
-    header {
-        padding: var(--pad);
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        gap: var(--gap);
-        flex-wrap: wrap;
-    }
-    header h1 {
-        font-size: 16px;
-        margin: 0;
-        color: var(--text-hi);
-        letter-spacing: 0.5px;
-    }
-    header h1 .sub { color: var(--text-lo); font-weight: normal; font-size: 12px; }
+         * {
+             box-sizing: border-box;
+             -webkit-tap-highlight-color: transparent;
+         }
 
-    .conn {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        margin-left: auto;
-        flex-wrap: wrap;
-    }
-    input, select, button {
-        background: var(--bg-card);
-        color: var(--text-hi);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 6px 10px;
-        font-family: inherit;
-        font-size: 12px;
-    }
-    input:focus, select:focus { outline: none; border-color: var(--border-hi); }
-    input::placeholder { color: var(--text-lo); }
-    button {
-        cursor: pointer;
-        background: var(--bg-row);
-        border-color: var(--border-hi);
-        transition: background 0.12s, border-color 0.12s;
-    }
-    button:hover { background: var(--accent); }
-    button.ghost { background: var(--bg-card); }
-    button.ghost:hover { background: var(--bg-row); }
+         html, body {
+             margin: 0;
+             padding: 0;
+         }
 
-    .counts {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        font-size: 11px;
-        color: var(--text-lo);
-    }
-    .count-pill {
-        padding: 2px 8px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-    }
-    .count-pill b { color: var(--text-hi); }
+         body {
+             background: var(--bg-page);
+             color: var(--text-hi);
+             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+             font-size: 13px;
+             line-height: 1.5;
+         }
 
-    /* Tab bar - the four Halls + search */
-    .tabs {
-        display: flex;
-        gap: 2px;
-        padding: 0 var(--pad);
-        border-bottom: 1px solid var(--border);
-        flex-wrap: wrap;
-    }
-    .tab {
-        padding: 10px 16px;
-        cursor: pointer;
-        color: var(--text-mid);
-        border-bottom: 2px solid transparent;
-        user-select: none;
-        font-size: 12px;
-    }
-    .tab:hover { color: var(--text-hi); }
-    .tab.active { color: var(--text-hi); border-bottom-color: var(--accent-strong); }
-    .tab .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-    .tab[data-tier="short"] .dot { background: var(--short); }
-    .tab[data-tier="near"] .dot { background: var(--near); }
-    .tab[data-tier="long"] .dot { background: var(--long); }
-    .tab[data-tier="search"] .dot { background: var(--accent-strong); }
+         a {
+             color: var(--accent-info);
+         }
 
-    main { padding: var(--pad); }
+         header {
+             padding: var(--pad);
+             border-bottom: 1px solid var(--border);
+             display: flex;
+             align-items: center;
+             gap: var(--gap);
+             flex-wrap: wrap;
+         }
 
-    /* Search bar - only visible on the search tab */
-    .searchbar {
-        display: flex;
-        gap: 8px;
-        margin-bottom: var(--gap);
-        flex-wrap: wrap;
-    }
-    .searchbar input[type=text] { flex: 1; min-width: 200px; }
-    .searchbar label { display: flex; align-items: center; gap: 4px; color: var(--text-mid); font-size: 11px; }
+             header h1 {
+                 font-size: 16px;
+                 margin: 0;
+                 color: var(--text-hi);
+                 letter-spacing: 0.5px;
+             }
 
-    /* Entry list */
-    .entries { display: flex; flex-direction: column; gap: 8px; }
-    .entry {
-        background: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: var(--pad);
-        border-left-width: 3px;
-    }
-    .entry.short { border-left-color: var(--short); }
-    .entry.near  { border-left-color: var(--near); }
-    .entry.long  { border-left-color: var(--long); }
-    .entry .content { color: var(--text-hi); white-space: pre-wrap; word-break: break-word; }
-    .entry .meta {
-        margin-top: 8px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        font-size: 11px;
-        color: var(--text-lo);
-    }
-    .entry .meta .k { color: var(--text-mid); }
-    .entry .badge {
-        font-size: 10px;
-        padding: 1px 6px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        color: var(--text-mid);
-    }
-    .entry .badge.tier-short { color: var(--short); border-color: var(--short); }
-    .entry .badge.tier-near  { color: var(--near); border-color: var(--near); }
-    .entry .badge.tier-long  { color: var(--long); border-color: var(--long); }
-    .entry .badge.score { color: var(--accent-strong); border-color: var(--accent-strong); }
-    .entry .badge.pinned { color: var(--accent-info); border-color: var(--accent-info); }
-    .entry .badge.completed { color: var(--text-lo); }
-    .entry .badge.superseded { color: var(--status-down, #FF4D6D); border-color: var(--status-down, #FF4D6D); }
+                 header h1 .sub {
+                     color: var(--text-lo);
+                     font-weight: normal;
+                     font-size: 12px;
+                 }
 
-    .empty { color: var(--text-lo); padding: 30px; text-align: center; }
-    .err {
-        background: #2A0F18;
-        border: 1px solid var(--accent-strong);
-        color: #FFC2E6;
-        padding: var(--pad);
-        border-radius: var(--radius);
-        margin-bottom: var(--gap);
-    }
-    .toolbar {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        margin-bottom: var(--gap);
-        flex-wrap: wrap;
-    }
-    .toolbar .spacer { flex: 1; }
-    .hint { color: var(--text-lo); font-size: 11px; }
-    code.id { color: var(--text-lo); font-size: 10px; }
-</style>
+         .conn {
+             display: flex;
+             gap: 8px;
+             align-items: center;
+             margin-left: auto;
+             flex-wrap: wrap;
+         }
+
+         input, select, button {
+             background: var(--bg-card);
+             color: var(--text-hi);
+             border: 1px solid var(--border);
+             border-radius: var(--radius);
+             padding: 6px 10px;
+             font-family: inherit;
+             font-size: 12px;
+         }
+
+             input:focus, select:focus {
+                 outline: none;
+                 border-color: var(--border-hi);
+             }
+
+             input::placeholder {
+                 color: var(--text-lo);
+             }
+
+         button {
+             cursor: pointer;
+             background: var(--bg-row);
+             border-color: var(--border-hi);
+             transition: background 0.12s, border-color 0.12s;
+         }
+
+             button:hover {
+                 background: var(--accent);
+             }
+
+             button.ghost {
+                 background: var(--bg-card);
+             }
+
+                 button.ghost:hover {
+                     background: var(--bg-row);
+                 }
+
+         .counts {
+             display: flex;
+             gap: 6px;
+             align-items: center;
+             font-size: 11px;
+             color: var(--text-lo);
+         }
+
+         .count-pill {
+             padding: 2px 8px;
+             border-radius: 999px;
+             border: 1px solid var(--border);
+         }
+
+             .count-pill b {
+                 color: var(--text-hi);
+             }
+
+         /* Tab bar - the four Halls + search */
+         .tabs {
+             display: flex;
+             gap: 2px;
+             padding: 0 var(--pad);
+             border-bottom: 1px solid var(--border);
+             flex-wrap: wrap;
+         }
+
+         .tab {
+             padding: 10px 16px;
+             cursor: pointer;
+             color: var(--text-mid);
+             border-bottom: 2px solid transparent;
+             user-select: none;
+             font-size: 12px;
+         }
+
+             .tab:hover {
+                 color: var(--text-hi);
+             }
+
+             .tab.active {
+                 color: var(--text-hi);
+                 border-bottom-color: var(--accent-strong);
+             }
+
+             .tab .dot {
+                 display: inline-block;
+                 width: 8px;
+                 height: 8px;
+                 border-radius: 50%;
+                 margin-right: 6px;
+                 vertical-align: middle;
+             }
+
+             .tab[data-tier="short"] .dot {
+                 background: var(--short);
+             }
+
+             .tab[data-tier="near"] .dot {
+                 background: var(--near);
+             }
+
+             .tab[data-tier="long"] .dot {
+                 background: var(--long);
+             }
+
+             .tab[data-tier="briefs"] .dot {
+                 background: var(--brief);
+             }
+
+             .tab[data-tier="search"] .dot {
+                 background: var(--accent-strong);
+             }
+
+         main {
+             padding: var(--pad);
+         }
+
+         /* Search bar - only visible on the search tab */
+         .searchbar {
+             display: flex;
+             gap: 8px;
+             margin-bottom: var(--gap);
+             flex-wrap: wrap;
+         }
+
+             .searchbar input[type=text] {
+                 flex: 1;
+                 min-width: 200px;
+             }
+
+             .searchbar label {
+                 display: flex;
+                 align-items: center;
+                 gap: 4px;
+                 color: var(--text-mid);
+                 font-size: 11px;
+             }
+
+         /* Entry list */
+         .entries {
+             display: flex;
+             flex-direction: column;
+             gap: 8px;
+         }
+
+         .entry {
+             background: var(--bg-card);
+             border: 1px solid var(--border);
+             border-radius: var(--radius);
+             padding: var(--pad);
+             border-left-width: 3px;
+         }
+
+             .entry.short {
+                 border-left-color: var(--short);
+             }
+
+             .entry.near {
+                 border-left-color: var(--near);
+             }
+
+             .entry.long {
+                 border-left-color: var(--long);
+             }
+
+             .entry.brief {
+                 border-left-color: var(--brief);
+             }
+
+             .entry .content {
+                 color: var(--text-hi);
+                 white-space: pre-wrap;
+                 word-break: break-word;
+             }
+
+             .entry .meta {
+                 margin-top: 8px;
+                 display: flex;
+                 gap: 10px;
+                 flex-wrap: wrap;
+                 font-size: 11px;
+                 color: var(--text-lo);
+             }
+
+                 .entry .meta .k {
+                     color: var(--text-mid);
+                 }
+
+             .entry .badge {
+                 font-size: 10px;
+                 padding: 1px 6px;
+                 border-radius: 999px;
+                 border: 1px solid var(--border);
+                 color: var(--text-mid);
+             }
+
+                 .entry .badge.tier-short {
+                     color: var(--short);
+                     border-color: var(--short);
+                 }
+
+                 .entry .badge.tier-near {
+                     color: var(--near);
+                     border-color: var(--near);
+                 }
+
+                 .entry .badge.tier-long {
+                     color: var(--long);
+                     border-color: var(--long);
+                 }
+
+                 .entry .badge.tier-brief {
+                     color: var(--brief);
+                     border-color: var(--brief);
+                 }
+
+             .entry .chip.promote {
+                 color: var(--short);
+                 border: 1px solid var(--short);
+                 padding: 1px 6px;
+                 border-radius: 9px;
+                 font-size: 11px;
+                 margin: 1px 3px 1px 0;
+                 display: inline-block;
+             }
+
+             .entry .chip.noise {
+                 color: var(--accent-strong);
+                 border: 1px solid var(--accent-strong);
+                 padding: 1px 6px;
+                 border-radius: 9px;
+                 font-size: 11px;
+                 margin: 1px 3px 1px 0;
+                 display: inline-block;
+             }
+
+             .entry .chip.intent {
+                 color: var(--near);
+                 border: 1px solid var(--near);
+                 padding: 1px 6px;
+                 border-radius: 9px;
+                 font-size: 11px;
+                 margin: 1px 3px 1px 0;
+                 display: inline-block;
+             }
+
+             .entry .chip-row {
+                 margin-top: 6px;
+             }
+
+                 .entry .chip-row .k {
+                     color: var(--accent-info);
+                     font-size: 11px;
+                     margin-right: 4px;
+                 }
+
+             .entry .badge.score {
+                 color: var(--accent-strong);
+                 border-color: var(--accent-strong);
+             }
+
+             .entry .badge.pinned {
+                 color: var(--accent-info);
+                 border-color: var(--accent-info);
+             }
+
+             .entry .badge.completed {
+                 color: var(--text-lo);
+             }
+
+             .entry .badge.superseded {
+                 color: var(--status-down, #FF4D6D);
+                 border-color: var(--status-down, #FF4D6D);
+             }
+
+         .empty {
+             color: var(--text-lo);
+             padding: 30px;
+             text-align: center;
+         }
+
+         .err {
+             background: #2A0F18;
+             border: 1px solid var(--accent-strong);
+             color: #FFC2E6;
+             padding: var(--pad);
+             border-radius: var(--radius);
+             margin-bottom: var(--gap);
+         }
+
+         .toolbar {
+             display: flex;
+             gap: 8px;
+             align-items: center;
+             margin-bottom: var(--gap);
+             flex-wrap: wrap;
+         }
+
+             .toolbar .spacer {
+                 flex: 1;
+             }
+
+         .hint {
+             color: var(--text-lo);
+             font-size: 11px;
+         }
+
+         code.id {
+             color: var(--text-lo);
+             font-size: 10px;
+         }
+    </style>
 </head>
 <body>
-<header>
-    <h1>Halls of Memory <span class="sub">· SerenMemory peek</span></h1>
-    <div class="conn">
-        <input type="text" id="base-url" placeholder="(same origin - leave blank if served from SerenMemory)" value="" size="32" />
-        <input type="password" id="token" placeholder="bearer token (if any)" size="18" />
-        <button id="refresh">refresh</button>
-        <div class="counts" id="counts"></div>
-    </div>
-</header>
+    <header>
+        <h1>Halls of Memory <span class="sub">· SerenMemory peek</span></h1>
+        <div class="conn">
+            <input type="text" id="base-url" placeholder="(same origin - leave blank if served from SerenMemory)" value="" size="32" />
+            <input type="password" id="token" placeholder="bearer token (if any)" size="18" />
+            <button id="refresh">refresh</button>
+            <div class="counts" id="counts"></div>
+        </div>
+    </header>
 
-<div class="tabs" id="tabs">
-    <div class="tab active" data-tier="short"><span class="dot"></span>ShortTerm</div>
-    <div class="tab" data-tier="near"><span class="dot"></span>NearTerm</div>
-    <div class="tab" data-tier="long"><span class="dot"></span>LongTerm</div>
-    <div class="tab" data-tier="search"><span class="dot"></span>Search</div>
-</div>
-
-<main>
-    <div id="error-slot"></div>
-
-    <!-- Search controls (shown only on search tab) -->
-    <div class="searchbar" id="searchbar" style="display:none;">
-        <input type="text" id="search-query" placeholder="semantic query across all tiers…" />
-        <label><input type="checkbox" id="inc-short" checked /> short</label>
-        <label><input type="checkbox" id="inc-near" checked /> near</label>
-        <label><input type="checkbox" id="inc-long" checked /> long</label>
-        <label>n=<input type="number" id="search-n" value="10" min="1" max="50" style="width:56px;" /></label>
-        <button id="do-search">search</button>
+    <div class="tabs" id="tabs">
+        <div class="tab active" data-tier="short"><span class="dot"></span>ShortTerm</div>
+        <div class="tab" data-tier="near"><span class="dot"></span>NearTerm</div>
+        <div class="tab" data-tier="long"><span class="dot"></span>LongTerm</div>
+        <div class="tab" data-tier="briefs"><span class="dot"></span>Briefs</div>
+        <div class="tab" data-tier="search"><span class="dot"></span>Search</div>
     </div>
 
-    <!-- List controls (shown on tier tabs) -->
-    <div class="toolbar" id="list-toolbar">
-        <span class="hint" id="list-hint"></span>
-        <div class="spacer"></div>
-        <label class="hint" id="extra-toggle-wrap" style="display:none;">
-            <input type="checkbox" id="extra-toggle" /> <span id="extra-label"></span>
-        </label>
-    </div>
+    <main>
+        <div id="error-slot"></div>
 
-    <div class="entries" id="entries"></div>
-</main>
+        <!-- Search controls (shown only on search tab) -->
+        <div class="searchbar" id="searchbar" style="display:none;">
+            <input type="text" id="search-query" placeholder="semantic query across all tiers…" />
+            <label><input type="checkbox" id="inc-short" checked /> short</label>
+            <label><input type="checkbox" id="inc-near" checked /> near</label>
+            <label><input type="checkbox" id="inc-long" checked /> long</label>
+            <label>n=<input type="number" id="search-n" value="10" min="1" max="50" style="width:56px;" /></label>
+            <button id="do-search">search</button>
+        </div>
 
-<script>
-'use strict';
+        <!-- List controls (shown on tier tabs) -->
+        <div class="toolbar" id="list-toolbar">
+            <span class="hint" id="list-hint"></span>
+            <div class="spacer"></div>
+            <label class="hint" id="extra-toggle-wrap" style="display:none;">
+                <input type="checkbox" id="extra-toggle" /> <span id="extra-label"></span>
+            </label>
+        </div>
 
-// ──────────────────────────────────────────────────────────────────────
-// State
-// ──────────────────────────────────────────────────────────────────────
-const state = {
-    tab: 'short',
-    // Base URL resolution:
-    //  - Served from SerenMemory (http/https origin): use '' = relative =
-    //    same-origin fetches. No CORS, works on any host/port automatically.
-    //  - Opened as a file:// (standalone debugging): fall back to the
-    //    canonical localhost:7420 so it still works off-cluster.
-    baseUrl: (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:7420',
-    token: '',
-};
+        <div class="entries" id="entries"></div>
+    </main>
 
-const $ = (id) => document.getElementById(id);
+    <script>
+        'use strict';
 
-function headers() {
-    const h = { 'content-type': 'application/json' };
-    if (state.token) h['authorization'] = `Bearer ${state.token}`;
-    return h;
-}
+        // ──────────────────────────────────────────────────────────────────────
+        // State
+        // ──────────────────────────────────────────────────────────────────────
+        const state = {
+            tab: 'short',
+            // Base URL resolution:
+            //  - Served from SerenMemory (http/https origin): use '' = relative =
+            //    same-origin fetches. No CORS, works on any host/port automatically.
+            //  - Opened as a file:// (standalone debugging): fall back to the
+            //    canonical localhost:7420 so it still works off-cluster.
+            baseUrl: (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:7420',
+            token: '',
+        };
 
-async function api(path, opts = {}) {
-    const url = state.baseUrl.replace(/\/$/, '') + path;
-    const resp = await fetch(url, { headers: headers(), ...opts });
-    if (!resp.ok) {
-        let detail = `HTTP ${resp.status}`;
-        try { const j = await resp.json(); detail += ' · ' + (j.error || j.detail || JSON.stringify(j)); } catch {}
-        throw new Error(detail);
-    }
-    return resp.json();
-}
+        const $ = (id) => document.getElementById(id);
 
-function showError(msg) {
-    $('error-slot').innerHTML = `<div class="err">⚠ ${escapeHtml(msg)}<br><span class="hint">Is SerenMemory running at this URL? Check the base URL + token above.</span></div>`;
-}
-function clearError() { $('error-slot').innerHTML = ''; }
+        function headers() {
+            const h = { 'content-type': 'application/json' };
+            if (state.token) h['authorization'] = `Bearer ${state.token}`;
+            return h;
+        }
 
-function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, c => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-    ));
-}
+        async function api(path, opts = {}) {
+            const url = state.baseUrl.replace(/\/$/, '') + path;
+            const resp = await fetch(url, { headers: headers(), ...opts });
+            if (!resp.ok) {
+                let detail = `HTTP ${resp.status}`;
+                try { const j = await resp.json(); detail += ' · ' + (j.error || j.detail || JSON.stringify(j)); } catch { }
+                throw new Error(detail);
+            }
+            return resp.json();
+        }
 
-function fmtTs(ts) {
-    if (ts == null) return '-';
-    const n = typeof ts === 'string' ? parseFloat(ts) : ts;
-    if (!isFinite(n)) return String(ts);
-    const d = new Date(n * 1000);
-    if (isNaN(d.getTime())) return String(ts);
-    // Compact local time + relative age
-    const ageMs = Date.now() - d.getTime();
-    const ageStr = relAge(ageMs);
-    return `${d.toLocaleString()} (${ageStr})`;
-}
+        function showError(msg) {
+            $('error-slot').innerHTML = `<div class="err">⚠ ${escapeHtml(msg)}<br><span class="hint">Is SerenMemory running at this URL? Check the base URL + token above.</span></div>`;
+        }
+        function clearError() { $('error-slot').innerHTML = ''; }
 
-function relAge(ms) {
-    const s = Math.round(ms / 1000);
-    if (s < 60) return `${s}s ago`;
-    const m = Math.round(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.round(m / 60);
-    if (h < 48) return `${h}h ago`;
-    const d = Math.round(h / 24);
-    return `${d}d ago`;
-}
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+            ));
+        }
 
-// ──────────────────────────────────────────────────────────────────────
-// Rendering
-// ──────────────────────────────────────────────────────────────────────
-function renderCounts(counts) {
-    if (!counts) { $('counts').innerHTML = ''; return; }
-    const pill = (label, n, color) =>
-        `<span class="count-pill" style="border-color:${color}"><b>${n}</b> ${label}</span>`;
-    $('counts').innerHTML =
-        pill('short', counts.short ?? '?', 'var(--short)') +
-        pill('near', counts.near ?? '?', 'var(--near)') +
-        pill('long', counts.long ?? '?', 'var(--long)') +
-        (counts.pruned != null ? pill('pruned', counts.pruned, 'var(--text-lo)') : '');
-}
+        function fmtTs(ts) {
+            if (ts == null) return '-';
+            const n = typeof ts === 'string' ? parseFloat(ts) : ts;
+            if (!isFinite(n)) return String(ts);
+            const d = new Date(n * 1000);
+            if (isNaN(d.getTime())) return String(ts);
+            // Compact local time + relative age
+            const ageMs = Date.now() - d.getTime();
+            const ageStr = relAge(ageMs);
+            return `${d.toLocaleString()} (${ageStr})`;
+        }
 
-function entryCard(tier, content, meta, opts = {}) {
-    const badges = [];
-    badges.push(`<span class="badge tier-${tier}">${tier}</span>`);
-    if (opts.score != null) badges.push(`<span class="badge score">score ${opts.score.toFixed(3)}</span>`);
-    if (meta.pinned === true || meta.pinned === 'true') badges.push(`<span class="badge pinned">pinned</span>`);
-    if (meta.completed === true || meta.completed === 'true') badges.push(`<span class="badge completed">completed</span>`);
-    if (meta.superseded_by) badges.push(`<span class="badge superseded">superseded</span>`);
-    if (meta.forget_flag) badges.push(`<span class="badge superseded">flagged</span>`);
-    if (meta.demoted_reason) badges.push(`<span class="badge superseded">demoted</span>`);
+        function relAge(ms) {
+            const s = Math.round(ms / 1000);
+            if (s < 60) return `${s}s ago`;
+            const m = Math.round(s / 60);
+            if (m < 60) return `${m}m ago`;
+            const h = Math.round(m / 60);
+            if (h < 48) return `${h}h ago`;
+            const d = Math.round(h / 24);
+            return `${d}d ago`;
+        }
 
-    const metaBits = [];
-    if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);
-    if (meta.source) metaBits.push(`<span><span class="k">src</span> ${escapeHtml(meta.source)}</span>`);
-    if (meta.evidence_count != null) metaBits.push(`<span><span class="k">evidence</span> ${escapeHtml(meta.evidence_count)}</span>`);
-    // Timestamps - whichever the tier has
-    const tsField = meta.ts ?? meta.created_at ?? meta.last_confirmed;
-    if (tsField != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(tsField))}</span>`);
-    if (meta.trigger_type) {
-        let trig = meta.trigger_type;
-        if (meta.trigger_value) trig += ` → ${meta.trigger_value}`;
-        metaBits.push(`<span><span class="k">trigger</span> ${escapeHtml(trig)}</span>`);
-    }
-    if (meta.expires_at) metaBits.push(`<span><span class="k">expires</span> ${escapeHtml(fmtTs(meta.expires_at))}</span>`);
-    if (opts.id) metaBits.push(`<code class="id">${escapeHtml(opts.id)}</code>`);
+        // ──────────────────────────────────────────────────────────────────────
+        // Rendering
+        // ──────────────────────────────────────────────────────────────────────
+        function renderCounts(counts) {
+            if (!counts) { $('counts').innerHTML = ''; return; }
+            const pill = (label, n, color) =>
+                `<span class="count-pill" style="border-color:${color}"><b>${n}</b> ${label}</span>`;
+            $('counts').innerHTML =
+                pill('short', counts.short ?? '?', 'var(--short)') +
+                pill('near', counts.near ?? '?', 'var(--near)') +
+                pill('long', counts.long ?? '?', 'var(--long)') +
+                (counts.pruned != null ? pill('pruned', counts.pruned, 'var(--text-lo)') : '');
+        }
 
-    return `
-        <div class="entry ${tier}">
-            <div class="content">${escapeHtml(content)}</div>
-            <div class="meta">
-                ${badges.join(' ')}
-                ${metaBits.join('')}
-            </div>
-        </div>`;
-}
+        function entryCard(tier, content, meta, opts = {}) {
+            const badges = [];
+            badges.push(`<span class="badge tier-${tier}">${tier}</span>`);
+            if (opts.score != null) badges.push(`<span class="badge score">score ${opts.score.toFixed(3)}</span>`);
+            if (meta.pinned === true || meta.pinned === 'true') badges.push(`<span class="badge pinned">pinned</span>`);
+            if (meta.completed === true || meta.completed === 'true') badges.push(`<span class="badge completed">completed</span>`);
+            if (meta.superseded_by) badges.push(`<span class="badge superseded">superseded</span>`);
+            if (meta.forget_flag) badges.push(`<span class="badge superseded">flagged</span>`);
+            if (meta.demoted_reason) badges.push(`<span class="badge superseded">demoted</span>`);
 
-function renderEntries(html) {
-    $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
-}
+            const metaBits = [];
+            if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);
+            if (meta.source) metaBits.push(`<span><span class="k">src</span> ${escapeHtml(meta.source)}</span>`);
+            if (meta.evidence_count != null) metaBits.push(`<span><span class="k">evidence</span> ${escapeHtml(meta.evidence_count)}</span>`);
+            // Timestamps - whichever the tier has
+            const tsField = meta.ts ?? meta.created_at ?? meta.last_confirmed;
+            if (tsField != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(tsField))}</span>`);
+            if (meta.trigger_type) {
+                let trig = meta.trigger_type;
+                if (meta.trigger_value) trig += ` → ${meta.trigger_value}`;
+                metaBits.push(`<span><span class="k">trigger</span> ${escapeHtml(trig)}</span>`);
+            }
+            if (meta.expires_at) metaBits.push(`<span><span class="k">expires</span> ${escapeHtml(fmtTs(meta.expires_at))}</span>`);
+            if (opts.id) metaBits.push(`<code class="id">${escapeHtml(opts.id)}</code>`);
 
-// ──────────────────────────────────────────────────────────────────────
-// Loaders per tab
-// ──────────────────────────────────────────────────────────────────────
-async function loadShort() {
-    setHint('Working memory · ~8 day lifetime · free read/write');
-    setExtraToggle(null);
-    const data = await api('/short?limit=200');
-    const html = (data.entries || []).map(e =>
-        entryCard('short', e.content, e.metadata || {}, { id: e.id })
-    ).join('');
-    renderEntries(html);
-}
+            return `
+            <div class="entry ${tier}">
+                <div class="content">${escapeHtml(content)}</div>
+                <div class="meta">
+                    ${badges.join(' ')}
+                    ${metaBits.join('')}
+                </div>
+            </div>`;
+        }
 
-async function loadNear() {
-    setHint('Open loops · future-tense intents · lives until fulfilled or expired');
-    setExtraToggle('include completed', async (checked) => loadNearInner(checked));
-    await loadNearInner($('extra-toggle').checked);
-}
-async function loadNearInner(includeCompleted) {
-    const data = await api(`/near?include_completed=${includeCompleted ? 'true' : 'false'}`);
-    const html = (data.entries || []).map(e =>
-        entryCard('near', e.content, e.metadata || {}, { id: e.id })
-    ).join('');
-    renderEntries(html);
-}
+        function briefCard(brief) {
+            // Brief shape is different from tier entries: the content is the summary,
+            // and the value-add is the steering payload (promote_hints/noise_hints/
+            // completed_intents). Render as chip rows so each cluster of guidance
+            // is visually distinct.
+            const meta = brief.metadata || {};
+            const id = brief.id;
 
-async function loadLong() {
-    setHint('Consolidated knowledge · gated (consolidator writes only) · no scalpel');
-    setExtraToggle('include superseded', async (checked) => loadLongInner(checked));
-    await loadLongInner($('extra-toggle').checked);
-}
-async function loadLongInner(includeSuperseded) {
-    const data = await api(`/long?include_superseded=${includeSuperseded ? 'true' : 'false'}`);
-    const html = (data.entries || []).map(e =>
-        entryCard('long', e.content, e.metadata || {}, { id: e.id })
-    ).join('');
-    renderEntries(html);
-}
+            const promoteHints = Array.isArray(meta.promote_hints) ? meta.promote_hints : [];
+            const noiseHints = Array.isArray(meta.noise_hints) ? meta.noise_hints : [];
+            const intents = Array.isArray(meta.completed_intents) ? meta.completed_intents : [];
 
-async function doSearch() {
-    const query = $('search-query').value.trim();
-    if (!query) { renderEntries(`<div class="empty">type a query above</div>`); return; }
-    const body = {
-        query,
-        n_results: parseInt($('search-n').value || '10', 10),
-        include_short: $('inc-short').checked,
-        include_near: $('inc-near').checked,
-        include_long: $('inc-long').checked,
-    };
-    try {
-        clearError();
-        const data = await api('/search', { method: 'POST', body: JSON.stringify(body) });
-        const html = (data.hits || []).map(h =>
-            entryCard(h.tier, h.content, h.metadata || {}, { id: h.id, score: h.score })
-        ).join('');
-        renderEntries(html || `<div class="empty">no hits for "${escapeHtml(query)}"</div>`);
-    } catch (e) {
-        showError(e.message);
-    }
-}
+            const badges = [`<span class="badge tier-brief">brief</span>`];
 
-// ──────────────────────────────────────────────────────────────────────
-// Toolbar helpers
-// ──────────────────────────────────────────────────────────────────────
-function setHint(text) { $('list-hint').textContent = text; }
+            const metaBits = [];
+            if (meta.created_at != null) {
+                metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(meta.created_at))}</span>`);
+            }
+            metaBits.push(`<code class="id">${escapeHtml(id)}</code>`);
 
-let _extraHandler = null;
-function setExtraToggle(label, handler) {
-    const wrap = $('extra-toggle-wrap');
-    if (!label) { wrap.style.display = 'none'; _extraHandler = null; return; }
-    wrap.style.display = '';
-    $('extra-label').textContent = label;
-    $('extra-toggle').checked = false;
-    _extraHandler = handler;
-}
-$('extra-toggle').addEventListener('change', (e) => {
-    if (_extraHandler) _extraHandler(e.target.checked);
-});
+            const chipRows = [];
+            if (promoteHints.length) {
+                chipRows.push(`<div class="chip-row"><span class="k">promote</span>` +
+                    promoteHints.map(h => `<span class="chip promote">${escapeHtml(h)}</span>`).join('') +
+                    `</div>`);
+            }
+            if (noiseHints.length) {
+                chipRows.push(`<div class="chip-row"><span class="k">noise</span>` +
+                    noiseHints.map(h => `<span class="chip noise">${escapeHtml(h)}</span>`).join('') +
+                    `</div>`);
+            }
+            if (intents.length) {
+                chipRows.push(`<div class="chip-row"><span class="k">completed</span>` +
+                    intents.map(i => `<span class="chip intent">${escapeHtml(i)}</span>`).join('') +
+                    `</div>`);
+            }
 
-// ──────────────────────────────────────────────────────────────────────
-// Tab switching
-// ──────────────────────────────────────────────────────────────────────
-async function switchTab(tier) {
-    state.tab = tier;
-    document.querySelectorAll('.tab').forEach(t =>
-        t.classList.toggle('active', t.dataset.tier === tier));
+            return `
+            <div class="entry brief">
+                <div class="content">${escapeHtml(brief.content || '(no summary)')}</div>
+                ${chipRows.join('')}
+                <div class="meta">
+                    ${badges.join(' ')}
+                    ${metaBits.join('')}
+                </div>
+            </div>`;
+        }
 
-    const isSearch = tier === 'search';
-    $('searchbar').style.display = isSearch ? 'flex' : 'none';
-    $('list-toolbar').style.display = isSearch ? 'none' : 'flex';
+        function renderEntries(html) {
+            $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
+        }
 
-    clearError();
-    try {
-        if (tier === 'short') await loadShort();
-        else if (tier === 'near') await loadNear();
-        else if (tier === 'long') await loadLong();
-        else if (tier === 'search') renderEntries(`<div class="empty">enter a query and hit search</div>`);
-    } catch (e) {
-        showError(e.message);
-        renderEntries('');
-    }
-}
+        // ──────────────────────────────────────────────────────────────────────
+        // Loaders per tab
+        // ──────────────────────────────────────────────────────────────────────
+        async function loadShort() {
+            setHint('Working memory · ~8 day lifetime · free read/write');
+            setExtraToggle(null);
+            const data = await api('/short?limit=200');
+            const html = (data.entries || []).map(e =>
+                entryCard('short', e.content, e.metadata || {}, { id: e.id })
+            ).join('');
+            renderEntries(html);
+        }
 
-document.querySelectorAll('.tab').forEach(t =>
-    t.addEventListener('click', () => switchTab(t.dataset.tier)));
+        async function loadNear() {
+            setHint('Open loops · future-tense intents · lives until fulfilled or expired');
+            setExtraToggle('include completed', async (checked) => loadNearInner(checked));
+            await loadNearInner($('extra-toggle').checked);
+        }
+        async function loadNearInner(includeCompleted) {
+            const data = await api(`/near?include_completed=${includeCompleted ? 'true' : 'false'}`);
+            const html = (data.entries || []).map(e =>
+                entryCard('near', e.content, e.metadata || {}, { id: e.id })
+            ).join('');
+            renderEntries(html);
+        }
 
-// ──────────────────────────────────────────────────────────────────────
-// Connection + refresh
-// ──────────────────────────────────────────────────────────────────────
-async function refresh() {
-    // Blank input = use the smart default (same-origin when served, localhost
-    // when file://). Only override if the user typed something explicit.
-    const typed = $('base-url').value.trim();
-    if (typed) {
-        state.baseUrl = typed;
-    } else {
-        state.baseUrl = (location.protocol === 'http:' || location.protocol === 'https:')
-            ? '' : 'http://localhost:7420';
-    }
-    state.token = $('token').value.trim();
-    clearError();
-    try {
-        const root = await api('/');
-        renderCounts(root.tiers);
-    } catch (e) {
-        showError(e.message);
-        renderCounts(null);
-    }
-    await switchTab(state.tab);
-}
+        async function loadLong() {
+            setHint('Consolidated knowledge · gated (consolidator writes only) · no scalpel');
+            setExtraToggle('include superseded', async (checked) => loadLongInner(checked));
+            await loadLongInner($('extra-toggle').checked);
+        }
+        async function loadLongInner(includeSuperseded) {
+            const data = await api(`/long?include_superseded=${includeSuperseded ? 'true' : 'false'}`);
+            const html = (data.entries || []).map(e =>
+                entryCard('long', e.content, e.metadata || {}, { id: e.id })
+            ).join('');
+            renderEntries(html);
+        }
 
-$('refresh').addEventListener('click', refresh);
-$('do-search').addEventListener('click', doSearch);
-$('search-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+        async function loadBriefs() {
+            setHint('Daily briefs · steering payload for the consolidator · newest first');
+            setExtraToggle(null);
+            const data = await api('/brief?limit=50');
+            const html = (data.entries || []).map(b => briefCard(b)).join('');
+            renderEntries(html);
+        }
 
-// Persist base URL + token in-memory only for this session (no localStorage -
-// keeps the token off disk; refresh the page and re-enter if needed).
+        async function doSearch() {
+            const query = $('search-query').value.trim();
+            if (!query) { renderEntries(`<div class="empty">type a query above</div>`); return; }
+            const body = {
+                query,
+                n_results: parseInt($('search-n').value || '10', 10),
+                include_short: $('inc-short').checked,
+                include_near: $('inc-near').checked,
+                include_long: $('inc-long').checked,
+            };
+            try {
+                clearError();
+                const data = await api('/search', { method: 'POST', body: JSON.stringify(body) });
+                const html = (data.hits || []).map(h =>
+                    entryCard(h.tier, h.content, h.metadata || {}, { id: h.id, score: h.score })
+                ).join('');
+                renderEntries(html || `<div class="empty">no hits for "${escapeHtml(query)}"</div>`);
+            } catch (e) {
+                showError(e.message);
+            }
+        }
 
-// Boot
-refresh();
-</script>
+        // ──────────────────────────────────────────────────────────────────────
+        // Toolbar helpers
+        // ──────────────────────────────────────────────────────────────────────
+        function setHint(text) { $('list-hint').textContent = text; }
+
+        let _extraHandler = null;
+        function setExtraToggle(label, handler) {
+            const wrap = $('extra-toggle-wrap');
+            if (!label) { wrap.style.display = 'none'; _extraHandler = null; return; }
+            wrap.style.display = '';
+            $('extra-label').textContent = label;
+            $('extra-toggle').checked = false;
+            _extraHandler = handler;
+        }
+        $('extra-toggle').addEventListener('change', (e) => {
+            if (_extraHandler) _extraHandler(e.target.checked);
+        });
+
+        // ──────────────────────────────────────────────────────────────────────
+        // Tab switching
+        // ──────────────────────────────────────────────────────────────────────
+        async function switchTab(tier) {
+            state.tab = tier;
+            document.querySelectorAll('.tab').forEach(t =>
+                t.classList.toggle('active', t.dataset.tier === tier));
+
+            const isSearch = tier === 'search';
+            $('searchbar').style.display = isSearch ? 'flex' : 'none';
+            $('list-toolbar').style.display = isSearch ? 'none' : 'flex';
+
+            clearError();
+            try {
+                if (tier === 'short') await loadShort();
+                else if (tier === 'near') await loadNear();
+                else if (tier === 'long') await loadLong();
+                else if (tier === 'briefs') await loadBriefs();
+                else if (tier === 'search') renderEntries(`<div class="empty">enter a query and hit search</div>`);
+            } catch (e) {
+                showError(e.message);
+                renderEntries('');
+            }
+        }
+
+        document.querySelectorAll('.tab').forEach(t =>
+            t.addEventListener('click', () => switchTab(t.dataset.tier)));
+
+        // ──────────────────────────────────────────────────────────────────────
+        // Connection + refresh
+        // ──────────────────────────────────────────────────────────────────────
+        async function refresh() {
+            // Blank input = use the smart default (same-origin when served, localhost
+            // when file://). Only override if the user typed something explicit.
+            const typed = $('base-url').value.trim();
+            if (typed) {
+                state.baseUrl = typed;
+            } else {
+                state.baseUrl = (location.protocol === 'http:' || location.protocol === 'https:')
+                    ? '' : 'http://localhost:7420';
+            }
+            state.token = $('token').value.trim();
+            clearError();
+            try {
+                const root = await api('/');
+                renderCounts(root.tiers);
+            } catch (e) {
+                showError(e.message);
+                renderCounts(null);
+            }
+            await switchTab(state.tab);
+        }
+
+        $('refresh').addEventListener('click', refresh);
+        $('do-search').addEventListener('click', doSearch);
+        $('search-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+
+        // Persist base URL + token in-memory only for this session (no localStorage -
+        // keeps the token off disk; refresh the page and re-enter if needed).
+
+        // Boot
+        refresh();
+    </script>
 </body>
 </html>
