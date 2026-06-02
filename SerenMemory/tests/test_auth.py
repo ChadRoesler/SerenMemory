@@ -16,35 +16,20 @@ from fastapi.testclient import TestClient
 
 from seren_memory.app import create_app
 from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig, ServerConfig
-from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
-
-
-class FakeEmbedder(EmbeddingFunction):
-    _DIM = 64
-
-    def __call__(self, input: Documents) -> Embeddings:
-        out = []
-        for text in input:
-            vec = [0.0] * self._DIM
-            for tok in text.lower().split():
-                vec[hash(tok) % self._DIM] += 1.0
-            mag = sum(v * v for v in vec) ** 0.5 or 1.0
-            out.append([v / mag for v in vec])
-        return out
 
 
 TOKEN = "supersecrettoken"
 
 
 @pytest.fixture
-def authed_client():
+def authed_client(fake_embedder):
     tmp = tempfile.mkdtemp()
     cfg = MemoryConfig(
         server=ServerConfig(bearer_token=TOKEN),
         storage=StorageConfig(persist_dir=tmp),
         consolidator=ConsolidatorConfig(enabled=False),
     )
-    app = create_app(cfg, embedding_function=FakeEmbedder())
+    app = create_app(cfg, embedding_function=fake_embedder)
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
 

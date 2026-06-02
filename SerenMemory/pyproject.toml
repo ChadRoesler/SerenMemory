@@ -25,6 +25,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    # starlette >= 0.43 emits StarletteDeprecationWarning when fastapi.testclient
+    # falls back to httpx; installing httpx2 silences it and future-proofs the
+    # test stack against the upcoming hard cutover.
+    "httpx2>=2.3",
 ]
 
 [project.scripts]
