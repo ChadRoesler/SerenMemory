@@ -61,6 +61,7 @@ from ..models.schemas import (
     ConsolidatorRun,
     ConsolidatorRunStatus,
     DailyBrief,
+    DraftEntry,
     LongTermEntry,
     Source,
 )
@@ -116,6 +117,7 @@ class Consolidator:
         report: dict[str, Any] = {
             "started_at": start,
             "promoted": 0,
+            "drafted": 0,
             "aged_out": 0,
             "near_expired": 0,
             "near_completed_promoted": 0,
@@ -148,7 +150,9 @@ class Consolidator:
 
             # ── The existing work, unchanged ──
             report["forget_flags_handled"] = self._handle_forget_flags()
-            report["promoted"] = self._promote_short_term(promote_hints, noise_hints)
+            promotion = self._promote_short_term(promote_hints, noise_hints, brief_id_used)
+            report["promoted"] = promotion["promoted"]
+            report["drafted"] = promotion["drafted"]
             report["aged_out"] = self._age_out_short_term()
             near = self._maintain_near_term()
             report["near_expired"] = near["expired"]
@@ -158,8 +162,11 @@ class Consolidator:
 
             # Noop detection: ran cleanly but touched nothing. Operationally
             # distinct from "did work" - useful for the viewer to show "system
-            # is healthy and quiet" vs "system is doing things."
+            # is healthy and quiet" vs "system is doing things." Drafted
+            # counts as work even though the long-term commit is pending —
+            # the consolidator did its job by surfacing the candidate.
             total_work = (report["forget_flags_handled"] + report["promoted"]
+                          + report["drafted"]
                           + report["aged_out"] + report["near_expired"]
                           + report["near_completed_promoted"] + report["pruned_swept"])
             if total_work == 0 and not brief_was_pulled:
@@ -187,6 +194,7 @@ class Consolidator:
                     duration_seconds=report["duration_seconds"],
                     status=status,
                     promoted=report["promoted"],
+                    drafted=report["drafted"],
                     aged_out=report["aged_out"],
                     near_expired=report["near_expired"],
                     near_completed_promoted=report["near_completed_promoted"],
@@ -377,10 +385,25 @@ class Consolidator:
     # ──────────────────────────────────────────────────────────────────
     #  Step 3: promote short-term → long-term
     # ──────────────────────────────────────────────────────────────────
-    def _promote_short_term(self, promote_hints: set[str], noise_hints: set[str]) -> int:
+    def _promote_short_term(self, promote_hints: set[str], noise_hints: set[str],
+                             brief_id: Optional[str] = None) -> dict[str, int]:
+        """Promote / draft eligible short-term clusters.
+
+        Returns a counters dict: {"promoted": N, "drafted": M}.
+
+        - "promoted" counts AUTO-COMMITS: verbatim peel-offs go straight to
+          long-term because the verbatim flag is the human's explicit
+          review-in-advance.
+        - "drafted" counts cluster syntheses queued for HITL review. Those
+          shorts STAY in the pool until the draft is approved (then
+          archived to pruned) or rejected (then back in the cluster).
+
+        brief_id is recorded on each draft for later "why did this come up"
+        observability.
+        """
         rows = self._store.get_short_all(limit=self._cfg.consolidator.max_entries_per_run)
         if not rows:
-            return 0
+            return {"promoted": 0, "drafted": 0}
 
         # Cluster by topic first (cheap exact-match grouping), then within
         # each topic we trust they're similar enough. Entries with no topic
@@ -399,6 +422,7 @@ class Consolidator:
             f"clusters formed from {len(rows)} short entries: {cluster_shape}")
 
         promoted = 0
+        drafted = 0
         promoted_ids: list[str] = []
 
         for topic, entries in clusters.items():
@@ -465,23 +489,34 @@ class Consolidator:
             if not synthesis:
                 continue
 
-            entry = LongTermEntry(
+            # ── HITL gate: cluster synthesis goes to drafts, not long-term ──
+            # Source shorts STAY in the pool. On approve, they archive to
+            # pruned and the draft becomes durable. On reject, they're back
+            # in the cluster pool for the next pass. The verbatim peel-off
+            # path above bypasses this gate intentionally — verbatim is the
+            # human's explicit review-in-advance.
+            draft = DraftEntry(
                 content=synthesis,
                 topic=None if topic == "_untagged" else topic,
                 evidence_count=len(remaining),
+                source_short_ids=[e["id"] for e in remaining],
+                brief_id_used=brief_id,
                 source=Source.CONSOLIDATOR,
             )
-            self._store.add_long(entry)
-            promoted += 1
-            promoted_ids.extend(e["id"] for e in remaining)
-            self._log(f"promoted topic '{topic}' ({len(remaining)} entries) → long-term")
+            self._store.add_draft(draft)
+            drafted += 1
+            self._log(
+                f"cluster '{topic}': drafted (id={draft.id}, {len(remaining)} entries) "
+                f"→ awaiting review")
 
-        # Promoted short-term entries are consumed (their essence now lives
-        # in long-term). Remove them so they don't re-promote next cycle.
+        # Only AUTO-COMMITTED ids (verbatim peel-off) are in promoted_ids;
+        # cluster shorts stay until their draft is approved/rejected. The
+        # delete here removes the verbatim sources whose essence now lives
+        # in long-term as-is.
         if promoted_ids:
             self._store.delete_short(promoted_ids)
 
-        return promoted
+        return {"promoted": promoted, "drafted": drafted}
 
     @staticmethod
     def _strip_reasoning(text: str) -> str:
