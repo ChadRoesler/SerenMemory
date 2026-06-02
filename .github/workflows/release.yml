@@ -54,6 +54,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Update version in init.py
+        run: |
+          version=$(echo "${GITHUB_REF#refs/tags/}" | sed 's/^v//')
+          sed -i "s/__version__ = .*/__version__ = '${version}'/" SerenMemory/seren_memory/__init__.py
+
       - name: Install build
         run: pip install build
 
