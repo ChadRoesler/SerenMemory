@@ -158,6 +158,63 @@ class LongTermEntry(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+#  Consolidator drafts - the HITL gate between synthesis and long-term
+#
+#  Memory doesn't always fully disappear, it just wraps in deeper and into
+#  other things. A draft is a synthesized long-term candidate caught at
+#  exactly that moment - the cluster's shorts haven't been folded in yet,
+#  the long-term entry isn't durable yet. Rhys (or Chad) gets to see the
+#  synthesis side-by-side with its evidence and decide whether the wrap is
+#  honest before it commits. On approve: shorts archive to pruned
+#  (insurance window), draft commits to long-term. On reject: shorts stay
+#  in the cluster pool, draft is recorded as rejected with reason.
+#
+#  Verbatim peel-off and direct-promote BYPASS this gate - both already
+#  carry an explicit human review-in-advance signal. The HITL gate is
+#  only for the model-generated synthesis path.
+# ─────────────────────────────────────────────────────────────────────────
+class DraftStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class DraftEntry(BaseModel):
+    """A consolidator cluster-synthesis awaiting review before long-term commit."""
+
+    content: str = Field(..., description="The synthesized candidate text.")
+    topic: Optional[str] = Field(None)
+    evidence_count: int = Field(default=1,
+        description="How many short-term entries supported this synthesis.")
+
+    # The cluster's source short-term IDs. On approve, these get archived
+    # to pruned (the insurance-window path) and removed from short. On
+    # reject, they stay in short for the next consolidation pass.
+    source_short_ids: list[str] = Field(default_factory=list)
+
+    # Which brief steered this synthesis, if any. Useful for "why did the
+    # consolidator surface THIS cluster" - the answer is usually 'because
+    # the brief said so'.
+    brief_id_used: Optional[str] = Field(None)
+
+    created_at: float = Field(default_factory=_now)
+    status: DraftStatus = Field(default=DraftStatus.PENDING)
+    reviewed_at: Optional[float] = Field(None)
+    review_note: Optional[str] = Field(None,
+        description="Reason on reject; optional approval note.")
+
+    # On approve, the resulting long-term entry's id gets recorded here.
+    # Forward link so we can answer 'what did this draft become' from the
+    # draft side - the long-term entry doesn't carry a back-pointer
+    # (intentional: long-term reads shouldn't depend on draft history).
+    long_term_id: Optional[str] = Field(None)
+
+    source: Source = Field(default=Source.CONSOLIDATOR)
+    id: str = Field(default_factory=_new_id)
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+# ─────────────────────────────────────────────────────────────────────────
 #  Daily brief - the main model's "here's what mattered" note that steers
 #  the consolidator's search. Input to consolidation; also a LongTerm
 #  candidate itself.
@@ -243,6 +300,7 @@ class ConsolidatorRun(BaseModel):
 
     # Counters - same as report dict in run_once()
     promoted: int = 0
+    drafted: int = 0
     aged_out: int = 0
     near_expired: int = 0
     near_completed_promoted: int = 0

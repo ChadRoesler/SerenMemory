@@ -23,12 +23,16 @@ ENDPOINTS:
     GET  /brief                 - list recent briefs (debug / viewer)
     POST /short/{id}/preserve   - mark for verbatim promotion (next cycle)
     POST /short/{id}/promote    - immediate verbatim promotion (skip cycle)
+    GET  /drafts                - list consolidator drafts (HITL queue)
+    POST /drafts/{id}/approve   - commit draft to long-term, archive shorts
+    POST /drafts/{id}/reject    - discard draft with reason; shorts stay
     POST /consolidate/run       - trigger consolidation now (manual / external mode)
 """
 from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, Body, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
@@ -212,6 +216,72 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
         store = request.app.state.store
         rows = store.get_recent_briefs(limit=limit)
         return {"entries": rows, "count": len(rows)}
+
+    # ── Consolidator drafts (HITL gate) ──
+    @app.get("/drafts")
+    async def list_drafts(request: Request, limit: int = 20,
+                          status: Optional[str] = None):
+        """List consolidator drafts. Defaults to all statuses, newest first;
+        pass status=pending for the active review queue, or 'approved' /
+        'rejected' for history.
+
+        Each draft includes its source_short_ids — the cluster's evidence
+        trail — and the brief_id_used that steered the synthesis. On
+        approve, the source shorts archive to pruned and the draft becomes
+        a long-term entry. On reject, the shorts stay in the cluster pool.
+        """
+        store = request.app.state.store
+        rows = store.get_recent_drafts(limit=limit, status=status)
+        return {"entries": rows, "count": len(rows)}
+
+    @app.post("/drafts/{draft_id}/approve")
+    async def approve_draft(request: Request, draft_id: str,
+                            body: Optional[dict] = Body(None)):
+        """Approve a pending draft. Commits the synthesis to long-term and
+        archives the source shorts to pruned (the insurance-window path —
+        the evidence isn't gone, just paged out). Optional 'note' in body
+        gets recorded with the approval.
+
+        Returns 404 if draft missing, 409 if already reviewed.
+        """
+        store = request.app.state.store
+        note = (body or {}).get("note")
+        result = store.approve_draft(draft_id, review_note=note)
+        if result is None:
+            # Disambiguate missing vs already-reviewed via a fresh fetch.
+            existing = store._get_draft_row(draft_id)
+            if not existing:
+                raise HTTPException(404, f"no draft '{draft_id}'")
+            raise HTTPException(409,
+                f"draft '{draft_id}' already {existing['metadata'].get('status')}")
+        return {
+            "ok": True,
+            "draft_id": draft_id,
+            "long_term_id": result["long_term_id"],
+            "shorts_archived": result["shorts_archived"],
+        }
+
+    @app.post("/drafts/{draft_id}/reject")
+    async def reject_draft(request: Request, draft_id: str, body: dict = Body(...)):
+        """Reject a pending draft with a reason. The synthesis is discarded
+        (recorded as rejected with reason for history); source shorts stay
+        in place and may re-cluster on the next pass.
+
+        Returns 400 if no reason given, 404 if draft missing, 409 if
+        already reviewed.
+        """
+        reason = (body or {}).get("reason", "").strip()
+        if not reason:
+            raise HTTPException(400, "a 'reason' is required to reject a draft")
+        store = request.app.state.store
+        ok = store.reject_draft(draft_id, reason)
+        if not ok:
+            existing = store._get_draft_row(draft_id)
+            if not existing:
+                raise HTTPException(404, f"no draft '{draft_id}'")
+            raise HTTPException(409,
+                f"draft '{draft_id}' already {existing['metadata'].get('status')}")
+        return {"ok": True, "draft_id": draft_id, "status": "rejected", "reason": reason}
 
     # ── Short-term agency endpoints (preserve_verbatim + promote_memory) ──
     @app.post("/short/{entry_id}/preserve")

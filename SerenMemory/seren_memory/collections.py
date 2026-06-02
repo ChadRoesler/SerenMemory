@@ -37,6 +37,8 @@ from .models.schemas import (
     DailyBrief,
     Source,
     ConsolidatorRun,
+    DraftEntry,
+    DraftStatus,
 )
 
 # Chroma metadata can't hold None. We drop None-valued keys on write and
@@ -113,6 +115,12 @@ class MemoryStore:
         # error, or noop). Gives 'last_consolidation_at' a durable answer
         # and the Halls viewer enough data for an operational panel.
         self.runs = self._client.get_or_create_collection("seren_consolidator_runs", **ef_kwargs)
+        # Consolidator drafts - the HITL gate. Cluster syntheses land here
+        # awaiting review before they commit to long-term. Verbatim peel-off
+        # and direct-promote bypass this gate (they carry explicit human
+        # review-in-advance signals). On approve: shorts archive to pruned,
+        # draft becomes long-term. On reject: shorts stay, draft is recorded.
+        self.drafts = self._client.get_or_create_collection(s.draft_collection, **ef_kwargs)
 
     # ──────────────────────────────────────────────────────────────────
     #  ShortTerm
@@ -337,6 +345,7 @@ class MemoryStore:
             f"completed_promoted={run.near_completed_promoted}, "
             f"forget_handled={run.forget_flags_handled}, "
             f"pruned_swept={run.pruned_swept}, "
+            f"drafted={run.drafted}, "
             f"duration={run.duration_seconds:.2f}s"
         )
         meta = _clean_meta({
@@ -345,6 +354,7 @@ class MemoryStore:
             "duration_seconds": run.duration_seconds,
             "status": run.status.value,
             "promoted": run.promoted,
+            "drafted": run.drafted,
             "aged_out": run.aged_out,
             "near_expired": run.near_expired,
             "near_completed_promoted": run.near_completed_promoted,
@@ -371,6 +381,130 @@ class MemoryStore:
         rows = _zip_get(self.runs.get(include=["documents", "metadatas"]), None)
         rows.sort(key=lambda r: r["metadata"].get("finished_at", 0), reverse=True)
         return rows[:limit]
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Consolidator drafts - HITL gate between cluster synthesis and
+    #  long-term commit. See DraftEntry docstring for the philosophy.
+    # ──────────────────────────────────────────────────────────────────
+    def add_draft(self, draft: DraftEntry) -> DraftEntry:
+        """Stage a synthesized cluster as a draft. Source shorts stay in
+        place - they're the evidence trail until the draft is approved
+        (then archived to pruned) or rejected (then back in the pool)."""
+        meta = _clean_meta({
+            "topic": draft.topic,
+            "evidence_count": draft.evidence_count,
+            "source_short_ids": draft.source_short_ids,  # _clean_meta JSON-encodes lists
+            "brief_id_used": draft.brief_id_used,
+            "created_at": draft.created_at,
+            "status": draft.status.value,
+            "reviewed_at": draft.reviewed_at,
+            "review_note": draft.review_note,
+            "long_term_id": draft.long_term_id,
+            "source": draft.source.value,
+            **draft.extra,
+        })
+        self.drafts.add(documents=[draft.content], metadatas=[meta], ids=[draft.id])
+        return draft
+
+    def _get_draft_row(self, draft_id: str) -> Optional[dict[str, Any]]:
+        """Fetch one draft by id, or None. Returns the same dict shape as
+        _zip_get rows: {id, content, metadata}."""
+        res = self.drafts.get(ids=[draft_id], include=["documents", "metadatas"])
+        rows = _zip_get(res, None)
+        return rows[0] if rows else None
+
+    def get_recent_drafts(self, limit: int = 20,
+                          status: Optional[str] = None) -> list[dict[str, Any]]:
+        """Most recent drafts by created_at, newest first. Optional status
+        filter - pass 'pending' for the review queue, 'approved' or
+        'rejected' for history."""
+        rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
+        if status:
+            rows = [r for r in rows if r["metadata"].get("status") == status]
+        # Unflatten source_short_ids back to a list for callers
+        for r in rows:
+            sid = r["metadata"].get("source_short_ids")
+            if isinstance(sid, str):
+                r["metadata"]["source_short_ids"] = _maybe_json(sid)
+        rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
+        return rows[:limit]
+
+    def approve_draft(self, draft_id: str,
+                      review_note: Optional[str] = None) -> Optional[dict[str, Any]]:
+        """Commit a pending draft to long-term. Source shorts are archived
+        to the pruned tier (insurance window) and removed from short. The
+        draft is marked APPROVED with a forward link to the new long-term
+        entry's id.
+
+        Returns {long_term_id, shorts_archived} on success, None if the
+        draft doesn't exist or isn't pending.
+        """
+        draft_row = self._get_draft_row(draft_id)
+        if not draft_row:
+            return None
+        if draft_row["metadata"].get("status") != DraftStatus.PENDING.value:
+            return None  # already reviewed; idempotency over re-doing
+
+        # 1. Build the long-term entry from the draft and commit it.
+        long_entry = LongTermEntry(
+            content=draft_row["content"],
+            topic=draft_row["metadata"].get("topic"),
+            evidence_count=int(draft_row["metadata"].get("evidence_count", 1) or 1),
+            source=Source.CONSOLIDATOR,
+            extra={"from_draft_id": draft_id},
+        )
+        self.add_long(long_entry)
+
+        # 2. Archive source shorts to pruned (the "wrapped deeper" path),
+        #    then remove from short. Skip if any short ids are missing
+        #    (could have been deleted between draft creation and approval).
+        source_ids = draft_row["metadata"].get("source_short_ids", [])
+        if isinstance(source_ids, str):
+            source_ids = _maybe_json(source_ids) or []
+        if not isinstance(source_ids, list):
+            source_ids = []
+        shorts_archived = 0
+        if source_ids:
+            existing = self.short.get(ids=source_ids, include=["documents", "metadatas"])
+            rows = _zip_get(existing, None)
+            if rows:
+                self.archive_pruned(rows)
+                self.delete_short([r["id"] for r in rows])
+                shorts_archived = len(rows)
+
+        # 3. Mark the draft itself as approved with a forward link.
+        self.drafts.update(
+            ids=[draft_id],
+            metadatas=[_clean_meta({
+                **draft_row["metadata"],
+                "status": DraftStatus.APPROVED.value,
+                "reviewed_at": time.time(),
+                "review_note": review_note,
+                "long_term_id": long_entry.id,
+            })],
+        )
+        return {"long_term_id": long_entry.id, "shorts_archived": shorts_archived}
+
+    def reject_draft(self, draft_id: str, reason: str) -> bool:
+        """Mark a draft as rejected with reason. Source shorts stay in place
+        (they'll re-cluster on the next pass). Returns True if the reject
+        landed, False if the draft was missing or already reviewed.
+        """
+        draft_row = self._get_draft_row(draft_id)
+        if not draft_row:
+            return False
+        if draft_row["metadata"].get("status") != DraftStatus.PENDING.value:
+            return False
+        self.drafts.update(
+            ids=[draft_id],
+            metadatas=[_clean_meta({
+                **draft_row["metadata"],
+                "status": DraftStatus.REJECTED.value,
+                "reviewed_at": time.time(),
+                "review_note": reason,
+            })],
+        )
+        return True
 
     # ──────────────────────────────────────────────────────────────────
     #  Query - used by the unified search route
@@ -409,6 +543,7 @@ class MemoryStore:
             "near": self.near.count(),
             "long": self.long.count(),
             "briefs": self.briefs.count(),
+            "drafts": self.drafts.count(),
             "pruned": self.pruned.count(),
             "runs": self.runs.count(),
         }

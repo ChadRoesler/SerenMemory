@@ -41,6 +41,7 @@ class StorageConfig(BaseModel):
     near_collection: str = "seren_near"
     long_collection: str = "seren_long"
     brief_collection: str = "seren_briefs"
+    draft_collection: str = "seren_consolidator_drafts"
 
     # Embedding model. chroma's default is all-MiniLM-L6-v2 (downloaded on
     # first use, ~80MB, runs on CPU fine). Override if you want a different
