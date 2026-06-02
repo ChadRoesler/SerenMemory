@@ -17,25 +17,11 @@ from fastapi.testclient import TestClient
 from seren_memory.app import create_app
 from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig
 from seren_memory.consolidator import service as svc_mod
-from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
-
-
-class FakeEmbedder(EmbeddingFunction):
-    _DIM = 64
-
-    def __call__(self, input: Documents) -> Embeddings:
-        out = []
-        for text in input:
-            vec = [0.0] * self._DIM
-            for tok in text.lower().split():
-                vec[hash(tok) % self._DIM] += 1.0
-            mag = sum(v * v for v in vec) ** 0.5 or 1.0
-            out.append([v / mag for v in vec])
-        return out
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, fake_embedder):
+    """FakeEmbedder and approve_pending_drafts live in conftest.py."""
     tmp = tempfile.mkdtemp()
     cfg = MemoryConfig(
         storage=StorageConfig(persist_dir=tmp),
@@ -50,7 +36,7 @@ def client(monkeypatch):
         return "CONSOLIDATED: " + prompt.split("Fragments:")[-1][:50]
 
     monkeypatch.setattr(svc_mod.Consolidator, "_call_model", fake_model)
-    app = create_app(cfg, embedding_function=FakeEmbedder())
+    app = create_app(cfg, embedding_function=fake_embedder)
     with TestClient(app) as c:
         yield c
 
@@ -84,9 +70,10 @@ def test_multiple_briefs_accepted(client):
 
 # ── brief promote_hints steer consolidation ───────────────────────────────
 
-def test_promote_hint_overrides_evidence_threshold(client):
-    """A single short-term entry should get promoted when its topic matches a
-    promote_hint from the latest brief, even though promote_min_evidence=3."""
+def test_promote_hint_overrides_evidence_threshold(client, approve_pending_drafts):
+    """A single short-term entry should clear the cluster threshold when its
+    topic matches a promote_hint, even though promote_min_evidence=3, and
+    then promote through the HITL gate."""
     client.post("/short", json={"content": "Chad uses NixOS on his laptop", "topic": "nixos"})
 
     client.post("/brief", json={
@@ -94,11 +81,17 @@ def test_promote_hint_overrides_evidence_threshold(client):
         "promote_hints": ["nixos"],
     })
 
-    before = client.get("/long").json()["count"]
-    client.post("/consolidate/run")
-    after = client.get("/long").json()["count"]
+    before_long = client.get("/long").json()["count"]
+    report = client.post("/consolidate/run").json()["report"]
 
-    assert after > before, "promote_hint should have pushed the entry to long-term"
+    # The promote_hint's job is to lower the cluster threshold so a 1-entry
+    # cluster gets drafted. Assert that distinct claim before we step the gate:
+    assert report["drafted"] >= 1, "promote_hint should have caused a cluster draft"
+
+    # Then approve and confirm the full pipe reaches long-term.
+    approve_pending_drafts(client)
+    after_long = client.get("/long").json()["count"]
+    assert after_long > before_long, "approved draft should have landed in long-term"
 
 
 # ── brief noise_hints suppress consolidation ──────────────────────────────
@@ -121,4 +114,5 @@ def test_noise_hint_suppresses_promotion(client):
     client.post("/consolidate/run")
     after = client.get("/long").json()["count"]
 
+    assert client.get("/drafts").json()["count"] == 0
     assert after == before, "noise_hint should have suppressed weather entries"

@@ -25,7 +25,8 @@ from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, fake_embedder):
+    """FakeEmbedder and approve_pending_drafts live in conftest.py."""
     tmp = tempfile.mkdtemp()
     cfg = MemoryConfig(
         storage=StorageConfig(persist_dir=tmp),
@@ -36,28 +37,6 @@ def client(monkeypatch):
         ),
     )
 
-    # Deterministic offline embedder so tests don't need to download the
-    # all-MiniLM model (and don't need network at all). A hash-based
-    # bag-of-words vector: same text → same vector, similar text → somewhat
-    # similar vector. Not semantically great, but the smoke test checks the
-    # PIPELINE (write/promote/age/search-returns-something), not embedding
-    # quality. Real deployments use chroma's default model.
-    from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
-
-    class FakeEmbedder(EmbeddingFunction):
-        _DIM = 64
-
-        def __call__(self, input: Documents) -> Embeddings:
-            out = []
-            for text in input:
-                vec = [0.0] * self._DIM
-                for tok in text.lower().split():
-                    vec[hash(tok) % self._DIM] += 1.0
-                # normalize so cosine distance behaves
-                mag = sum(v * v for v in vec) ** 0.5 or 1.0
-                out.append([v / mag for v in vec])
-            return out
-
     # Monkeypatch the model call so synthesis returns a deterministic string
     # without needing a live LLM endpoint.
     from seren_memory.consolidator import service as svc_mod
@@ -67,7 +46,7 @@ def client(monkeypatch):
 
     monkeypatch.setattr(svc_mod.Consolidator, "_call_model", fake_model)
 
-    app = create_app(cfg, embedding_function=FakeEmbedder())
+    app = create_app(cfg, embedding_function=fake_embedder)
     with TestClient(app) as c:
         yield c
     # temp dir leaks are fine in test - OS cleans /tmp
@@ -131,8 +110,8 @@ def test_search_unified(client):
     assert set(body["searched_tiers"]) <= {"short", "near", "long"}
 
 
-def test_consolidation_promotes_cluster(client):
-    # Write 3 entries on the same topic - should cluster + promote.
+def test_consolidation_promotes_cluster(client, approve_pending_drafts):
+    # Write 3 entries on the same topic — should cluster + draft.
     for i in range(3):
         client.post("/short", json={
             "content": f"Chad mentioned liking the color yellow ({i})",
@@ -141,9 +120,16 @@ def test_consolidation_promotes_cluster(client):
 
     before = client.get("/long").json()["count"]
     report = client.post("/consolidate/run").json()["report"]
-    after = client.get("/long").json()["count"]
 
-    assert report["promoted"] >= 1
+    # Wave 2: cluster synthesis writes drafts; promotion is HITL-gated.
+    assert report["drafted"] >= 1
+    assert report["promoted"] == 0  # nothing promotes without approval
+
+    # Step the gate — same call the Halls viewer's approve button makes.
+    approved = approve_pending_drafts(client)
+    assert approved >= 1
+
+    after = client.get("/long").json()["count"]
     assert after > before
 
 
@@ -160,23 +146,26 @@ def test_consolidation_promotes_completed_near(client):
     assert all(e["id"] != eid for e in near["entries"])
 
 
-def test_forget_flag_does_not_instantly_delete(client):
-    # Promote something to long-term first
+def test_forget_flag_does_not_instantly_delete(client, approve_pending_drafts):
+    # Promote something to long-term first (consolidate → approve draft).
     for i in range(2):
         client.post("/short", json={"content": f"flag test entry {i}", "topic": "flagtest"})
     client.post("/consolidate/run")
+    approve_pending_drafts(client)
 
     longs = client.get("/long").json()["entries"]
     assert longs, "expected a promoted long-term entry"
     target = longs[0]["id"]
 
-    # Flag it - should NOT delete immediately
+    # Flag it — should NOT delete immediately
     f = client.post(f"/long/{target}/forget", json={"reason": "test disagreement"})
     assert f.json()["ok"]
     still_there = client.get("/long").json()["entries"]
     assert any(e["id"] == target for e in still_there), "flag should not instant-delete"
 
-    # After consolidation, non-PII flag demotes (evidence → 0), keeps content
+    # After consolidation, non-PII flag demotes (evidence → 0), keeps content.
+    # No approval step here — forget-handling is a direct consolidator action,
+    # not a draft-creating one.
     client.post("/consolidate/run")
     after = client.get("/long").json()["entries"]
     demoted = next((e for e in after if e["id"] == target), None)
@@ -184,15 +173,19 @@ def test_forget_flag_does_not_instantly_delete(client):
     assert demoted["metadata"].get("evidence_count") == 0
 
 
-def test_pii_flag_purges(client):
+def test_pii_flag_purges(client, approve_pending_drafts):
     for i in range(2):
         client.post("/short", json={"content": f"pii test {i}", "topic": "piitest"})
     client.post("/consolidate/run")
+    approve_pending_drafts(client)
+
     longs = client.get("/long").json()["entries"]
+    assert longs, "expected a promoted long-term entry"
     target = longs[0]["id"]
 
     client.post(f"/long/{target}/forget", json={"reason": "contains my SSN"})
     client.post("/consolidate/run")
+    # PII purge is also a direct consolidator action — no draft to approve.
 
     after = client.get("/long").json()["entries"]
     assert all(e["id"] != target for e in after), "PII flag should purge on consolidation"
