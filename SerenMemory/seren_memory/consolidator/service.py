@@ -23,6 +23,8 @@ THE CYCLE, IN ORDER:
          into ONE long-term entry (model writes the synthesis)
        - brief promote_hints lower the threshold; noise_hints raise it
        - pinned entries always promote regardless of cluster size
+       - verbatim entries peel off directly to long-term (no draft gate)
+       - all other cluster syntheses land as DraftEntry (pending model review)
 
   4. Age out short-term: entries older than short_term_seconds that DIDN'T
      get promoted get archived to 'pruned' (safety net) then deleted.
@@ -35,11 +37,10 @@ THE CYCLE, IN ORDER:
   6. Sweep the pruned safety net (true-delete past the safety window).
 
 MODEL USAGE: minimal. The model is used for (a) synthesizing a cluster of
-short-term entries into one long-term statement, and (b) optionally judging
-ambiguous forget-flags / stale intents. Everything else is mechanical
-(clustering via embeddings, timestamp comparisons). A 2B-4B model is plenty
-because the model only ever does "summarize these few things into one" or
-"yes/no should this stay" - never long reasoning.
+short-term entries into one long-term statement, (b) redrafting when the
+main model rejects with a critique, and (c) optionally judging ambiguous
+forget-flags / stale intents. Everything else is mechanical (clustering via
+embeddings, timestamp comparisons). A 2B-4B model is plenty.
 
 THIS RUN IS IDEMPOTENT-ISH: re-running won't double-promote (promoted
 entries are removed from short-term) but a crash mid-run could leave
@@ -163,7 +164,7 @@ class Consolidator:
             # Noop detection: ran cleanly but touched nothing. Operationally
             # distinct from "did work" - useful for the viewer to show "system
             # is healthy and quiet" vs "system is doing things." Drafted
-            # counts as work even though the long-term commit is pending —
+            # counts as work even though the long-term commit is pending -
             # the consolidator did its job by surfacing the candidate.
             total_work = (report["forget_flags_handled"] + report["promoted"]
                           + report["drafted"]
@@ -481,7 +482,7 @@ class Consolidator:
             should_promote = pinned or len(remaining) >= threshold
             if not should_promote:
                 self._log(
-                    f"cluster '{topic}': skipped — "
+                    f"cluster '{topic}': skipped - "
                     f"{len(remaining)}<{threshold} and no pinned")
                 continue
 
@@ -489,12 +490,12 @@ class Consolidator:
             if not synthesis:
                 continue
 
-            # ── HITL gate: cluster synthesis goes to drafts, not long-term ──
+            # ── Model-review gate: cluster synthesis goes to drafts ──
             # Source shorts STAY in the pool. On approve, they archive to
-            # pruned and the draft becomes durable. On reject, they're back
-            # in the cluster pool for the next pass. The verbatim peel-off
-            # path above bypasses this gate intentionally — verbatim is the
-            # human's explicit review-in-advance.
+            # pruned and the draft becomes durable. On reject with critique,
+            # the reject endpoint triggers a redraft pass (up to
+            # max_redraft_attempts). The verbatim peel-off path above
+            # bypasses this gate - verbatim is the explicit review-in-advance.
             draft = DraftEntry(
                 content=synthesis,
                 topic=None if topic == "_untagged" else topic,
@@ -502,17 +503,21 @@ class Consolidator:
                 source_short_ids=[e["id"] for e in remaining],
                 brief_id_used=brief_id,
                 source=Source.CONSOLIDATOR,
+                attempt=1,
             )
+            # cluster_id is the first draft's own id - the stable anchor
+            # for the whole chain. Set it before persisting.
+            draft.cluster_id = draft.id
             self._store.add_draft(draft)
             drafted += 1
             self._log(
                 f"cluster '{topic}': drafted (id={draft.id}, {len(remaining)} entries) "
-                f"→ awaiting review")
+                f"→ awaiting model review")
 
-        # Only AUTO-COMMITTED ids (verbatim peel-off) are in promoted_ids;
-        # cluster shorts stay until their draft is approved/rejected. The
-        # delete here removes the verbatim sources whose essence now lives
-        # in long-term as-is.
+        # Only verbatim auto-commit ids are in promoted_ids; cluster shorts
+        # stay until their draft is approved/rejected/selected. The delete
+        # here removes the verbatim sources whose essence now lives in
+        # long-term as-is.
         if promoted_ids:
             self._store.delete_short(promoted_ids)
 
@@ -525,7 +530,7 @@ class Consolidator:
         only the synthesized conclusion.
 
         Fallback behavior when </think> is missing: return text as-is.
-        That covers two cases — model wasn't in reasoning mode that turn,
+        That covers two cases - model wasn't in reasoning mode that turn,
         or output was truncated mid-think. Returning text-as-is is safer
         than returning empty (which would trip the fallback to longest-content
         and silently lose the synthesis).
@@ -564,6 +569,114 @@ class Consolidator:
             return result.strip() if result else fallback
         except Exception as exc:
             self._log(f"_synthesize raised {type(exc).__name__}: {exc}")
+            return fallback
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Redraft - triggered by the reject endpoint when the main model
+    #  sends a critique back.
+    # ──────────────────────────────────────────────────────────────────
+    def redraft_cluster(self, cluster_id: str, rejected_draft_id: str,
+                        critique: str, attempt: int,
+                        source_short_ids: list[str],
+                        brief_id_used: Optional[str],
+                        topic: Optional[str],
+                        evidence_count: int) -> Optional[dict[str, Any]]:
+        """Public entry point for the reject endpoint. Synthesizes a new
+        draft for the cluster, incorporating the critique and all previous
+        attempts as context. If max_redraft_attempts is reached, flips the
+        whole chain to requires_selection instead.
+
+        Returns a dict: {action: 'redrafted'|'requires_selection',
+                         draft_id: str|None, attempt: int}.
+        """
+        max_attempts = self._cfg.consolidator.max_redraft_attempts
+        next_attempt = attempt + 1
+
+        if next_attempt > max_attempts:
+            # Exhausted - flip chain to requires_selection.
+            self._store.mark_chain_requires_selection(cluster_id)
+            self._log(
+                f"cluster '{cluster_id}': {max_attempts} attempts exhausted "
+                f"→ requires_selection")
+            return {"action": "requires_selection", "draft_id": None,
+                    "attempt": attempt}
+
+        # Fetch the full chain so the new synthesis prompt can reference
+        # all prior attempts.
+        chain = self._store.get_drafts_by_cluster(cluster_id)
+        previous_contents = [r["content"] for r in chain]
+        previous_ids = [r["id"] for r in chain]
+
+        # Fetch source shorts (some may be gone if manually deleted).
+        if source_short_ids:
+            existing = self._store.short.get(
+                ids=source_short_ids, include=["documents", "metadatas"])
+            from ..collections import _zip_get
+            short_rows = _zip_get(existing, None)
+        else:
+            short_rows = []
+
+        synthesis = self._redraft_synthesis(
+            topic=topic or "_untagged",
+            entries=short_rows,
+            previous_drafts=previous_contents,
+            critique=critique,
+        )
+        if not synthesis:
+            self._log(
+                f"cluster '{cluster_id}': redraft synthesis failed - "
+                f"no new draft created")
+            return None
+
+        new_draft = DraftEntry(
+            content=synthesis,
+            topic=topic,
+            evidence_count=evidence_count,
+            source_short_ids=source_short_ids,
+            brief_id_used=brief_id_used,
+            cluster_id=cluster_id,
+            attempt=next_attempt,
+            previous_draft_ids=previous_ids,
+            source=Source.CONSOLIDATOR,
+        )
+        self._store.add_draft(new_draft)
+        self._log(
+            f"cluster '{cluster_id}': redrafted (attempt {next_attempt}, "
+            f"id={new_draft.id})")
+        return {"action": "redrafted", "draft_id": new_draft.id,
+                "attempt": next_attempt}
+
+    def _redraft_synthesis(self, topic: str, entries: list[dict],
+                           previous_drafts: list[str],
+                           critique: str) -> Optional[str]:
+        """Re-synthesize a cluster incorporating the model's critique and
+        all previous attempts as negative context."""
+        contents = [e["content"] for e in entries]
+        fallback = max(contents, key=len) if contents else ""
+
+        prev_block = "\n".join(
+            f"Attempt {i+1}: {d}" for i, d in enumerate(previous_drafts)
+        )
+        prompt = (
+            "You are a memory consolidator. A previous synthesis was rejected "
+            "by the main model. Your task is to produce an improved version.\n\n"
+            f"Topic: {topic}\n\n"
+            "Source fragments:\n"
+            + "\n".join(f"- {c}" for c in contents)
+            + f"\n\nPrevious attempt(s):\n{prev_block}\n\n"
+            f"Critique of previous attempt(s): {critique}\n\n"
+            "Produce ONE concise, durable statement of fact that addresses "
+            "the critique. Present tense, no preamble, no 'the user said'.\n\n"
+            "Improved consolidated statement:"
+        )
+
+        try:
+            result = self._call_model(prompt, max_tokens=200)
+            if result:
+                result = self._strip_reasoning(result)
+            return result.strip() if result else fallback
+        except Exception as exc:
+            self._log(f"_redraft_synthesis raised {type(exc).__name__}: {exc}")
             return fallback
 
     # ──────────────────────────────────────────────────────────────────

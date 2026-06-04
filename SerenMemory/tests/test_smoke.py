@@ -13,43 +13,29 @@ Run:  pytest tests/test_smoke.py -v
 """
 from __future__ import annotations
 
-import tempfile
 import time
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from seren_memory.app import create_app
-from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig
+from seren_memory.config import MemoryConfig, ConsolidatorConfig
+from seren_memory.consolidator import service as svc_mod
 
 
 @pytest.fixture
-def client(monkeypatch, fake_embedder):
+def client(make_client, monkeypatch):
     """FakeEmbedder and approve_pending_drafts live in conftest.py."""
-    tmp = tempfile.mkdtemp()
-    cfg = MemoryConfig(
-        storage=StorageConfig(persist_dir=tmp),
-        consolidator=ConsolidatorConfig(
-            enabled=False,           # we trigger manually, no background loop
-            promote_min_evidence=2,  # lower bar for the test
-            pruned_safety_days=0,    # delete immediately, simpler assertions
-        ),
-    )
-
-    # Monkeypatch the model call so synthesis returns a deterministic string
-    # without needing a live LLM endpoint.
-    from seren_memory.consolidator import service as svc_mod
-
     def fake_model(self, prompt, max_tokens=200):
         return "CONSOLIDATED: " + prompt.split("Fragments:")[-1][:50]
 
     monkeypatch.setattr(svc_mod.Consolidator, "_call_model", fake_model)
-
-    app = create_app(cfg, embedding_function=fake_embedder)
-    with TestClient(app) as c:
-        yield c
-    # temp dir leaks are fine in test - OS cleans /tmp
+    return make_client(MemoryConfig(
+        consolidator=ConsolidatorConfig(
+            enabled=False,
+            promote_min_evidence=2,
+            pruned_safety_days=0,
+        ),
+    ))
 
 
 def test_root_and_health(client):
@@ -111,7 +97,7 @@ def test_search_unified(client):
 
 
 def test_consolidation_promotes_cluster(client, approve_pending_drafts):
-    # Write 3 entries on the same topic — should cluster + draft.
+    # Write 3 entries on the same topic - should cluster + draft.
     for i in range(3):
         client.post("/short", json={
             "content": f"Chad mentioned liking the color yellow ({i})",
@@ -121,11 +107,11 @@ def test_consolidation_promotes_cluster(client, approve_pending_drafts):
     before = client.get("/long").json()["count"]
     report = client.post("/consolidate/run").json()["report"]
 
-    # Wave 2: cluster synthesis writes drafts; promotion is HITL-gated.
+    # Wave 2: cluster synthesis writes drafts; promotion is model-review-gated.
     assert report["drafted"] >= 1
     assert report["promoted"] == 0  # nothing promotes without approval
 
-    # Step the gate — same call the Halls viewer's approve button makes.
+    # Step the gate - same call the Halls viewer's approve button makes.
     approved = approve_pending_drafts(client)
     assert approved >= 1
 
@@ -157,14 +143,14 @@ def test_forget_flag_does_not_instantly_delete(client, approve_pending_drafts):
     assert longs, "expected a promoted long-term entry"
     target = longs[0]["id"]
 
-    # Flag it — should NOT delete immediately
+    # Flag it - should NOT delete immediately
     f = client.post(f"/long/{target}/forget", json={"reason": "test disagreement"})
     assert f.json()["ok"]
     still_there = client.get("/long").json()["entries"]
     assert any(e["id"] == target for e in still_there), "flag should not instant-delete"
 
     # After consolidation, non-PII flag demotes (evidence → 0), keeps content.
-    # No approval step here — forget-handling is a direct consolidator action,
+    # No approval step here - forget-handling is a direct consolidator action,
     # not a draft-creating one.
     client.post("/consolidate/run")
     after = client.get("/long").json()["entries"]
@@ -185,7 +171,7 @@ def test_pii_flag_purges(client, approve_pending_drafts):
 
     client.post(f"/long/{target}/forget", json={"reason": "contains my SSN"})
     client.post("/consolidate/run")
-    # PII purge is also a direct consolidator action — no draft to approve.
+    # PII purge is also a direct consolidator action - no draft to approve.
 
     after = client.get("/long").json()["entries"]
     assert all(e["id"] != target for e in after), "PII flag should purge on consolidation"

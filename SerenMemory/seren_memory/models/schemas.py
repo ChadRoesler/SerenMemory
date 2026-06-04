@@ -158,29 +158,31 @@ class LongTermEntry(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-#  Consolidator drafts - the HITL gate between synthesis and long-term
+#  Consolidator drafts - the model-review gate between synthesis and
+#  long-term commit.
 #
-#  Memory doesn't always fully disappear, it just wraps in deeper and into
-#  other things. A draft is a synthesized long-term candidate caught at
-#  exactly that moment - the cluster's shorts haven't been folded in yet,
-#  the long-term entry isn't durable yet. Rhys (or Chad) gets to see the
-#  synthesis side-by-side with its evidence and decide whether the wrap is
-#  honest before it commits. On approve: shorts archive to pruned
-#  (insurance window), draft commits to long-term. On reject: shorts stay
-#  in the cluster pool, draft is recorded as rejected with reason.
+#  Each cluster synthesis lands here as a DraftEntry (status=pending) for
+#  the main model to review. The model can approve (commits to long-term,
+#  source shorts archived to pruned) or reject with a critique (triggers
+#  a consolidator redraft using the critique as steering). Redrafts form a
+#  chain tied by cluster_id; after max_redraft_attempts the chain flips to
+#  requires_selection and the model picks the best attempt.
 #
-#  Verbatim peel-off and direct-promote BYPASS this gate - both already
-#  carry an explicit human review-in-advance signal. The HITL gate is
-#  only for the model-generated synthesis path.
+#  Verbatim peel-off and direct-promote bypass this gate - both already
+#  carry an explicit model review-in-advance signal.
 # ─────────────────────────────────────────────────────────────────────────
 class DraftStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    # All redraft attempts exhausted: the main model must pick the best
+    # of the chain via POST /drafts/{id}/select. Source shorts stay in
+    # place until the selection commits.
+    REQUIRES_SELECTION = "requires_selection"
 
 
 class DraftEntry(BaseModel):
-    """A consolidator cluster-synthesis awaiting review before long-term commit."""
+    """A consolidator cluster-synthesis awaiting model review before long-term commit."""
 
     content: str = Field(..., description="The synthesized candidate text.")
     topic: Optional[str] = Field(None)
@@ -197,17 +199,46 @@ class DraftEntry(BaseModel):
     # the brief said so'.
     brief_id_used: Optional[str] = Field(None)
 
+    # Redraft chain tracking. cluster_id ties all attempts for one cluster
+    # together (set to the first draft's id; inherited by all redrafts).
+    # attempt counts from 1. previous_draft_ids is the ordered chain of
+    # earlier attempts so the model (and the redraft prompt) can compare.
+    cluster_id: Optional[str] = Field(None,
+        description="Stable id shared by all redraft attempts for this cluster.")
+    attempt: int = Field(default=1,
+        description="Which synthesis attempt this is (1-based).")
+    previous_draft_ids: list[str] = Field(default_factory=list,
+        description="Ordered ids of earlier attempts in this chain.")
+
     created_at: float = Field(default_factory=_now)
     status: DraftStatus = Field(default=DraftStatus.PENDING)
     reviewed_at: Optional[float] = Field(None)
-    review_note: Optional[str] = Field(None,
-        description="Reason on reject; optional approval note.")
 
-    # On approve, the resulting long-term entry's id gets recorded here.
-    # Forward link so we can answer 'what did this draft become' from the
-    # draft side - the long-term entry doesn't carry a back-pointer
-    # (intentional: long-term reads shouldn't depend on draft history).
+    # On reject: the model's critique that steered the redraft.
+    # On approve: optional confirmation note.
+    critique: Optional[str] = Field(None,
+        description="Model critique on reject; optional note on approve.")
+
+    # On approve or select, the resulting long-term entry's id gets recorded
+    # here. Forward link so we can answer 'what did this draft become' from
+    # the draft side.
     long_term_id: Optional[str] = Field(None)
+
+    # ── Edit-on-select audit trail ──
+    # When all redraft attempts are rejected and the chain flips to
+    # requires_selection, the editor (the same model role that did the
+    # reviews) can commit the best attempt AS-IS or with revisions. If
+    # revisions are made, the edited text lives here while the original
+    # synthesis stays in `content` - keeps the audit trail intact so we
+    # can always see what the consolidator wrote vs what the editor
+    # committed. The long-term entry uses edited_content if set, else
+    # content. Only meaningful on select (not on approve, which is the
+    # "this is fine as-is" path - if you'd want to edit, reject with a
+    # critique and let the loop do its job).
+    edited_content: Optional[str] = Field(None,
+        description="On select: the editor's revised content. The long-term "
+                    "entry uses this if set; content stays as the original "
+                    "synthesis for audit.")
 
     source: Source = Field(default=Source.CONSOLIDATOR)
     id: str = Field(default_factory=_new_id)
