@@ -19,17 +19,21 @@ ENDPOINTS:
     POST /long/{id}/forget      - flag for consolidator    (the Lacuna gate)
     POST /search                - unified ranked recall
     GET  /consolidator/status   - last run, recent runs, counts, config
+    POST /consolidate/run       - trigger consolidation now (manual / external mode)
+    POST /consolidate/wake      - restart the background loop if it died (thread mode)
     POST /brief                 - submit a daily brief (steers consolidation)
     GET  /brief                 - list recent briefs (debug / viewer)
     POST /short/{id}/preserve   - mark for verbatim promotion (next cycle)
     POST /short/{id}/promote    - immediate verbatim promotion (skip cycle)
-    GET  /drafts                - list consolidator drafts (HITL queue)
+    GET  /drafts                - list consolidator drafts (model review queue)
+    GET  /drafts/{id}/chain     - all attempts for a cluster (for comparison)
     POST /drafts/{id}/approve   - commit draft to long-term, archive shorts
-    POST /drafts/{id}/reject    - discard draft with reason; shorts stay
-    POST /consolidate/run       - trigger consolidation now (manual / external mode)
+    POST /drafts/{id}/reject    - send critique; triggers redraft or requires_selection
+    POST /drafts/{id}/select    - commit best attempt when chain is requires_selection
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -47,13 +51,15 @@ from .routes import long as long_routes
 from .routes import search as search_routes
 
 
-def create_app(config: MemoryConfig | None = None, embedding_function=None) -> FastAPI:
+def create_app(config: MemoryConfig | None = None, embedding_function=None,
+               _allow_store_reset: bool = False) -> FastAPI:
     cfg = config or load_config()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # ── Startup ──
-        store = MemoryStore(cfg, embedding_function=embedding_function)
+        store = MemoryStore(cfg, embedding_function=embedding_function,
+                            _allow_reset=_allow_store_reset)
         app.state.store = store
         app.state.config = cfg
         app.state.consolidator = Consolidator(store, cfg)
@@ -64,7 +70,6 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
         # expects something to POST /consolidate/run on a schedule instead.
         stop_event = None
         if cfg.consolidator.enabled and cfg.consolidator.mode == "thread":
-            import asyncio
             stop_event = asyncio.Event()
             app.state._stop_event = stop_event
 
@@ -82,8 +87,6 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
                         # Run the (synchronous) consolidation off the event loop.
                         await asyncio.to_thread(app.state.consolidator.run_once)
                     except Exception as e:  # noqa: BLE001
-                        # ConsolidatorBusy is expected when a force-run is mid-
-                        # flight; log it gently rather than as a scary error.
                         from .consolidator.service import ConsolidatorBusy
                         if isinstance(e, ConsolidatorBusy):
                             print(f"[seren-memory] scheduled tick skipped: {e}")
@@ -94,7 +97,14 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
                     except asyncio.TimeoutError:
                         pass
 
-            app.state._consolidation_task = asyncio.create_task(consolidation_loop())
+            def _start_loop():
+                t = asyncio.create_task(consolidation_loop())
+                app.state._consolidation_task = t
+                return t
+
+            _start_loop()
+            # Expose the loop starter for the wake endpoint.
+            app.state._start_consolidation_loop = _start_loop
 
         yield
 
@@ -107,6 +117,11 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
                     await task
                 except Exception:  # noqa: BLE001
                     pass
+        # Release the ChromaDB client so SQLite handles are closed cleanly.
+        try:
+            app.state.store.close()
+        except Exception:  # noqa: BLE001
+            pass
         print("[seren-memory] shut down")
 
     app = FastAPI(
@@ -211,44 +226,57 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
     @app.get("/brief")
     async def list_briefs(request: Request, limit: int = 20):
         """List the most recent briefs, newest first. Backs the Halls
-        viewer's brief panel — lets you see steering history alongside
+        viewer's brief panel - lets you see steering history alongside
         the tier collections."""
         store = request.app.state.store
         rows = store.get_recent_briefs(limit=limit)
         return {"entries": rows, "count": len(rows)}
 
-    # ── Consolidator drafts (HITL gate) ──
+    # ── Consolidator drafts (model review queue) ──
     @app.get("/drafts")
     async def list_drafts(request: Request, limit: int = 20,
                           status: Optional[str] = None):
         """List consolidator drafts. Defaults to all statuses, newest first;
-        pass status=pending for the active review queue, or 'approved' /
-        'rejected' for history.
+        pass status=pending for the active review queue, approved/rejected
+        for history, or requires_selection when the redraft budget ran out.
 
-        Each draft includes its source_short_ids — the cluster's evidence
-        trail — and the brief_id_used that steered the synthesis. On
-        approve, the source shorts archive to pruned and the draft becomes
-        a long-term entry. On reject, the shorts stay in the cluster pool.
+        Each draft carries source_short_ids (the cluster evidence), attempt
+        (1-based position in its redraft chain), cluster_id (shared across
+        all attempts for one cluster), and previous_draft_ids so the model
+        can compare the full chain before selecting.
         """
         store = request.app.state.store
         rows = store.get_recent_drafts(limit=limit, status=status)
         return {"entries": rows, "count": len(rows)}
 
+    @app.get("/drafts/{draft_id}/chain")
+    async def get_draft_chain(request: Request, draft_id: str):
+        """Return all synthesis attempts for the same cluster as draft_id,
+        ordered by attempt number (ascending). Use this to compare every
+        draft in a chain before selecting the best one via /select.
+        Returns 404 if draft_id is not found.
+        """
+        store = request.app.state.store
+        row = store._get_draft_row(draft_id)
+        if not row:
+            raise HTTPException(404, f"no draft '{draft_id}'")
+        cluster_id = row["metadata"].get("cluster_id", draft_id)
+        chain = store.get_drafts_by_cluster(cluster_id)
+        return {"cluster_id": cluster_id, "attempts": chain, "count": len(chain)}
+
     @app.post("/drafts/{draft_id}/approve")
     async def approve_draft(request: Request, draft_id: str,
                             body: Optional[dict] = Body(None)):
         """Approve a pending draft. Commits the synthesis to long-term and
-        archives the source shorts to pruned (the insurance-window path —
-        the evidence isn't gone, just paged out). Optional 'note' in body
-        gets recorded with the approval.
+        archives the source shorts to pruned. Optional 'note' in body is
+        recorded with the approval.
 
         Returns 404 if draft missing, 409 if already reviewed.
         """
         store = request.app.state.store
         note = (body or {}).get("note")
-        result = store.approve_draft(draft_id, review_note=note)
+        result = store.approve_draft(draft_id, note=note)
         if result is None:
-            # Disambiguate missing vs already-reviewed via a fresh fetch.
             existing = store._get_draft_row(draft_id)
             if not existing:
                 raise HTTPException(404, f"no draft '{draft_id}'")
@@ -263,25 +291,124 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
 
     @app.post("/drafts/{draft_id}/reject")
     async def reject_draft(request: Request, draft_id: str, body: dict = Body(...)):
-        """Reject a pending draft with a reason. The synthesis is discarded
-        (recorded as rejected with reason for history); source shorts stay
-        in place and may re-cluster on the next pass.
+        """Reject a pending draft with a critique. The consolidator will
+        produce a new synthesis incorporating the critique (up to
+        max_redraft_attempts total tries). Once the limit is exhausted the
+        chain flips to requires_selection and the model must POST /select.
 
-        Returns 400 if no reason given, 404 if draft missing, 409 if
-        already reviewed.
+        Body: {"critique": "<why this synthesis is wrong/incomplete>"}
+        Legacy key 'reason' is accepted as an alias.
+
+        Returns 400 if no critique, 404 if draft missing, 409 if already
+        reviewed. Response includes action ('redrafted' or
+        'requires_selection') and, when redrafting, the new draft_id.
         """
-        reason = (body or {}).get("reason", "").strip()
-        if not reason:
-            raise HTTPException(400, "a 'reason' is required to reject a draft")
+        critique = (body or {}).get("critique") or (body or {}).get("reason", "")
+        critique = critique.strip() if critique else ""
+        if not critique:
+            raise HTTPException(400, "a 'critique' is required to reject a draft")
         store = request.app.state.store
-        ok = store.reject_draft(draft_id, reason)
-        if not ok:
+        cluster_meta = store.reject_draft(draft_id, critique)
+        if cluster_meta is None:
             existing = store._get_draft_row(draft_id)
             if not existing:
                 raise HTTPException(404, f"no draft '{draft_id}'")
             raise HTTPException(409,
                 f"draft '{draft_id}' already {existing['metadata'].get('status')}")
-        return {"ok": True, "draft_id": draft_id, "status": "rejected", "reason": reason}
+
+        # Trigger redraft (or flip to requires_selection) on the consolidator.
+        consolidator = request.app.state.consolidator
+        redraft_result = await asyncio.to_thread(
+            consolidator.redraft_cluster,
+            cluster_id=cluster_meta["cluster_id"],
+            rejected_draft_id=draft_id,
+            critique=critique,
+            attempt=cluster_meta["attempt"],
+            source_short_ids=cluster_meta["source_short_ids"],
+            brief_id_used=cluster_meta["brief_id_used"],
+            topic=cluster_meta["topic"],
+            evidence_count=cluster_meta["evidence_count"],
+        )
+        if redraft_result is None:
+            return {
+                "ok": True, "draft_id": draft_id,
+                "action": "rejected", "critique": critique,
+                "warning": "redraft synthesis failed; cluster stays in pool",
+            }
+        return {
+            "ok": True,
+            "draft_id": draft_id,
+            "action": redraft_result["action"],
+            "critique": critique,
+            "new_draft_id": redraft_result.get("draft_id"),
+            "attempt": redraft_result["attempt"],
+        }
+
+    @app.post("/drafts/{draft_id}/select")
+    async def select_draft(request: Request, draft_id: str,
+                           body: Optional[dict] = Body(None)):
+        """Commit the best attempt from a requires_selection chain to
+        long-term. The selected draft is approved and all sibling attempts
+        are marked rejected. Source shorts are archived to pruned.
+
+        Body (optional):
+            {
+              "edited_content": "<revised text to commit instead of the draft>",
+              "note": "<freeform note on the selection>"
+            }
+
+        edited_content is the editor's safety valve: when all redraft
+        attempts are unsatisfactory, the editor picks the best of the chain
+        and can revise it before commit. If edited_content is omitted (or
+        None), the draft commits as-is. The original draft's content is
+        preserved on the draft row (and copied into the long-term entry's
+        extra dict) so the audit trail stays intact - we can always answer
+        "what did the consolidator originally synthesize" even after edit.
+
+        Edit is only available on this path (not on approve), which keeps
+        the iteration loop discipline: if you want to tweak during the loop,
+        reject with a critique and let the consolidator re-synthesize. Edit
+        is the terminal-state release valve, not a shortcut.
+
+        Call GET /drafts/{id}/chain first to compare all attempts, then
+        POST /select on the one judged best (optionally with edits).
+
+        Returns 400 if edited_content is provided as blank/whitespace,
+        404 if draft missing, 409 if not in requires_selection state.
+        Response includes 'edited' (bool) and 'edit_delta_chars' (int) so
+        the operator can see the magnitude of any revision at a glance.
+        """
+        body = body or {}
+        edited_content = body.get("edited_content")
+        note = body.get("note")
+
+        # Empty edits are a bug, not "no edit". Reject explicitly so the
+        # editor can't accidentally commit a blank long-term entry.
+        if edited_content is not None:
+            if not isinstance(edited_content, str) or not edited_content.strip():
+                raise HTTPException(
+                    400,
+                    "edited_content must be a non-empty string; omit the field "
+                    "to commit the draft as-is")
+
+        store = request.app.state.store
+        result = store.select_draft(draft_id, note=note,
+                                    edited_content=edited_content)
+        if result is None:
+            existing = store._get_draft_row(draft_id)
+            if not existing:
+                raise HTTPException(404, f"no draft '{draft_id}'")
+            status = existing["metadata"].get("status")
+            raise HTTPException(409,
+                f"draft '{draft_id}' is '{status}', not requires_selection")
+        return {
+            "ok": True,
+            "draft_id": draft_id,
+            "long_term_id": result["long_term_id"],
+            "shorts_archived": result["shorts_archived"],
+            "edited": result["edited"],
+            "edit_delta_chars": result["edit_delta_chars"],
+        }
 
     # ── Short-term agency endpoints (preserve_verbatim + promote_memory) ──
     @app.post("/short/{entry_id}/preserve")
@@ -310,17 +437,15 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
                 detail=f"short-term entry '{entry_id}' not found")
         return {"ok": True, "long_term_id": long_id, "removed_short_id": entry_id}
 
-    # ── Manual consolidation trigger ──
+    # ── Manual consolidation trigger + wake ──
     @app.post("/consolidate/run")
     async def consolidate_now(request: Request):
         """Run a consolidation pass right now. Used in 'external' mode (a
         cron/systemd timer POSTs here) or for manual testing. Runs the
         synchronous consolidation in a thread so we don't block the loop.
 
-        Returns 409 if a scheduled run is already in progress (the lock
-        in run_once serializes scheduled vs manual paths).
+        Returns 409 if a scheduled run is already in progress.
         """
-        import asyncio
         from .consolidator.service import ConsolidatorBusy
         try:
             report = await asyncio.to_thread(
@@ -328,6 +453,32 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None) -> F
         except ConsolidatorBusy as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         return {"ok": True, "report": report}
+
+    @app.post("/consolidate/wake")
+    async def wake_consolidator(request: Request):
+        """Restart the background consolidation loop if it has died or is not
+        running. No-op when mode is 'external' (there is no loop to wake).
+        Returns 'already_running' if the task is still alive, 'woken' if it
+        was restarted, or 'not_applicable' in external mode.
+        """
+        cfg = request.app.state.config
+        if not cfg.consolidator.enabled or cfg.consolidator.mode != "thread":
+            return {"ok": True, "status": "not_applicable",
+                    "detail": "consolidator is in external mode; POST /consolidate/run to trigger"}
+
+        task: Optional[asyncio.Task] = getattr(request.app.state,
+                                               "_consolidation_task", None)
+        if task is not None and not task.done():
+            return {"ok": True, "status": "already_running"}
+
+        starter = getattr(request.app.state, "_start_consolidation_loop", None)
+        if starter is None:
+            return {"ok": False, "status": "error",
+                    "detail": "loop starter not available; restart the service"}
+
+        starter()
+        return {"ok": True, "status": "woken",
+                "detail": "background consolidation loop restarted"}
 
     # ── Tier routes ──
     app.include_router(short_routes.router)

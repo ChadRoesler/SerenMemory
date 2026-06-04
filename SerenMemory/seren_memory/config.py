@@ -101,6 +101,12 @@ class ConsolidatorConfig(BaseModel):
     # net (delete immediately). Recommended >0 until you trust the heuristic.
     pruned_safety_days: int = 14
 
+    # How many times the consolidator will re-synthesize a cluster draft
+    # after the main model rejects it with a critique before the chain
+    # flips to requires_selection (the model must pick the best of the
+    # attempts). Minimum 1 (one attempt, no redrafts); 3 is the default.
+    max_redraft_attempts: int = 3
+
 
 class MemoryConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)

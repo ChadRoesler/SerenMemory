@@ -7,35 +7,25 @@ response accurately reflects what was searched.
 """
 from __future__ import annotations
 
-import tempfile
-
 import pytest
-from fastapi.testclient import TestClient
 
-from seren_memory.app import create_app
-from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig
+from seren_memory.config import MemoryConfig, ConsolidatorConfig
 from seren_memory.consolidator import service as svc_mod
 
 
 @pytest.fixture
-def client(monkeypatch, fake_embedder):
-    tmp = tempfile.mkdtemp()
-    cfg = MemoryConfig(
-        storage=StorageConfig(persist_dir=tmp),
+def client(make_client, monkeypatch):
+    def fake_model(self, prompt, max_tokens=200):
+        return "CONSOLIDATED: " + prompt.split("Fragments:")[-1][:50]
+
+    monkeypatch.setattr(svc_mod.Consolidator, "_call_model", fake_model)
+    return make_client(MemoryConfig(
         consolidator=ConsolidatorConfig(
             enabled=False,
             promote_min_evidence=2,
             pruned_safety_days=0,
         ),
-    )
-
-    def fake_model(self, prompt, max_tokens=200):
-        return "CONSOLIDATED: " + prompt.split("Fragments:")[-1][:50]
-
-    monkeypatch.setattr(svc_mod.Consolidator, "_call_model", fake_model)
-    app = create_app(cfg, embedding_function=fake_embedder)
-    with TestClient(app) as c:
-        yield c
+    ))
 
 
 @pytest.fixture(autouse=True)

@@ -10,17 +10,26 @@ What's here:
     tests check the PIPELINE (write/promote/age/search-returns-something),
     not embedding quality.
 
+  - `make_client` fixture: factory that creates a TestClient backed by a
+    fresh per-test temp directory and tears everything down cleanly - store
+    closed, ChromaDB WAL flushed, temp dir removed. Each per-file fixture
+    calls this instead of managing mkdtemp() manually.
+
   - `approve_pending_drafts` fixture: returns a callable that approves all
-    pending consolidator drafts. Wave 2 put cluster synthesis behind a HITL
-    gate; tests that want to observe the full short -> long path through
-    cluster promotion need to step the gate explicitly. (Verbatim peel-off
-    and completed-near bypass the gate by design - those tests don't need
-    this helper.)
+    pending consolidator drafts. Wave 2 put cluster synthesis behind a model
+    review queue; tests that want to observe the full short -> long path
+    through cluster promotion need to step the gate explicitly. (Verbatim
+    peel-off and completed-near bypass the queue by design - those tests
+    don't need this helper.)
 """
 from __future__ import annotations
 
 import pytest
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+from fastapi.testclient import TestClient
+
+from seren_memory.app import create_app
+from seren_memory.config import MemoryConfig, StorageConfig
 
 
 class FakeEmbedder(EmbeddingFunction):
@@ -78,6 +87,53 @@ class FakeEmbedder(EmbeddingFunction):
 def fake_embedder() -> FakeEmbedder:
     """Fresh FakeEmbedder per test (function scope is the pytest default)."""
     return FakeEmbedder()
+
+
+@pytest.fixture
+def make_client(tmp_path, fake_embedder):
+    """Factory fixture. Call it with a MemoryConfig to get a fully wired
+    TestClient that tears down cleanly after the test - store closed,
+    ChromaDB WAL flushed, temp dir removed by pytest.
+
+    The ``storage.persist_dir`` is always forced to ``tmp_path`` so every
+    call gets a fresh isolated database regardless of what the config says.
+
+    Usage in a per-file client fixture::
+
+        @pytest.fixture
+        def client(make_client, monkeypatch):
+            from seren_memory.consolidator import service as svc_mod
+            monkeypatch.setattr(svc_mod.Consolidator, "_call_model", stub)
+            return make_client(MemoryConfig(
+                consolidator=ConsolidatorConfig(enabled=False),
+            ))
+
+    ``raise_server_exceptions`` is forwarded as a kwarg when needed.
+    """
+    _clients: list[TestClient] = []
+
+    def _factory(cfg: MemoryConfig,
+                 raise_server_exceptions: bool = False) -> TestClient:
+        # Force persist_dir to the pytest-managed tmp_path so tests are
+        # always isolated and the dir is cleaned up automatically.
+        cfg = cfg.model_copy(update={
+            "storage": cfg.storage.model_copy(
+                update={"persist_dir": str(tmp_path)})
+        })
+        app = create_app(cfg, embedding_function=fake_embedder,
+                         _allow_store_reset=True)
+        tc = TestClient(app, raise_server_exceptions=raise_server_exceptions)
+        tc.__enter__()
+        _clients.append(tc)
+        return tc
+
+    yield _factory
+
+    for tc in _clients:
+        try:
+            tc.__exit__(None, None, None)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @pytest.fixture

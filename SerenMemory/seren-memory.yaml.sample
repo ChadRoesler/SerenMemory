@@ -80,3 +80,10 @@ consolidator:
   # collection for this many days as insurance. 0 = no safety net.
   # Recommended > 0 until you trust the heuristic.
   pruned_safety_days: 14
+
+  # How many times the consolidator will re-synthesize a cluster after the
+  # main model rejects a draft with a critique. On the Nth rejection the
+  # chain flips to 'requires_selection' - the model must then compare all
+  # attempts via GET /drafts/{id}/chain and commit the best via POST
+  # /drafts/{id}/select.
+  max_redraft_attempts: 3

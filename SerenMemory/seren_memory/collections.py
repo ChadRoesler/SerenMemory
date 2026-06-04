@@ -80,16 +80,19 @@ def _maybe_json(v: Any) -> Any:
 class MemoryStore:
     """Owns the chroma client and the tier collections."""
 
-    def __init__(self, config: MemoryConfig, embedding_function: Any = None):
+    def __init__(self, config: MemoryConfig, embedding_function: Any = None,
+                 _allow_reset: bool = False):
         self._config = config
         persist = str(config.resolved_persist_dir())
 
         # anonymized_telemetry=False: we're a local homelab tool, no phoning
-        # home. allow_reset=False: we never want an accidental client.reset()
-        # to nuke someone's memory.
+        # home. allow_reset is False in production; tests pass True so the
+        # client can be torn down cleanly without leaving SQLite handles open.
+        self._allow_reset = _allow_reset
         self._client = chromadb.PersistentClient(
             path=persist,
-            settings=Settings(anonymized_telemetry=False, allow_reset=False),
+            settings=Settings(anonymized_telemetry=False,
+                              allow_reset=_allow_reset),
         )
 
         s = config.storage
@@ -115,12 +118,30 @@ class MemoryStore:
         # error, or noop). Gives 'last_consolidation_at' a durable answer
         # and the Halls viewer enough data for an operational panel.
         self.runs = self._client.get_or_create_collection("seren_consolidator_runs", **ef_kwargs)
-        # Consolidator drafts - the HITL gate. Cluster syntheses land here
-        # awaiting review before they commit to long-term. Verbatim peel-off
-        # and direct-promote bypass this gate (they carry explicit human
-        # review-in-advance signals). On approve: shorts archive to pruned,
-        # draft becomes long-term. On reject: shorts stay, draft is recorded.
+        # Consolidator drafts - model review queue. Cluster syntheses land
+        # here awaiting model approval before committing to long-term.
+        # Verbatim peel-off and direct-promote bypass this queue (they carry
+        # explicit pre-approval signals). On approve: shorts archive to pruned,
+        # draft becomes long-term. On reject: critique stored, redraft triggered.
         self.drafts = self._client.get_or_create_collection(s.draft_collection, **ef_kwargs)
+
+    def close(self) -> None:
+        """Release the ChromaDB client and all collection references. In tests
+        (allow_reset=True) also resets the database so SQLite WAL files are
+        fully flushed before the temp directory is removed. Safe to call more
+        than once.
+        """
+        try:
+            if self._allow_reset:
+                self._client.reset()
+        except Exception:  # noqa: BLE001
+            pass
+        # Drop collection refs so GC can collect the underlying objects.
+        for attr in ("short", "near", "long", "briefs", "pruned", "runs", "drafts"):
+            try:
+                delattr(self, attr)
+            except AttributeError:
+                pass
 
     # ──────────────────────────────────────────────────────────────────
     #  ShortTerm
@@ -395,10 +416,13 @@ class MemoryStore:
             "evidence_count": draft.evidence_count,
             "source_short_ids": draft.source_short_ids,  # _clean_meta JSON-encodes lists
             "brief_id_used": draft.brief_id_used,
+            "cluster_id": draft.cluster_id or draft.id,
+            "attempt": draft.attempt,
+            "previous_draft_ids": draft.previous_draft_ids,
             "created_at": draft.created_at,
             "status": draft.status.value,
             "reviewed_at": draft.reviewed_at,
-            "review_note": draft.review_note,
+            "critique": draft.critique,
             "long_term_id": draft.long_term_id,
             "source": draft.source.value,
             **draft.extra,
@@ -416,25 +440,39 @@ class MemoryStore:
     def get_recent_drafts(self, limit: int = 20,
                           status: Optional[str] = None) -> list[dict[str, Any]]:
         """Most recent drafts by created_at, newest first. Optional status
-        filter - pass 'pending' for the review queue, 'approved' or
-        'rejected' for history."""
+        filter - pass 'pending' for the review queue, 'approved',
+        'rejected', or 'requires_selection' for history."""
         rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
         if status:
             rows = [r for r in rows if r["metadata"].get("status") == status]
-        # Unflatten source_short_ids back to a list for callers
+        # Unflatten list fields back for callers
         for r in rows:
-            sid = r["metadata"].get("source_short_ids")
-            if isinstance(sid, str):
-                r["metadata"]["source_short_ids"] = _maybe_json(sid)
+            for field in ("source_short_ids", "previous_draft_ids"):
+                val = r["metadata"].get(field)
+                if isinstance(val, str):
+                    r["metadata"][field] = _maybe_json(val)
         rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
         return rows[:limit]
 
+    def get_drafts_by_cluster(self, cluster_id: str) -> list[dict[str, Any]]:
+        """All drafts sharing a cluster_id, ordered by attempt ascending.
+        Returns the full chain for a redraft sequence so the model can
+        compare all attempts when requires_selection is reached."""
+        rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
+        chain = [r for r in rows if r["metadata"].get("cluster_id") == cluster_id]
+        for r in chain:
+            for field in ("source_short_ids", "previous_draft_ids"):
+                val = r["metadata"].get(field)
+                if isinstance(val, str):
+                    r["metadata"][field] = _maybe_json(val)
+        chain.sort(key=lambda r: r["metadata"].get("attempt", 1))
+        return chain
+
     def approve_draft(self, draft_id: str,
-                      review_note: Optional[str] = None) -> Optional[dict[str, Any]]:
+                      note: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Commit a pending draft to long-term. Source shorts are archived
-        to the pruned tier (insurance window) and removed from short. The
-        draft is marked APPROVED with a forward link to the new long-term
-        entry's id.
+        to the pruned tier and removed from short. The draft is marked
+        APPROVED with a forward link to the new long-term entry's id.
 
         Returns {long_term_id, shorts_archived} on success, None if the
         draft doesn't exist or isn't pending.
@@ -451,13 +489,12 @@ class MemoryStore:
             topic=draft_row["metadata"].get("topic"),
             evidence_count=int(draft_row["metadata"].get("evidence_count", 1) or 1),
             source=Source.CONSOLIDATOR,
-            extra={"from_draft_id": draft_id},
+            extra={"from_draft_id": draft_id,
+                   "cluster_id": draft_row["metadata"].get("cluster_id", draft_id)},
         )
         self.add_long(long_entry)
 
-        # 2. Archive source shorts to pruned (the "wrapped deeper" path),
-        #    then remove from short. Skip if any short ids are missing
-        #    (could have been deleted between draft creation and approval).
+        # 2. Archive source shorts to pruned, then remove from short.
         source_ids = draft_row["metadata"].get("source_short_ids", [])
         if isinstance(source_ids, str):
             source_ids = _maybe_json(source_ids) or []
@@ -479,32 +516,166 @@ class MemoryStore:
                 **draft_row["metadata"],
                 "status": DraftStatus.APPROVED.value,
                 "reviewed_at": time.time(),
-                "review_note": review_note,
+                "review_note": note,
                 "long_term_id": long_entry.id,
             })],
         )
         return {"long_term_id": long_entry.id, "shorts_archived": shorts_archived}
 
-    def reject_draft(self, draft_id: str, reason: str) -> bool:
-        """Mark a draft as rejected with reason. Source shorts stay in place
-        (they'll re-cluster on the next pass). Returns True if the reject
-        landed, False if the draft was missing or already reviewed.
+    def reject_draft(self, draft_id: str, critique: str) -> Optional[dict[str, Any]]:
+        """Mark a draft as rejected with the model's critique. Source shorts
+        stay in place (they'll re-cluster or be used for a redraft). Returns
+        a dict with cluster metadata the caller needs to decide whether to
+        redraft, or None if the draft was missing or already reviewed.
+
+        Returned dict keys: cluster_id, attempt, source_short_ids,
+        brief_id_used, topic, evidence_count.
         """
         draft_row = self._get_draft_row(draft_id)
         if not draft_row:
-            return False
+            return None
         if draft_row["metadata"].get("status") != DraftStatus.PENDING.value:
-            return False
+            return None
         self.drafts.update(
             ids=[draft_id],
             metadatas=[_clean_meta({
                 **draft_row["metadata"],
                 "status": DraftStatus.REJECTED.value,
                 "reviewed_at": time.time(),
-                "review_note": reason,
+                "critique": critique,
             })],
         )
-        return True
+        meta = draft_row["metadata"]
+        source_ids = meta.get("source_short_ids", [])
+        if isinstance(source_ids, str):
+            source_ids = _maybe_json(source_ids) or []
+        return {
+            "cluster_id": meta.get("cluster_id", draft_id),
+            "attempt": int(meta.get("attempt", 1)),
+            "source_short_ids": source_ids if isinstance(source_ids, list) else [],
+            "brief_id_used": meta.get("brief_id_used"),
+            "topic": meta.get("topic"),
+            "evidence_count": int(meta.get("evidence_count", 1) or 1),
+        }
+
+    def mark_chain_requires_selection(self, cluster_id: str) -> None:
+        """Flip all non-terminal drafts in a chain to requires_selection status.
+        Called when the redraft attempt limit is reached. Both pending and
+        rejected drafts are flipped so the model can compare every attempt
+        and commit the best one via /drafts/{id}/select.
+        """
+        selectable = {DraftStatus.PENDING.value, DraftStatus.REJECTED.value}
+        rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
+        for r in rows:
+            if (r["metadata"].get("cluster_id") == cluster_id
+                    and r["metadata"].get("status") in selectable):
+                self.drafts.update(
+                    ids=[r["id"]],
+                    metadatas=[_clean_meta({
+                        **r["metadata"],
+                        "status": DraftStatus.REQUIRES_SELECTION.value,
+                    })],
+                )
+
+    def select_draft(self, draft_id: str,
+                     note: Optional[str] = None,
+                     edited_content: Optional[str] = None) -> Optional[dict[str, Any]]:
+        """Commit a requires_selection draft to long-term. Marks sibling
+        drafts in the chain as rejected. Source shorts archived + removed.
+
+        If edited_content is provided (non-None), the long-term entry uses
+        the edited text. The original synthesis stays in the draft's content
+        field for audit (and is also copied into the long-term entry's
+        extra dict as original_draft_content). If None, the draft commits
+        as-is.
+
+        Returns {long_term_id, shorts_archived, edited, edit_delta_chars}
+        on success, None if the draft doesn't exist or isn't in
+        requires_selection status.
+        """
+        draft_row = self._get_draft_row(draft_id)
+        if not draft_row:
+            return None
+        if draft_row["metadata"].get("status") != DraftStatus.REQUIRES_SELECTION.value:
+            return None
+
+        cluster_id = draft_row["metadata"].get("cluster_id", draft_id)
+
+        # Determine commit content. Edited text takes precedence when set.
+        # The original draft.content stays intact so we always have the
+        # "what the consolidator originally synthesized" answer; the editor's
+        # version is what lands in long-term.
+        original_content = draft_row["content"]
+        was_edited = edited_content is not None
+        commit_content = edited_content if was_edited else original_content
+        edit_delta = abs(len(commit_content) - len(original_content)) if was_edited else 0
+
+        long_extra = {
+            "from_draft_id": draft_id,
+            "cluster_id": cluster_id,
+            "selected_from_chain": True,
+        }
+        if was_edited:
+            long_extra["edited_on_select"] = True
+            long_extra["original_draft_content"] = original_content
+
+        long_entry = LongTermEntry(
+            content=commit_content,
+            topic=draft_row["metadata"].get("topic"),
+            evidence_count=int(draft_row["metadata"].get("evidence_count", 1) or 1),
+            source=Source.CONSOLIDATOR,
+            extra=long_extra,
+        )
+        self.add_long(long_entry)
+
+        source_ids = draft_row["metadata"].get("source_short_ids", [])
+        if isinstance(source_ids, str):
+            source_ids = _maybe_json(source_ids) or []
+        if not isinstance(source_ids, list):
+            source_ids = []
+        shorts_archived = 0
+        if source_ids:
+            existing = self.short.get(ids=source_ids, include=["documents", "metadatas"])
+            rows = _zip_get(existing, None)
+            if rows:
+                self.archive_pruned(rows)
+                self.delete_short([r["id"] for r in rows])
+                shorts_archived = len(rows)
+
+        # Mark the selected draft approved with forward link + edit audit.
+        new_meta = {
+            **draft_row["metadata"],
+            "status": DraftStatus.APPROVED.value,
+            "reviewed_at": time.time(),
+            "review_note": note,
+            "long_term_id": long_entry.id,
+        }
+        if was_edited:
+            new_meta["edited_content"] = edited_content
+            new_meta["edit_delta_chars"] = edit_delta
+        self.drafts.update(
+            ids=[draft_id],
+            metadatas=[_clean_meta(new_meta)],
+        )
+
+        # Mark all other requires_selection siblings as rejected (chain settled).
+        all_rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
+        for r in all_rows:
+            if (r["id"] != draft_id
+                    and r["metadata"].get("cluster_id") == cluster_id
+                    and r["metadata"].get("status") == DraftStatus.REQUIRES_SELECTION.value):
+                self.drafts.update(
+                    ids=[r["id"]],
+                    metadatas=[_clean_meta({
+                        **r["metadata"],
+                        "status": DraftStatus.REJECTED.value,
+                        "reviewed_at": time.time(),
+                        "critique": "not selected - sibling chosen",
+                    })],
+                )
+
+        return {"long_term_id": long_entry.id, "shorts_archived": shorts_archived,
+                "edited": was_edited, "edit_delta_chars": edit_delta}
 
     # ──────────────────────────────────────────────────────────────────
     #  Query - used by the unified search route

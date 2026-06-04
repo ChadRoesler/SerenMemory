@@ -9,29 +9,23 @@ Verifies that bearer token enforcement works correctly:
 """
 from __future__ import annotations
 
-import tempfile
-
 import pytest
-from fastapi.testclient import TestClient
 
-from seren_memory.app import create_app
-from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig, ServerConfig
+from seren_memory.config import MemoryConfig, ConsolidatorConfig, ServerConfig
 
 
 TOKEN = "supersecrettoken"
 
 
 @pytest.fixture
-def authed_client(fake_embedder):
-    tmp = tempfile.mkdtemp()
-    cfg = MemoryConfig(
-        server=ServerConfig(bearer_token=TOKEN),
-        storage=StorageConfig(persist_dir=tmp),
-        consolidator=ConsolidatorConfig(enabled=False),
+def authed_client(make_client):
+    return make_client(
+        MemoryConfig(
+            server=ServerConfig(bearer_token=TOKEN),
+            consolidator=ConsolidatorConfig(enabled=False),
+        ),
+        raise_server_exceptions=True,
     )
-    app = create_app(cfg, embedding_function=fake_embedder)
-    with TestClient(app, raise_server_exceptions=True) as c:
-        yield c
 
 
 def test_public_routes_no_token(authed_client):

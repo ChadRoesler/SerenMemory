@@ -8,25 +8,16 @@ schemas change.
 """
 from __future__ import annotations
 
-import tempfile
-
 import pytest
-from fastapi.testclient import TestClient
 
-from seren_memory.app import create_app
-from seren_memory.config import MemoryConfig, StorageConfig, ConsolidatorConfig
+from seren_memory.config import MemoryConfig, ConsolidatorConfig
 
 
 @pytest.fixture
-def client(fake_embedder):
-    tmp = tempfile.mkdtemp()
-    cfg = MemoryConfig(
-        storage=StorageConfig(persist_dir=tmp),
+def client(make_client):
+    return make_client(MemoryConfig(
         consolidator=ConsolidatorConfig(enabled=False),
-    )
-    app = create_app(cfg, embedding_function=fake_embedder)
-    with TestClient(app) as c:
-        yield c
+    ))
 
 
 # ── /short ────────────────────────────────────────────────────────────────
