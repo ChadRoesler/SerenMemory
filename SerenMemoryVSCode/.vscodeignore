@@ -1,0 +1,9 @@
+seren_memory-vscode/src
+seren_memory-vscode/out
+seren_memory-vscode/esbuild.js
+node_modules
+test
+vitest.config.ts
+tsconfig.json
+publish.ps1
+**/*.map
