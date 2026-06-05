@@ -1,4 +1,23 @@
 <Solution>
+  <Folder Name="/SerenMemoryVSCode/">
+    <File Path="SerenMemoryVSCode/package-lock.json" />
+    <File Path="SerenMemoryVSCode/package.json" />
+    <File Path="SerenMemoryVSCode/publish.ps1" />
+    <File Path="SerenMemoryVSCode/tsconfig.json" />
+  </Folder>
+   <Folder Name="/SerenMemoryVSCode/seren_memory-vscode/">
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/extension.js" />
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/extension.js.map" />
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/esbuild.js" />
+     <File Path="LICENSE" />
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/.vscodeignore" />
+   </Folder>
+  <Folder Name="/SerenMemoryVSCode/seren_memory-vscode/src/">
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/src/client.ts" />
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/src/config.ts" />
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/src/extension.ts" />
+    <File Path="SerenMemoryVSCode/seren_memory-vscode/src/tools.ts" />
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".gitignore" />
     <File Path="LICENSE" />

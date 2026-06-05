@@ -1,0 +1,275 @@
+{
+  "name": "seren-memory",
+  "displayName": "Seren Memory",
+  "description": "Gives GitHub Copilot access to the SerenMemory store - search, write, brief, consolidate, and manage drafts.",
+  "version": "0.2.0",
+  "publisher": "ChadRoesler",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChadRoesler/SerenMemory"
+  },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./seren_memory-vscode/dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Seren Memory",
+      "properties": {
+        "serenMemory.endpoint": {
+          "type": "string",
+          "default": "http://localhost:7420",
+          "description": "Base URL of the SerenMemory service. Default port 7420 matches SerenMemory's own default."
+        },
+        "serenMemory.startCommand": {
+          "type": "string",
+          "default": "python -m seren_memory",
+          "scope": "application",
+          "description": "Shell command used to start the SerenMemory service when it is not reachable. Application-scoped so workspace settings cannot override it (security: prevents a malicious .vscode/settings.json from injecting a different command)."
+        },
+        "serenMemory.suppressStartPrompt": {
+          "type": "boolean",
+          "default": false,
+          "description": "Suppress the 'service not reachable - start it?' prompt on extension activation. Use this if you intentionally run SerenMemory only for some projects."
+        },
+        "serenMemory.bearerTokenHint": {
+          "type": "null",
+          "default": null,
+          "markdownDescription": "**Bearer token** is stored securely in the OS keychain, not here.\n\nTo set or update it, run the command:\n\n`Seren Memory: Set Bearer Token` (via `Ctrl+Shift+P`)"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "serenMemory.setToken",
+        "title": "Seren Memory: Set Bearer Token"
+      },
+      {
+        "command": "serenMemory.startService",
+        "title": "Seren Memory: Start Service"
+      },
+      {
+        "command": "serenMemory.checkHealth",
+        "title": "Seren Memory: Check Service Health"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "seren_memory_search",
+        "tags": ["seren", "memory", "search"],
+        "displayName": "Search Memory",
+        "modelDescription": "Search the SerenMemory store for relevant facts, preferences, or context. The main retrieval path - call this BEFORE answering anything that might benefit from past context about the user or project. Returns ranked hits across the requested tiers; short-term is weighted highest (most recent context), long-term gets an evidence-count multiplier so well-established facts outrank one-offs.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string", "description": "Natural-language search query." },
+            "n_results": { "type": "integer", "default": 5, "description": "Max hits to return after merging and ranking across tiers." },
+            "include_short": { "type": "boolean", "default": true, "description": "Search short-term (working memory)." },
+            "include_near": { "type": "boolean", "default": true, "description": "Search near-term (open loops / future intents)." },
+            "include_long": { "type": "boolean", "default": true, "description": "Search long-term (consolidated durable facts)." },
+            "include_superseded": { "type": "boolean", "default": false, "description": "Include superseded long-term entries (historical 'what the user USED to think')." }
+          },
+          "required": ["query"]
+        }
+      },
+      {
+        "name": "seren_memory_write",
+        "tags": ["seren", "memory", "write"],
+        "displayName": "Write Memory",
+        "modelDescription": "Store a memory entry in the short-term or near-term tier. Use short-term ('short') for transient facts (session notes, observations); use near-term ('near') for future-tense intents ('bring this up later', 'do X next time'). LONG-TERM CANNOT BE WRITTEN DIRECTLY - long-term is the gated tier (writes happen only through consolidation). To get a fact into long-term immediately, use seren_memory_promote_now after writing to short.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "content": { "type": "string", "description": "The memory text. For tier='near' this is the intent statement." },
+            "topic": { "type": "string", "description": "Topic label - drives consolidation clustering. Use the same topic for related entries so the consolidator can cluster them." },
+            "tier": {
+              "type": "string",
+              "enum": ["short", "near"],
+              "default": "short",
+              "description": "'short' for working memory, 'near' for open loops / future intents."
+            }
+          },
+          "required": ["content", "topic"]
+        }
+      },
+      {
+        "name": "seren_memory_brief",
+        "tags": ["seren", "memory", "brief"],
+        "displayName": "Submit Brief",
+        "modelDescription": "Submit a steering brief for the next consolidator cycle. The brief tells the consolidator what mattered in this period and which topics to promote vs. ignore. promote_hints and noise_hints are matched against entry topics+content during cluster promotion - they ARE the lever for steering what becomes long-term memory. Use them.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string", "description": "Free-text summary of what mattered in this period." },
+            "promote_hints": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Topic phrases worth remembering durably. Lowers cluster-promotion threshold for matching entries."
+            },
+            "noise_hints": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Topic phrases that are noise. Raises cluster-promotion threshold for matching entries."
+            },
+            "completed_intents": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Near-term intents that look done; the consolidator promotes them to long-term as a record."
+            }
+          },
+          "required": ["summary"]
+        }
+      },
+      {
+        "name": "seren_memory_consolidate",
+        "tags": ["seren", "memory", "consolidate"],
+        "displayName": "Run Consolidation",
+        "modelDescription": "Trigger the SerenMemory consolidator to cluster and synthesise short-term memories into long-term drafts. REQUIRES a configured consolidator model (a local LLM, typically Nemotron-3-Nano or similar). Without one, the synthesis falls back to mechanical (longest entry per cluster). For deploys with no local LLM, prefer waiting for the next scheduled cycle.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "seren_memory_preserve_verbatim",
+        "tags": ["seren", "memory", "agency"],
+        "displayName": "Preserve Memory Verbatim",
+        "modelDescription": "Mark a short-term entry for verbatim promotion on the next consolidator cycle - preserves exact phrasing instead of having the consolidator synthesise. Use when the WORDS matter, not just the gist (a specific quote, a precise spec, a verbatim user statement). Also pins the entry so it survives aging until the cycle runs.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "short_id": { "type": "string", "description": "ID of the short-term entry to flag verbatim." }
+          },
+          "required": ["short_id"]
+        }
+      },
+      {
+        "name": "seren_memory_promote_now",
+        "tags": ["seren", "memory", "agency"],
+        "displayName": "Promote Memory Now",
+        "modelDescription": "Immediately move a short-term entry to long-term verbatim, skipping the consolidator cycle entirely. Use when you KNOW a fact is durable and shouldn't wait for the next cycle - for example, after the user explicitly tells you to remember something. This is the only way to put a specific fact into long-term immediately (direct long-term writes are forbidden by design - consolidator owns long-term writes).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "short_id": { "type": "string", "description": "ID of the short-term entry to promote immediately." }
+          },
+          "required": ["short_id"]
+        }
+      },
+      {
+        "name": "seren_memory_forget_long",
+        "tags": ["seren", "memory", "agency"],
+        "displayName": "Forget Long-Term Memory",
+        "modelDescription": "Flag a long-term memory for the consolidator to handle. PII keywords (ssn, password, credit card, etc.) trigger purge; other reasons demote the entry (zero evidence_count, marks as demoted). Never a surgical delete - the Lacuna gate is a FLAG, not a scalpel. Use when the user asks to forget something, or when you discover a long-term fact is wrong or outdated.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "long_id": { "type": "string", "description": "ID of the long-term entry to flag." },
+            "reason": { "type": "string", "description": "Why this should be forgotten. Specific reasons help the consolidator decide (purge vs. demote vs. supersede)." }
+          },
+          "required": ["long_id", "reason"]
+        }
+      },
+      {
+        "name": "seren_memory_complete_intent",
+        "tags": ["seren", "memory", "agency"],
+        "displayName": "Complete Near-Term Intent",
+        "modelDescription": "Mark a near-term intent as ACTED ON (not merely referenced). The consolidator promotes completed intents to long-term as a record of 'we did this'. Without this call, intents accumulate forever and never promote.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "intent_id": { "type": "string", "description": "ID of the near-term entry to mark complete." }
+          },
+          "required": ["intent_id"]
+        }
+      },
+      {
+        "name": "seren_memory_list_drafts",
+        "tags": ["seren", "memory", "drafts"],
+        "displayName": "List Drafts",
+        "modelDescription": "List consolidation drafts awaiting model review. Filter by status: pending, approved, rejected, or requires_selection.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["pending", "approved", "rejected", "requires_selection"],
+              "description": "Filter drafts by status. Omit for all drafts."
+            }
+          }
+        }
+      },
+      {
+        "name": "seren_memory_draft_chain",
+        "tags": ["seren", "memory", "drafts"],
+        "displayName": "Get Draft Chain",
+        "modelDescription": "Retrieve the full redraft chain for a draft - all attempts, their critiques, and statuses. Use this when a draft has requires_selection status to compare all attempts before selecting the best one.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "draft_id": { "type": "string", "description": "ID of any draft in the chain." }
+          },
+          "required": ["draft_id"]
+        }
+      },
+      {
+        "name": "seren_memory_approve_draft",
+        "tags": ["seren", "memory", "drafts"],
+        "displayName": "Approve Draft",
+        "modelDescription": "Approve a pending consolidation draft, committing it to long-term memory.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "draft_id": { "type": "string", "description": "ID of the draft to approve." },
+            "note": { "type": "string", "description": "Optional confirmation note recorded with the approval." }
+          },
+          "required": ["draft_id"]
+        }
+      },
+      {
+        "name": "seren_memory_reject_draft",
+        "tags": ["seren", "memory", "drafts"],
+        "displayName": "Reject Draft",
+        "modelDescription": "Reject a consolidation draft with a critique. The consolidator will redraft up to the configured retry limit. Once the limit is reached, the chain moves to requires_selection. CRITIQUE SHOULD BE SPECIFIC - 'you conflated X with Y, separate them and emphasise Y' beats 'wrong vibe'. The next attempt sees the critique + all previous attempts as steering.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "draft_id": { "type": "string", "description": "ID of the draft to reject." },
+            "critique": { "type": "string", "description": "Specific reason for rejection; guides the redraft. Be concrete about what's wrong." }
+          },
+          "required": ["draft_id", "critique"]
+        }
+      },
+      {
+        "name": "seren_memory_select_draft",
+        "tags": ["seren", "memory", "drafts"],
+        "displayName": "Select Best Draft",
+        "modelDescription": "When a draft chain has requires_selection status, select the best draft from all attempts to commit to long-term memory. Use seren_memory_draft_chain first to compare all attempts. Optionally provide edited_content to commit a revised version instead of the draft as-is - use this when none of the chain attempts is quite right but one is closest, and a small edit fixes it.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "draft_id": { "type": "string", "description": "ID of the draft attempt to select as the best." },
+            "edited_content": { "type": "string", "description": "Optional revised text to commit instead of the draft. Omit to commit the draft unchanged. Empty string is rejected with an error - use this field only when you genuinely have a revision." },
+            "note": { "type": "string", "description": "Optional note recorded with the selection." }
+          },
+          "required": ["draft_id"]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "node seren_memory-vscode/esbuild.js --production",
+    "build": "node seren_memory-vscode/esbuild.js",
+    "watch": "node seren_memory-vscode/esbuild.js --watch",
+    "package": "vsce package",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^3.9.2",
+    "vitest": "^1.0.0"
+  }
+}

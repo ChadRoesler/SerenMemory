@@ -3,6 +3,10 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# Local test venvs (created by Makefile targets)
+.venv-base/
+.venv-mcp/
+
 # User-specific files
 *.rsuser
 *.suo

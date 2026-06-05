@@ -22,6 +22,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+    # The Python MCP SDK from Anthropic. FastMCP (the high-level server
+    # API) was merged into the main SDK; this single dep gives us both.
+    # Pin loosely - the SDK is moving fast; our server.py is written to
+    # tolerate the streamable_http→sse transport-name drift across recent
+    # versions.
+    "mcp>=1.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

@@ -66,6 +66,26 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         print(f"[seren-memory] store ready at {cfg.resolved_persist_dir()}")
         print(f"[seren-memory] tiers: {store.counts()}")
 
+        # ── Optional MCP server ──
+        # Mounted ONLY if the [mcp] extras are installed. The import is
+        # inside the try block so a missing `mcp` package falls back to
+        # pure-HTTP mode without crashing startup. One install option
+        # (`pip install seren-memory[mcp]`) enables the MCP route at /mcp
+        # alongside the existing HTTP API - same process, same port, same
+        # config, one sec-approval surface.
+        try:
+            from .mcp.server import mount_mcp_routes
+            mount_mcp_routes(app)
+        except ImportError as exc:
+            # `mcp` package not installed - pure HTTP mode. Quiet by
+            # design: this is the default install path, not an error.
+            print(f"[seren-memory] MCP extras not installed; HTTP-only mode ({exc})")
+        except Exception as exc:  # noqa: BLE001
+            # SDK installed but mount failed (version drift, transport
+            # mismatch, etc.) - log loudly but don't crash the service.
+            # HTTP API stays up; operator can investigate.
+            print(f"[seren-memory] MCP mount failed: {exc!r} - continuing without MCP")
+
         # Background consolidation loop (thread mode only). External mode
         # expects something to POST /consolidate/run on a schedule instead.
         stop_event = None
