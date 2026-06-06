@@ -41,8 +41,29 @@ jobs:
         run: python -m pytest tests/ -v
         working-directory: SerenMemory
 
+  test-vscode:
+    runs-on: ubuntu-latest
+    name: "Test VSCode extension"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: SerenMemoryVSCode
+        run: npm install
+
+      - name: Run extension unit tests
+        working-directory: SerenMemoryVSCode
+        run: npm test
+
   build-and-release:
-    needs: test
+    needs: [test, test-vscode]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
@@ -57,10 +78,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Extract version from tag
+        id: version
+        run: echo "version=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" >> $GITHUB_OUTPUT
+
       - name: Update version in init.py
         run: |
-          version=$(echo "${GITHUB_REF#refs/tags/}" | sed 's/^v//')
-          sed -i "s/__version__ = .*/__version__ = '${version}'/" SerenMemory/seren_memory/__init__.py
+          sed -i "s/__version__ = .*/__version__ = '${{ steps.version.outputs.version }}'/" SerenMemory/seren_memory/__init__.py
 
       - name: Install build
         run: pip install build
@@ -68,6 +92,8 @@ jobs:
       - name: Build wheel and sdist
         run: python -m build
         working-directory: SerenMemory
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.version.outputs.version }}
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -75,7 +101,7 @@ jobs:
           files: SerenMemory/dist/*
 
   build-vscode:
-    needs: test
+    needs: [test, test-vscode]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
@@ -97,10 +123,6 @@ jobs:
       - name: Install dependencies
         working-directory: SerenMemoryVSCode
         run: npm install
-
-      - name: Run extension unit tests
-        working-directory: SerenMemoryVSCode
-        run: npm test
 
       - name: Build and package
         working-directory: SerenMemoryVSCode
