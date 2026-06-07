@@ -51,6 +51,21 @@ from .routes import long as long_routes
 from .routes import search as search_routes
 
 
+# Single source of truth for the version we report. Prefer the actually-
+# installed wheel's metadata (the setuptools-scm value baked at build time);
+# fall back to the package __version__ for an editable/dev checkout where the
+# dist metadata may be absent or stale. This kills the old drift where app.py
+# hardcoded a literal that the release process never touched.
+try:
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError
+    try:
+        APP_VERSION = _pkg_version("seren-memory")
+    except PackageNotFoundError:
+        from . import __version__ as APP_VERSION
+except Exception:  # noqa: BLE001 - never let version lookup break startup
+    APP_VERSION = "0+unknown"
+
+
 def create_app(config: MemoryConfig | None = None, embedding_function=None,
                _allow_store_reset: bool = False) -> FastAPI:
     cfg = config or load_config()
@@ -161,7 +176,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     app = FastAPI(
         title="SerenMemory",
         description="Three-tier LLM memory with consolidation. The Halls of Memory.",
-        version="0.1.0",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 
@@ -185,7 +200,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         store = request.app.state.store
         return {
             "service": "SerenMemory",
-            "version": "0.1.0",
+            "version": APP_VERSION,
             "tiers": store.counts(),
             "consolidator": {
                 "enabled": cfg.consolidator.enabled,

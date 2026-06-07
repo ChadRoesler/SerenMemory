@@ -7,7 +7,12 @@ name = "seren-memory"
 dynamic = ["version"]
 description = "Three-tier LLM memory with consolidation. The Halls of Memory."
 readme = "README.md"
-requires-python = ">=3.10"
+# Upper bound is the chromadb wall, not ours: SerenMemory itself is fine on
+# 3.13+, but chromadb's transitive deps don't build there yet (an lz4 wheel
+# build failure). Capping here turns a cryptic transitive build explosion into
+# a clean "needs a different Python" from pip. LIFT THE <3.13 the day chromadb
+# ships 3.13 support (bump the CI matrix to match in the same commit).
+requires-python = ">=3.10,<3.13"
 license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Chad Roesler" }]
 keywords = ["llm", "memory", "vector-db", "chromadb", "consolidation", "seren"]
@@ -59,7 +64,3 @@ version_scheme = "release-branch-semver"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]

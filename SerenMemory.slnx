@@ -23,6 +23,8 @@
     <File Path="LICENSE" />
     <File Path="Makefile" />
     <File Path="README.md" />
+    <File Path="seren-memory-setup.ps1" />
+    <File Path="seren-memory-setup.sh" />
   </Folder>
   <Folder Name="/Solution Items/.github/" />
   <Folder Name="/Solution Items/.github/workflows/">
