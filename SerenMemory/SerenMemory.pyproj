@@ -40,8 +40,14 @@
     <Compile Include="seren_memory\routes\search.py" />
     <Compile Include="seren_memory\consolidator\__init__.py" />
     <Compile Include="seren_memory\consolidator\service.py" />
+    <Compile Include="tests\conftest.py" />
     <Compile Include="tests\test_auth.py" />
     <Compile Include="tests\test_brief.py" />
+    <Compile Include="tests\test_drafts.py" />
+    <Compile Include="tests\test_mcp_endpoint.py" />
+    <Compile Include="tests\test_mcp_fallback.py" />
+    <Compile Include="tests\test_mcp_mount.py" />
+    <Compile Include="tests\test_mcp_tools.py" />
     <Compile Include="tests\test_near_listing.py" />
     <Compile Include="tests\test_search.py" />
     <Compile Include="tests\test_smoke.py" />

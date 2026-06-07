@@ -2,13 +2,13 @@
 seren_memory.app.
 
 The conditional `try/except ImportError` in app.py's lifespan is what
-makes [mcp] extras optional — when the mcp SDK isn't installed, the
+makes [mcp] extras optional - when the mcp SDK isn't installed, the
 import raises, we catch, log a quiet line, and continue in HTTP-only
 mode. A second `except Exception` catches mount failures that aren't
 ImportError (transport API drift, mount path collision, etc.) and logs
 loudly but keeps the HTTP API up.
 
-We simulate both paths via monkeypatch.setattr — replacing
+We simulate both paths via monkeypatch.setattr - replacing
 `seren_memory.mcp.server.mount_mcp_routes` with a function that raises
 the right exception type. The lifespan's `from .mcp.server import
 mount_mcp_routes` picks up the patched version, calls it, and lands in
@@ -18,7 +18,7 @@ that could leak into adjacent tests.
 
 The existing test_drafts.py / test_smoke.py / etc. implicitly verify
 the no-MCP path works (they run without mcp in their dev deps and
-don't break). This file is the EXPLICIT contract — so a future change
+don't break). This file is the EXPLICIT contract - so a future change
 that accidentally lets an exception escape will be caught here loudly.
 """
 from __future__ import annotations
@@ -52,18 +52,18 @@ def test_missing_extras_logs_http_only_and_skips_mcp_mount(
 
     When mcp IS installed we simulate absence via monkeypatch so we don't
     trash sys.modules. When mcp is NOT installed the ImportError fires
-    naturally in the lifespan — no patching required. Either way we land
+    naturally in the lifespan - no patching required. Either way we land
     in the same except-ImportError branch and observe the same behaviour."""
     try:
         import seren_memory.mcp.server as srv_mod
 
-        # mcp is installed in this env — simulate absence by patching.
+        # mcp is installed in this env - simulate absence by patching.
         def _simulated_missing_import(app):
             raise ImportError("simulated: mcp package not installed")
 
         monkeypatch.setattr(srv_mod, "mount_mcp_routes", _simulated_missing_import)
     except ImportError:
-        # mcp genuinely absent — the lifespan ImportError fires naturally.
+        # mcp genuinely absent - the lifespan ImportError fires naturally.
         pass
 
     app = create_app(cfg_for_tmp, embedding_function=fake_embedder,
@@ -76,7 +76,7 @@ def test_missing_extras_logs_http_only_and_skips_mcp_mount(
         paths = [getattr(r, "path", None) for r in app.routes]
         assert "/mcp" not in paths
 
-        # HTTP API still works — sanity check.
+        # HTTP API still works - sanity check.
         r = tc.get("/health")
         assert r.status_code == 200
 
@@ -88,7 +88,7 @@ def test_mount_failure_logs_loudly_but_keeps_http_up(
     transport API drift, app-state bug). The lifespan should log
     loudly + continue.
 
-    Requires mcp to be installed — can't trigger a mount failure if the
+    Requires mcp to be installed - can't trigger a mount failure if the
     import itself never succeeds."""
     pytest.importorskip("mcp")
 
@@ -109,7 +109,7 @@ def test_mount_failure_logs_loudly_but_keeps_http_up(
         paths = [getattr(r, "path", None) for r in app.routes]
         assert "/mcp" not in paths
 
-        # HTTP API still up — the whole point of the broad except.
+        # HTTP API still up - the whole point of the broad except.
         r = tc.get("/health")
         assert r.status_code == 200
 

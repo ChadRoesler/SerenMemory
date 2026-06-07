@@ -1,6 +1,6 @@
-"""Tests for seren_memory.mcp.server — the mount integration.
+"""Tests for seren_memory.mcp.server - the mount integration.
 
-Gated behind `pytest.importorskip("mcp")` — without the SDK, the whole
+Gated behind `pytest.importorskip("mcp")` - without the SDK, the whole
 file skips. This file exercises the lifecycle that app.py runs at
 startup: build a FastAPI app, wire app.state.store/config/consolidator,
 call mount_mcp_routes, verify the /mcp route lands.
@@ -9,14 +9,23 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("mcp")
+try:
+    import mcp  # noqa: F401
+    from seren_memory.mcp.server import mount_mcp_routes
+    _mcp_available = True
+except ImportError:
+    _mcp_available = False
+    mount_mcp_routes = None  # type: ignore
+
+pytestmark = pytest.mark.skipif(
+    not _mcp_available, reason="mcp extras not installed"
+)
 
 from fastapi import FastAPI
 
 from seren_memory.collections import MemoryStore
 from seren_memory.config import ConsolidatorConfig, MemoryConfig
 from seren_memory.consolidator.service import Consolidator
-from seren_memory.mcp.server import mount_mcp_routes
 
 
 # ─── fixtures ────────────────────────────────────────────────────────────────
@@ -47,14 +56,14 @@ def wired_app(tmp_path, fake_embedder):
 
 
 def test_mount_succeeds_when_state_wired(wired_app):
-    """The happy path — mount adds a /mcp route to the app."""
+    """The happy path - mount adds a /mcp route to the app."""
     mount_mcp_routes(wired_app)
     paths = [getattr(r, "path", None) for r in wired_app.routes]
     assert "/mcp" in paths
 
 
 def test_mount_respects_env_override(wired_app, monkeypatch):
-    """SEREN_MCP_MOUNT overrides the default mount point — useful when
+    """SEREN_MCP_MOUNT overrides the default mount point - useful when
     /mcp is taken by something else on the host app."""
     monkeypatch.setenv("SEREN_MCP_MOUNT", "/serenmem")
     mount_mcp_routes(wired_app)
@@ -73,7 +82,7 @@ def test_mount_raises_clear_error_when_state_missing():
 
 
 def test_mount_logs_tool_count(wired_app, caplog):
-    """The mount log line surfaces how many tools were registered —
+    """The mount log line surfaces how many tools were registered -
     sanity-check that the count helper finds them. Best-effort: if the
     SDK changes the internal attribute name, the helper returns 0, the
     test gates loosely on 'mounted at /mcp' showing up."""
@@ -84,7 +93,7 @@ def test_mount_logs_tool_count(wired_app, caplog):
 
 
 def test_mount_resolves_to_an_asgi_app(wired_app):
-    """The mounted /mcp route must point at a real ASGI app — callable
+    """The mounted /mcp route must point at a real ASGI app - callable
     and accepting the (scope, receive, send) trio. We don't actually
     invoke it (that'd require an MCP protocol exchange), just verify
     the shape."""
