@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 from typing import Optional
 
 from fastapi import FastAPI, Body, Request, HTTPException
@@ -75,15 +75,17 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         # config, one sec-approval surface.
         try:
             from .mcp.server import mount_mcp_routes
-            mount_mcp_routes(app)
+            mcp_server = mount_mcp_routes(app)
         except ImportError as exc:
             # `mcp` package not installed - pure HTTP mode. Quiet by
             # design: this is the default install path, not an error.
+            mcp_server = None
             print(f"[seren-memory] MCP extras not installed; HTTP-only mode ({exc})")
         except Exception as exc:  # noqa: BLE001
             # SDK installed but mount failed (version drift, transport
             # mismatch, etc.) - log loudly but don't crash the service.
             # HTTP API stays up; operator can investigate.
+            mcp_server = None
             print(f"[seren-memory] MCP mount failed: {exc!r} - continuing without MCP")
 
         # Background consolidation loop (thread mode only). External mode
@@ -126,7 +128,19 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             # Expose the loop starter for the wake endpoint.
             app.state._start_consolidation_loop = _start_loop
 
-        yield
+        # ── Run the MCP session manager's task group (Bug 2 fix) ──
+        # The streamable-HTTP transport keeps its anyio task group alive in
+        # session_manager.run(); without entering it here every MCP request
+        # 500s with "Task group is not initialized". A mounted sub-app's own
+        # lifespan does NOT fire under Starlette, so this is the only place
+        # it can live. AsyncExitStack makes HTTP-only mode (mcp_server is
+        # None) a clean no-op - we enter nothing and just yield.
+        async with AsyncExitStack() as _mcp_stack:
+            session_manager = getattr(mcp_server, "session_manager", None)
+            if session_manager is not None:
+                await _mcp_stack.enter_async_context(session_manager.run())
+                print("[seren-memory] MCP session manager running")
+            yield
 
         # ── Shutdown ──
         if stop_event is not None:

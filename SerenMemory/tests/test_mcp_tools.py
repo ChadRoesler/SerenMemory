@@ -1,4 +1,4 @@
-"""Tests for MemoryToolImpl — the class behind every MCP tool.
+"""Tests for MemoryToolImpl - the class behind every MCP tool.
 
 These tests call the impl methods DIRECTLY, no FastMCP, no HTTP. The
 structural split between MemoryToolImpl (the methods) and register_tools
@@ -6,7 +6,7 @@ structural split between MemoryToolImpl (the methods) and register_tools
 needs to change, change it once here; the FastMCP decoration in
 register_tools picks up the new behaviour automatically.
 
-The file is gated behind `pytest.importorskip("mcp")` at module load —
+The file is gated behind `pytest.importorskip("mcp")` at module load -
 in environments where the [mcp] extras aren't installed (pure HTTP-only
 deploys, CI without the optional dep), the whole file is skipped rather
 than failing on import. Same pattern conftest.py uses for chromadb edge
@@ -16,16 +16,25 @@ from __future__ import annotations
 
 import pytest
 
-# Skip the whole module if the optional mcp SDK isn't installed —
-# tools.py imports from mcp.server.fastmcp at module top, so no SDK
-# means no MemoryToolImpl. Behavior we already verified via the
-# ImportError fallback in app.py; this file just respects it.
-pytest.importorskip("mcp")
+# Guard the mcp-dependent import - tools.py imports from mcp.server.fastmcp
+# at module top, so no SDK means no MemoryToolImpl. Use try/except +
+# pytestmark so tests are still COLLECTED (visible in the test explorer)
+# and shown as skipped rather than disappearing entirely.
+try:
+    import mcp  # noqa: F401
+    from seren_memory.mcp.tools import MemoryToolImpl
+    _mcp_available = True
+except ImportError:
+    _mcp_available = False
+    MemoryToolImpl = None  # type: ignore
+
+pytestmark = pytest.mark.skipif(
+    not _mcp_available, reason="mcp extras not installed"
+)
 
 from seren_memory.collections import MemoryStore
 from seren_memory.config import ConsolidatorConfig, MemoryConfig
 from seren_memory.consolidator.service import Consolidator
-from seren_memory.mcp.tools import MemoryToolImpl
 
 
 # ─── fixtures ────────────────────────────────────────────────────────────────
@@ -45,14 +54,14 @@ def store(tmp_path, fake_embedder):
 
 @pytest.fixture
 def cfg(store):
-    """The config that the store was built with — kept as a separate
+    """The config that the store was built with - kept as a separate
     fixture so tests can pass it to MemoryToolImpl explicitly."""
     return store._config  # store retains its config
 
 
 @pytest.fixture
 def mcp_impl(store, cfg):
-    """MemoryToolImpl with NO consolidator — the locked-down/no-LLM
+    """MemoryToolImpl with NO consolidator - the locked-down/no-LLM
     profile. Tools that need a consolidator (consolidate_now, reject
     redraft) return error responses in this profile, which is itself
     worth testing."""
@@ -62,14 +71,14 @@ def mcp_impl(store, cfg):
 @pytest.fixture
 def mcp_impl_with_consolidator(store, cfg, monkeypatch):
     """MemoryToolImpl WITH a real Consolidator whose model call is
-    stubbed — for testing reject's redraft path and consolidate_now's
+    stubbed - for testing reject's redraft path and consolidate_now's
     happy path without spinning up a real LLM."""
     cfg = cfg.model_copy(update={
         "consolidator": ConsolidatorConfig(enabled=False)  # don't autostart
     })
     consolidator = Consolidator(store, cfg)
 
-    # Same stubbing pattern conftest.py recommends — bypass the LLM
+    # Same stubbing pattern conftest.py recommends - bypass the LLM
     # call, return a canned synthesis instead.
     def _stub_call_model(self, prompt: str, **kwargs) -> str:
         return "STUB SYNTHESIS"
@@ -106,7 +115,7 @@ def test_remember_writes_to_short(mcp_impl):
 
 
 def test_remember_accepts_optional_topic(mcp_impl):
-    """topic is genuinely optional — no topic should still write OK
+    """topic is genuinely optional - no topic should still write OK
     (untagged entries go in the _untagged bucket during consolidation)."""
     r = mcp_impl.remember(content="just a note")
     assert r["ok"] is True
@@ -173,7 +182,7 @@ def test_remember_for_later_writes_intent(mcp_impl):
 
 
 def test_remember_for_later_rejects_invalid_trigger_type(mcp_impl):
-    """trigger_type is a closed enum — typos get a helpful error rather
+    """trigger_type is a closed enum - typos get a helpful error rather
     than a 500 from pydantic deep in the call chain."""
     r = mcp_impl.remember_for_later(intent="x", trigger_type="whenever_lol")
     assert r["ok"] is False
@@ -181,7 +190,7 @@ def test_remember_for_later_rejects_invalid_trigger_type(mcp_impl):
 
 
 def test_complete_intent_marks_completed(mcp_impl):
-    """complete_intent flips the near-term entry's completed flag —
+    """complete_intent flips the near-term entry's completed flag -
     consolidator promotes completed intents to long-term as a record."""
     written = mcp_impl.remember_for_later(intent="do thing", topic="t")
     intent_id = written["id"]
@@ -220,7 +229,7 @@ def test_preserve_memory_verbatim_missing_id_returns_error(mcp_impl):
 
 
 def test_promote_memory_now_moves_to_long(mcp_impl):
-    """The agent-side escape hatch — short entry goes to long verbatim,
+    """The agent-side escape hatch - short entry goes to long verbatim,
     short entry is removed."""
     written = mcp_impl.remember(content="durable fact", topic="t")
     short_id = written["id"]
@@ -241,7 +250,7 @@ def test_promote_memory_now_missing_id_returns_error(mcp_impl):
 
 
 def test_forget_memory_requires_reason(mcp_impl):
-    """forget_memory rejects blank/whitespace reasons — the consolidator
+    """forget_memory rejects blank/whitespace reasons - the consolidator
     needs SOMETHING to steer with."""
     r = mcp_impl.forget_memory(long_id="any", reason="")
     assert r["ok"] is False
@@ -264,7 +273,7 @@ def test_forget_memory_missing_long_id_returns_error(mcp_impl):
 
 
 def test_submit_brief_persists_with_hints(mcp_impl):
-    """The brief and its hints actually land — submit_brief returns an
+    """The brief and its hints actually land - submit_brief returns an
     id, and the brief is retrievable via the underlying store."""
     r = mcp_impl.submit_brief(
         summary="worked on memory autonomy + edit-on-select",
@@ -346,7 +355,7 @@ def test_approve_draft_commits_to_long(mcp_impl):
 
 
 def test_reject_draft_requires_critique(mcp_impl):
-    """Critique is mandatory — blank/whitespace gets rejected."""
+    """Critique is mandatory - blank/whitespace gets rejected."""
     draft_id = _make_test_draft(mcp_impl.store)
     r = mcp_impl.reject_draft(draft_id=draft_id, critique="")
     assert r["ok"] is False
@@ -354,7 +363,7 @@ def test_reject_draft_requires_critique(mcp_impl):
 
 
 def test_reject_draft_errors_when_consolidator_missing(mcp_impl):
-    """No consolidator means we can't redraft — return the helpful error."""
+    """No consolidator means we can't redraft - return the helpful error."""
     draft_id = _make_test_draft(mcp_impl.store)
     r = mcp_impl.reject_draft(draft_id=draft_id, critique="specific reason")
     assert r["ok"] is False
@@ -400,7 +409,7 @@ def test_select_draft_with_edited_content(mcp_impl):
 
 
 def test_select_draft_rejects_blank_edit(mcp_impl):
-    """Empty/whitespace edited_content is rejected — it's a bug
+    """Empty/whitespace edited_content is rejected - it's a bug
     surface, not a sensible 'no edit'."""
     draft_id = _make_test_draft(mcp_impl.store)
     mcp_impl.store.mark_chain_requires_selection(draft_id)
@@ -441,7 +450,7 @@ def test_prepare_consolidation_empty_store_returns_note(mcp_impl):
 
 
 def test_commit_consolidation_creates_pending_draft(mcp_impl):
-    """The model-synthesised draft lands as pending — not auto-committed
+    """The model-synthesised draft lands as pending - not auto-committed
     to long-term (one self-review is too weak a gate)."""
     ids = _seed_shorts(mcp_impl,
                        ("fact one", "topic-A"),

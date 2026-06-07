@@ -21,6 +21,7 @@
   <Folder Name="/Solution Items/">
     <File Path=".gitignore" />
     <File Path="LICENSE" />
+    <File Path="Makefile" />
     <File Path="README.md" />
   </Folder>
   <Folder Name="/Solution Items/.github/" />
