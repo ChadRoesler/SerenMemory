@@ -35,6 +35,7 @@ param(
   [string] $Ref       = "",
   [string] $Repo      = "ChadRoesler/SerenMemory",
   [switch] $AutoStart,
+  [switch] $Mcp,
   [string] $VenvDir   = "$env:USERPROFILE\seren-venvs\memory"
 )
 
@@ -117,15 +118,24 @@ if (Test-Path $Vpy) {
   Ok "venv created"
 }
 
-Step "Installing seren-memory[mcp]  (this pulls chromadb + the MCP SDK)"
-& $Vpy -m pip install -q --upgrade pip
-# Glue the [mcp] extra onto the path explicitly so PowerShell doesn't try to
-# treat [mcp] as an index expression.
-$spec = $WheelSrc + "[mcp]"
-& $Vpy -m pip install -q --upgrade $spec
-if ($LASTEXITCODE -ne 0) { Die "pip install failed - see output above" }
-Ok "Installed"
-if ($CleanupWheel) { Remove-Item $WheelSrc -ErrorAction SilentlyContinue }
+if ($Mcp) {
+    Step "Installing seren-memory[mcp]  (this pulls chromadb + the MCP SDK)"
+    & $Vpy -m pip install -q --upgrade pip
+    # Glue the [mcp] extra onto the path explicitly so PowerShell doesn't try to
+    # treat [mcp] as an index expression.
+    $spec = $WheelSrc + "[mcp]"
+    & $Vpy -m pip install -q --upgrade $spec
+    if ($LASTEXITCODE -ne 0) { Die "pip install failed - see output above" }
+    Ok "Installed"
+    if ($CleanupWheel) { Remove-Item $WheelSrc -ErrorAction SilentlyContinue }
+} else {
+    Step "Installing seren-memory (this pulls chromadb)"
+    & $Vpy -m pip install -q --upgrade pip
+    & $Vpy -m pip install -q --upgrade $WheelSrc
+    if ($LASTEXITCODE -ne 0) { Die "pip install failed - see output above" }
+    Ok "Installed"
+    if ($CleanupWheel) { Remove-Item $WheelSrc -ErrorAction SilentlyContinue }
+}
 
 # ── 4. sanity check (import + the viewer asset that's bitten us before) ─────
 Step "Sanity-checking the install"
@@ -220,8 +230,7 @@ if ($AutoStart) {
     Start-Process -FilePath $Vpy `
       -ArgumentList "-m", "seren_memory", "--config", "`"$CfgPath`"" `
       -WorkingDirectory $AppDir `
-      -WindowStyle Hidden `
-      -NoNewWindow
+      -WindowStyle Hidden
     # Give it a few seconds then health-check it.
     Start-Sleep -Seconds 5
     try {
@@ -229,7 +238,7 @@ if ($AutoStart) {
       if ($health.ok) { Ok "Service is up and healthy" }
       else            { Warn "Service started but health check returned unexpected response" }
     } catch {
-      Warn "Service started but health check didn't respond yet — it may still be loading the embedding model (~80MB on first run)."
+      Warn "Service started but health check didn't respond yet - it may still be loading the embedding model (~80MB on first run)."
     }
   } catch {
     Warn "Couldn't start the service automatically ($($_.Exception.Message)). Run the launcher manually."
@@ -243,12 +252,47 @@ Write-Host "  SerenMemory is set up +"                  -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  Start it:        $Launcher"
 Write-Host "  Viewer:          http://${BindHost}:${Port}/viewer"
-Write-Host "  MCP endpoint:    http://${BindHost}:${Port}/mcp/   (note the trailing slash)"
 Write-Host "  VSCode plugin:   set serenMemory.endpoint to http://${BindHost}:${Port}"
 if ($Token) {
   Write-Host "  Bearer token:    $Token" -ForegroundColor Yellow
   Write-Host "                   (also set it in the plugin via 'Seren Memory: Set Bearer Token')"
 }
+if ($Mcp) {
+  Write-Host "  MCP endpoint:    http://${BindHost}:${Port}/mcp/"
+  Write-Host ""
+  Write-Host "  VS Code (.vscode/mcp.json):" -ForegroundColor Blue
+  Write-Host "{" -ForegroundColor DarkCyan
+  Write-Host "  ""servers"": {" -ForegroundColor DarkCyan
+  Write-Host "    ""seren-memory"": {" -ForegroundColor DarkCyan
+  Write-Host "      ""type"": ""http""," -ForegroundColor DarkCyan
+  if ($Token) {
+    Write-Host "      ""url"": ""http://${BindHost}:${Port}/mcp/""," -ForegroundColor DarkCyan
+    Write-Host "      ""headers"": {" -ForegroundColor DarkCyan
+    Write-Host "        ""Authorization"": ""Bearer $Token""" -ForegroundColor DarkCyan
+    Write-Host "      }" -ForegroundColor DarkCyan
+  } else {
+    Write-Host "      ""url"": ""http://${BindHost}:${Port}/mcp/""" -ForegroundColor DarkCyan
+  }
+  Write-Host "    }" -ForegroundColor DarkCyan
+  Write-Host "  }" -ForegroundColor DarkCyan
+  Write-Host "}" -ForegroundColor DarkCyan
+  Write-Host ""
+  Write-Host "  Visual Studio (.vs/mcp.json):" -ForegroundColor DarkMagenta
+  Write-Host "{" -ForegroundColor DarkMagenta
+  Write-Host "  ""servers"": {" -ForegroundColor DarkMagenta
+  Write-Host "    ""seren-memory"": {" -ForegroundColor DarkMagenta
+  Write-Host "      ""type"": ""http""," -ForegroundColor DarkMagenta
+  if ($Token) {
+    Write-Host "      ""url"": ""http://${BindHost}:${Port}/mcp/""," -ForegroundColor DarkMagenta
+    Write-Host "      ""headers"": {" -ForegroundColor DarkMagenta
+    Write-Host "        ""Authorization"": ""Bearer $Token""" -ForegroundColor DarkMagenta
+    Write-Host "      }" -ForegroundColor DarkMagenta
+  } else {
+    Write-Host "      ""url"": ""http://${BindHost}:${Port}/mcp/""" -ForegroundColor DarkMagenta
+  }
+  Write-Host "    }" -ForegroundColor DarkMagenta
+  Write-Host "  }" -ForegroundColor DarkMagenta
+  Write-Host "}" -ForegroundColor DarkMagenta
+}
 Write-Host ""
-Warn "First write/search downloads the embedding model (~80MB) - that one needs internet."
 Write-Host "Rip it and win. (hot-dog) (wrench)" -ForegroundColor Green

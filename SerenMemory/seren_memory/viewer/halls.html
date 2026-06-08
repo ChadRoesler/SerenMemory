@@ -687,13 +687,13 @@ async function refresh() {
     try {
         const root = await api('/');
         renderCounts(root.tiers);
-        // Auth succeeded — unlock the UI and persist token for this session.
+        // Auth succeeded - unlock the UI and persist token for this session.
         sessionStorage.setItem('seren_token', state.token);
         unlock();
     } catch (e) {
         showError(e.message);
         renderCounts(null);
-        // Auth failed or service unreachable — keep UI locked, clear stale token.
+        // Auth failed or service unreachable - keep UI locked, clear stale token.
         sessionStorage.removeItem('seren_token');
         lock();
         return;

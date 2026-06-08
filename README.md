@@ -157,7 +157,7 @@ genuinely need it.
 ## GitHub Copilot / MCP (agent mode)
 
 SerenMemory speaks the MCP HTTP transport. Point any MCP-capable client at
-`/mcp` and Copilot can read, write, and manage memory directly — no plugin
+`/mcp` and Copilot can read, write, and manage memory directly - no plugin
 required for this path.
 
 ### VS Code (rip-it-and-win)
@@ -206,7 +206,7 @@ Copy `mcp.sample.json` to `.vs/mcp.json` at the solution root, same content:
 Once connected, Copilot agent mode gets the full tool set: search memory,
 write short/near term, submit briefs, manage drafts, run consolidation.
 
-### VS Code extension (optional — adds Copilot tools without agent mode)
+### VS Code extension (optional - adds Copilot tools without agent mode)
 
 If you want the tools available in normal Copilot chat (not just agent mode),
 install the `.vsix` from the latest GitHub Release:

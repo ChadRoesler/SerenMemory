@@ -32,7 +32,7 @@ def test_public_routes_no_token(authed_client):
     assert authed_client.get("/").status_code == 200
     assert authed_client.get("/health").status_code == 200
     # /viewer must load without a token so the user can see the UI and
-    # enter their token — the API calls the viewer makes are still gated.
+    # enter their token - the API calls the viewer makes are still gated.
     assert authed_client.get("/viewer").status_code in (200, 404)  # 404 if halls.html missing in test env
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ══════════════════════════════════════════════════════════════════════════
+# ==========================================================================
 #  seren-memory-setup.sh  -  one-shot SerenMemory installer (Linux)
 #
 #  Rip it and win. This script:
@@ -33,7 +33,7 @@
 #    --service        Install + enable a systemd unit (needs sudo)
 #    --venv PATH      Override venv location        (default ~/seren-venvs/memory)
 #    -h, --help       This help
-# ══════════════════════════════════════════════════════════════════════════
+# ==========================================================================
 set -euo pipefail
 
 # ── OS detection ───────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ IS_MAC=false
 [[ "$OS" == "Darwin" ]] && IS_MAC=true
 
 # ── pretty output ──────────────────────────────────────────────────────────
-G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[0;34m'; NC='\033[0m'
+G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[0;34m'; NC='\033[0m'; DC='\033[0;36m'; DM='\033[35m'
 step() { echo -e "\n${B}==>${NC} $1"; }
 ok()   { echo -e "${G}  ✓${NC} $1"; }
 warn() { echo -e "${Y}  !${NC} $1"; }
@@ -57,6 +57,7 @@ WHEEL=""
 REF=""
 REPO="ChadRoesler/SerenMemory"
 INSTALL_SERVICE=false
+MCP=false
 VENV_DIR="$HOME/seren-venvs/memory"
 APP_DIR="$HOME/seren-memory"
 CFG_PATH="$APP_DIR/seren-memory.yaml"
@@ -72,15 +73,16 @@ while [[ $# -gt 0 ]]; do
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
+    --mcp)       MCP=true; shift ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     -h|--help)   sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)           die "unknown flag: $1  (try --help)" ;;
   esac
 done
 
-echo -e "${G}══════════════════════════════════════════${NC}"
+echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenMemory setup (macOS)${NC}" || echo -e "${G}  SerenMemory setup (Linux)${NC}"
-echo -e "${G}══════════════════════════════════════════${NC}"
+echo -e "${G}==========================================${NC}"
 
 # ── 1. find a usable Python ────────────────────────────────────────────────
 # chroma 1.x ships a binary wheel (no compiler needed) but its transitive
@@ -152,12 +154,19 @@ else
 fi
 VPY="$VENV_DIR/bin/python"
 
-step "Installing seren-memory[mcp]  (this pulls chromadb + the MCP SDK)"
-"$VPY" -m pip install -q --upgrade pip
-# The [mcp] extra adds the MCP route at /mcp alongside the HTTP API. Quoting
-# matters: bracket-extras must be glued to the path with no space.
-"$VPY" -m pip install -q --upgrade "${WHEEL_SRC}[mcp]" || die "pip install failed - see output above"
-ok "Installed"
+if $MCP; then
+    step "Installing seren-memory[mcp]  (this pulls chromadb + the MCP SDK)"
+    "$VPY" -m pip install -q --upgrade pip
+    # The [mcp] extra adds the MCP route at /mcp alongside the HTTP API. Quoting
+    # matters: bracket-extras must be glued to the path with no space.
+    "$VPY" -m pip install -q --upgrade "${WHEEL_SRC}[mcp]" || die "pip install failed - see output above"
+    ok "Installed"
+else
+    step "Installing seren-memory  (this pulls chromadb)"
+    "$VPY" -m pip install -q --upgrade pip
+    "$VPY" -m pip install -q --upgrade "$WHEEL_SRC" || die "pip install failed - see output above"
+    ok "Installed"
+fi
 
 # ── 4. sanity check (import + the viewer asset that's bitten us before) ─────
 step "Sanity-checking the install"
@@ -309,16 +318,51 @@ fi
 
 # ── done ───────────────────────────────────────────────────────────────────
 echo
-echo -e "${G}══════════════════════════════════════════${NC}"
+echo -e "${G}==========================================${NC}"
 echo -e "${G}  SerenMemory is set up ✓${NC}"
-echo -e "${G}══════════════════════════════════════════${NC}"
+echo -e "${G}==========================================${NC}"
 if ! $INSTALL_SERVICE; then
   echo -e "  Start it:        ${B}$LAUNCHER${NC}"
 fi
 echo -e "  Viewer:          ${B}http://${HOST}:${PORT}/viewer${NC}"
-echo -e "  MCP endpoint:    ${B}http://${HOST}:${PORT}/mcp/${NC}   (note the trailing slash)"
 echo -e "  VSCode plugin:   set serenMemory.endpoint to ${B}http://${HOST}:${PORT}${NC}"
 [[ -n "$TOKEN" ]] && echo -e "  Bearer token:    ${Y}${TOKEN}${NC}  (also set it in the plugin via 'Seren Memory: Set Bearer Token')"
 echo
-warn "First write/search downloads the embedding model (~80MB) - that one needs internet."
+if $MCP; then
+  echo -e "  MCP endpoint:    ${B}http://${HOST}:${PORT}/mcp/${NC}"
+  echo
+  echo -e "  ${DC}VS Code (.vscode/mcp.json):${NC}"
+  echo -e "${DC}{${NC}"
+  echo -e "  ${DC}\"servers\": {${NC}"
+  echo -e "    ${DC}\"seren-memory\": {${NC}"
+  echo -e "      ${DC}\"type\": \"http\",${NC}"
+  if [[ -n "$TOKEN" ]]; then
+    echo -e "      ${DC}\"url\": \"http://${HOST}:${PORT}/mcp/\",${NC}"
+    echo -e "      ${DC}\"headers\": {${NC}"
+    echo -e "        ${DC}\"Authorization\": \"Bearer ${TOKEN}\"${NC}"
+    echo -e "      ${DC}}${NC}"
+  else
+    echo -e "      ${DC}\"url\": \"http://${HOST}:${PORT}/mcp/\"${NC}"
+  fi
+  echo -e "    ${DC}}${NC}"
+  echo -e "  ${DC}}${NC}"
+  echo -e "${DC}}${NC}"
+  echo
+  echo -e "  ${DM}Visual Studio (.vs/mcp.json):${NC}"
+  echo -e "${DM}{${NC}"
+  echo -e "  ${DM}\"servers\": {${NC}"
+  echo -e "    ${DM}\"seren-memory\": {${NC}"
+  echo -e "      ${DM}\"type\": \"http\",${NC}"
+  if [[ -n "$TOKEN" ]]; then
+    echo -e "      ${DM}\"url\": \"http://${HOST}:${PORT}/mcp/\",${NC}"
+    echo -e "      ${DM}\"headers\": {${NC}"
+    echo -e "        ${DM}\"Authorization\": \"Bearer ${TOKEN}\"${NC}"
+    echo -e "      ${DM}}${NC}"
+  else
+    echo -e "      ${DM}\"url\": \"http://${HOST}:${PORT}/mcp/\"${NC}"
+  fi
+  echo -e "    ${DM}}${NC}"
+  echo -e "  ${DM}}${NC}"
+  echo -e "${DM}}${NC}"
+fi
 echo -e "${G}Rip it and win. 🌭🔧${NC}"
