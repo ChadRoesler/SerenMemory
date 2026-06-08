@@ -154,6 +154,72 @@ genuinely need it.
 
 ---
 
+## GitHub Copilot / MCP (agent mode)
+
+SerenMemory speaks the MCP HTTP transport. Point any MCP-capable client at
+`/mcp` and Copilot can read, write, and manage memory directly — no plugin
+required for this path.
+
+### VS Code (rip-it-and-win)
+
+Copy `mcp.sample.json` to `.vscode/mcp.json` in any workspace (or to
+`~/.vscode/mcp.json` for global access), fill in your values, and reload
+VS Code:
+
+```json
+{
+  "servers": {
+    "seren-memory": {
+      "type": "http",
+      "url": "http://localhost:7420/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}
+```
+
+### Visual Studio (same deal, different path)
+
+Copy `mcp.sample.json` to `.vs/mcp.json` at the solution root, same content:
+
+```json
+{
+  "servers": {
+    "seren-memory": {
+      "type": "http",
+      "url": "http://localhost:7420/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}
+```
+
+- **No bearer token set?** Drop the `headers` block entirely.
+- **Remote server?** Swap `localhost:7420` for your server's address.
+- **Custom mount path?** Change the `SEREN_MCP_MOUNT` env var on the server
+  and match it here.
+
+Once connected, Copilot agent mode gets the full tool set: search memory,
+write short/near term, submit briefs, manage drafts, run consolidation.
+
+### VS Code extension (optional — adds Copilot tools without agent mode)
+
+If you want the tools available in normal Copilot chat (not just agent mode),
+install the `.vsix` from the latest GitHub Release:
+
+```bash
+code --install-extension seren-memory-<version>.vsix
+```
+
+Then set `serenMemory.endpoint` in VS Code settings and run
+`Seren Memory: Set Bearer Token` from the command palette.
+
+---
+
 ## Peering in (the viewer)
 
 Mole-man approved. `viewer/halls.html` is a single-file, dark-mode web UI

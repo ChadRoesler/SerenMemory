@@ -215,9 +215,20 @@
     .toolbar .spacer { flex: 1; }
     .hint { color: var(--text-lo); font-size: 11px; }
     code.id { color: var(--text-lo); font-size: 10px; }
+
+    /* Auth gate - tabs and main hidden until a successful API response */
+    .locked #tabs,
+    .locked main { display: none; }
+    .lock-hint {
+        padding: 40px var(--pad);
+        text-align: center;
+        color: var(--text-lo);
+        font-size: 13px;
+    }
+    .lock-hint span { color: var(--accent); }
 </style>
 </head>
-<body>
+<body class="locked">
 <header>
     <h1>Halls of Memory <span class="sub">· SerenMemory peek</span></h1>
     <div class="conn">
@@ -227,6 +238,8 @@
         <div class="counts" id="counts"></div>
     </div>
 </header>
+
+<div class="lock-hint" id="lock-hint">Enter your <span>bearer token</span> above and hit refresh to connect.</div>
 
 <div class="tabs" id="tabs">
     <div class="tab active" data-tier="short"><span class="dot"></span>ShortTerm</div>
@@ -276,8 +289,17 @@ const state = {
     //  - Opened as a file:// (standalone debugging): fall back to the
     //    canonical localhost:7420 so it still works off-cluster.
     baseUrl: (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:7420',
-    token: '',
+    token: sessionStorage.getItem('seren_token') ?? '',
 };
+
+function unlock() {
+    document.body.classList.remove('locked');
+    $('lock-hint').style.display = 'none';
+}
+function lock() {
+    document.body.classList.add('locked');
+    $('lock-hint').style.display = '';
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -665,9 +687,16 @@ async function refresh() {
     try {
         const root = await api('/');
         renderCounts(root.tiers);
+        // Auth succeeded — unlock the UI and persist token for this session.
+        sessionStorage.setItem('seren_token', state.token);
+        unlock();
     } catch (e) {
         showError(e.message);
         renderCounts(null);
+        // Auth failed or service unreachable — keep UI locked, clear stale token.
+        sessionStorage.removeItem('seren_token');
+        lock();
+        return;
     }
     await switchTab(state.tab);
 }
@@ -676,8 +705,8 @@ $('refresh').addEventListener('click', refresh);
 $('do-search').addEventListener('click', doSearch);
 $('search-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
-// Persist base URL + token in-memory only for this session (no localStorage -
-// keeps the token off disk; refresh the page and re-enter if needed).
+// Restore token input from sessionStorage (survives refresh, clears on tab close).
+if (state.token) $('token').value = state.token;
 
 // Boot
 refresh();

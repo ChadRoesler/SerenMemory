@@ -187,7 +187,11 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     async def bearer_auth(request: Request, call_next):
         token = cfg.server.bearer_token
         if token:
-            public = request.url.path in ("/", "/health")
+            # /viewer serves the HTML shell — it must be public so the page
+            # loads even when a token is set. The viewer's own JS fetch calls
+            # hit the API routes (/short, /long, /drafts, etc.) which ARE
+            # protected, so the data is still gated behind the token.
+            public = request.url.path in ("/", "/health", "/viewer")
             if not public:
                 auth = request.headers.get("authorization", "")
                 if auth != f"Bearer {token}":
