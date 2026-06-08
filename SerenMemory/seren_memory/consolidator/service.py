@@ -79,6 +79,17 @@ class Consolidator:
         self._log = log or (lambda m: print(f"[consolidator] {m}"))
         self._run_lock = threading.Lock()
 
+    @property
+    def _model_configured(self) -> bool:
+        """True when a consolidator model URL is set. When False, all model
+        calls are skipped silently - no connection attempts, no error logs.
+        The consolidator runs in fully mechanical mode: clustering and
+        promotion still happen, synthesis falls back to longest-entry,
+        and brief-pull is skipped entirely. Intended for closed/air-gapped
+        environments where an external agent (e.g. Copilot) manages briefs
+        and draft review instead."""
+        return bool(self._cfg.consolidator.model_url.strip())
+
     # ──────────────────────────────────────────────────────────────────
     #  Entry point - one full consolidation pass.
     # ──────────────────────────────────────────────────────────────────
@@ -112,6 +123,8 @@ class Consolidator:
         if the assistant left a fresh brief (created after our last
         successful run), use it; otherwise pull one ad-hoc from recent
         short-term via the consolidator's own model (Oliver-Twist).
+        When no model is configured (closed-system mode) the pull step is
+        skipped silently - only a one-time startup notice is emitted.
         """
         start = time.time()
         self._log("consolidation window opening")
@@ -134,6 +147,8 @@ class Consolidator:
 
         try:
             # ── Brief acquisition: push wins, pull is the Oliver-Twist fallback ──
+            if not self._model_configured:
+                self._log("running in closed-system mode (no model_url); brief pull and synthesis skipped - use Copilot tools to manage briefs, drafts, and consolidation")
             brief = self._ensure_fresh_brief()
             if brief:
                 brief_id_used = brief.get("id")
@@ -147,7 +162,8 @@ class Consolidator:
             else:
                 promote_hints = set()
                 noise_hints = set()
-                self._log("no brief available (push absent + pull failed); proceeding with mechanical heuristics only")
+                if self._model_configured:
+                    self._log("no brief available (push absent + pull failed); proceeding with mechanical heuristics only")
 
             # ── The existing work, unchanged ──
             report["forget_flags_handled"] = self._handle_forget_flags()
@@ -262,8 +278,11 @@ class Consolidator:
 
         Degrades gracefully: if the model is unreachable or returns non-JSON,
         returns None and the cycle continues with no steering (mechanical
-        thresholds only).
+        thresholds only). Skipped entirely when no model is configured.
         """
+        if not self._model_configured:
+            return None
+
         rows = self._store.get_short_all(limit=self._cfg.consolidator.max_entries_per_run)
         if not rows:
             self._log("no short-term entries to pull a brief from")
@@ -549,8 +568,11 @@ class Consolidator:
         contents = [e["content"] for e in entries]
 
         # Mechanical fallback - just the longest entry, or a joined summary.
-        # Used if the model call fails.
+        # Used if the model call fails or no model is configured.
         fallback = max(contents, key=len) if contents else ""
+
+        if not self._model_configured:
+            return fallback
 
         prompt = (
             "You are a memory consolidator. Below are several short-term "
@@ -654,6 +676,9 @@ class Consolidator:
         contents = [e["content"] for e in entries]
         fallback = max(contents, key=len) if contents else ""
 
+        if not self._model_configured:
+            return fallback
+
         prev_block = "\n".join(
             f"Attempt {i+1}: {d}" for i, d in enumerate(previous_drafts)
         )
@@ -740,8 +765,18 @@ class Consolidator:
     # ──────────────────────────────────────────────────────────────────
     def _call_model(self, prompt: str, max_tokens: int = 200) -> str:
         """Call the configured OpenAI-compatible chat endpoint. Synchronous
-        (consolidation runs in its own thread/process, not the event loop)."""
+        (consolidation runs in its own thread/process, not the event loop).
+
+        Raises RuntimeError immediately when no model URL is configured so
+        callers that gate on _model_configured never reach the network, and
+        any future caller that forgets the gate gets a clear error instead of
+        a hanging connection attempt.
+        """
         cfg = self._cfg.consolidator
+        if not self._model_configured:
+            raise RuntimeError(
+                "_call_model invoked but no consolidator model_url is configured"
+            )
         url = cfg.model_url.rstrip("/") + "/chat/completions"
         payload = {
             "model": cfg.model_name,
