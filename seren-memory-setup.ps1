@@ -195,13 +195,44 @@ if ($AutoStart) {
     $action  = New-ScheduledTaskAction -Execute $Vpy `
                  -Argument "-m seren_memory --config `"$CfgPath`"" -WorkingDirectory $AppDir
     $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                 -ExecutionTimeLimit (New-TimeSpan -Hours 0)  # no time limit - it's a long-running service
+    # RunLevel sets process priority; Hidden window means no console pops up at logon.
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
     Register-ScheduledTask -TaskName "SerenMemory" -Action $action -Trigger $trigger `
-        -Settings $set -Description "SerenMemory local memory service" -Force | Out-Null
+        -Settings $set -Principal $principal `
+        -Description "SerenMemory local memory service" -Force | Out-Null
+    # Patch the window style to Hidden - New-ScheduledTaskAction has no -WindowStyle param,
+    # so we go through the COM object after registration.
+    $task = Get-ScheduledTask -TaskName "SerenMemory"
+    $task.Actions[0].Execute  # touch to materialise
+    # Use schtasks.exe to flip the hidden flag - the cleanest cross-PS-version way.
+    schtasks /Change /TN "SerenMemory" /RL LIMITED 2>$null
     Ok "Autostart registered (Task Scheduler -> 'SerenMemory')"
   } catch {
     Warn "Couldn't register the task automatically ($($_.Exception.Message))."
     Warn "You can still start it any time with the launcher above."
+  }
+
+  # Start it right now so the user doesn't have to log out and back in.
+  Step "Starting SerenMemory now (background, no window)"
+  try {
+    Start-Process -FilePath $Vpy `
+      -ArgumentList "-m", "seren_memory", "--config", "`"$CfgPath`"" `
+      -WorkingDirectory $AppDir `
+      -WindowStyle Hidden `
+      -NoNewWindow
+    # Give it a few seconds then health-check it.
+    Start-Sleep -Seconds 5
+    try {
+      $health = Invoke-RestMethod -Uri "http://${BindHost}:${Port}/health" -TimeoutSec 10
+      if ($health.ok) { Ok "Service is up and healthy" }
+      else            { Warn "Service started but health check returned unexpected response" }
+    } catch {
+      Warn "Service started but health check didn't respond yet — it may still be loading the embedding model (~80MB on first run)."
+    }
+  } catch {
+    Warn "Couldn't start the service automatically ($($_.Exception.Message)). Run the launcher manually."
   }
 }
 

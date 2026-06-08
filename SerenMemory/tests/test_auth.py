@@ -2,7 +2,7 @@
 Auth middleware tests.
 
 Verifies that bearer token enforcement works correctly:
-- public routes (/ and /health) are always accessible
+- public routes (/, /health, /viewer) are always accessible
 - all other routes are blocked without a valid token
 - a correct token grants access
 - a wrong token is rejected
@@ -31,6 +31,9 @@ def authed_client(make_client):
 def test_public_routes_no_token(authed_client):
     assert authed_client.get("/").status_code == 200
     assert authed_client.get("/health").status_code == 200
+    # /viewer must load without a token so the user can see the UI and
+    # enter their token — the API calls the viewer makes are still gated.
+    assert authed_client.get("/viewer").status_code in (200, 404)  # 404 if halls.html missing in test env
 
 
 def test_protected_route_no_token_is_401(authed_client):

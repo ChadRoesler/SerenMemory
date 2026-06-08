@@ -36,6 +36,11 @@
 # ══════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
+# ── OS detection ───────────────────────────────────────────────────────────
+OS="$(uname -s)"
+IS_MAC=false
+[[ "$OS" == "Darwin" ]] && IS_MAC=true
+
 # ── pretty output ──────────────────────────────────────────────────────────
 G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[0;34m'; NC='\033[0m'
 step() { echo -e "\n${B}==>${NC} $1"; }
@@ -74,7 +79,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${G}══════════════════════════════════════════${NC}"
-echo -e "${G}  SerenMemory setup (Linux)${NC}"
+$IS_MAC && echo -e "${G}  SerenMemory setup (macOS)${NC}" || echo -e "${G}  SerenMemory setup (Linux)${NC}"
 echo -e "${G}══════════════════════════════════════════${NC}"
 
 # ── 1. find a usable Python ────────────────────────────────────────────────
@@ -94,6 +99,7 @@ done
 if [[ -z "$PYBIN" ]]; then
   die "No Python 3.10-3.12 found.
   Install one, e.g.:
+    macOS:          brew install python@3.12
     Debian/Ubuntu:  sudo apt install python3.12 python3.12-venv
     Fedora:         sudo dnf install python3.12
     Arch:           sudo pacman -S python
@@ -129,7 +135,7 @@ PY
 )
   [[ -n "$WHL_URL" && "$WHL_URL" != "None" ]] || die "No .whl asset in release '$TAG'. Pass --wheel to install a local file instead."
   ok "Release $TAG  ($(basename "$WHL_URL"))"
-  WHEEL_SRC="$(mktemp --suffix=.whl)"
+  WHEEL_SRC="$(mktemp /tmp/seren_memory_XXXXXX.whl)"
   CLEANUP_WHEEL=true
   trap '[[ "$CLEANUP_WHEEL" == true ]] && rm -f "$WHEEL_SRC"' EXIT
   curl -fsSL "$WHL_URL" -o "$WHEEL_SRC" || die "download failed"
@@ -209,17 +215,66 @@ SH
 chmod +x "$LAUNCHER"
 ok "Launcher: $LAUNCHER"
 
-# ── 7. optional systemd service ────────────────────────────────────────────
+# ── 7. optional autostart ──────────────────────────────────────────────────
 if $INSTALL_SERVICE; then
-  step "Installing systemd service (needs sudo)"
-  UNIT=/etc/systemd/system/seren-memory.service
-  ENVFILE="$APP_DIR/seren-memory.env"
-  # Keep the token out of the unit text (it shows in `systemctl show`).
-  if [[ -n "$TOKEN" ]]; then
-    printf 'SEREN_MEMORY_BEARER_TOKEN=%s\n' "$TOKEN" > "$ENVFILE"
-    chmod 600 "$ENVFILE"
-  fi
-  sudo tee "$UNIT" >/dev/null <<UNITEOF
+  if $IS_MAC; then
+    # ── macOS: launchd user agent (no sudo needed) ──────────────────────────
+    step "Installing launchd user agent (starts at login, no sudo needed)"
+    PLIST_DIR="$HOME/Library/LaunchAgents"
+    PLIST="$PLIST_DIR/com.chadroesler.seren-memory.plist"
+    mkdir -p "$PLIST_DIR"
+    cat > "$PLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.chadroesler.seren-memory</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$VPY</string>
+        <string>-m</string>
+        <string>seren_memory</string>
+        <string>--config</string>
+        <string>$CFG_PATH</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$APP_DIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$APP_DIR/seren-memory.log</string>
+    <key>StandardErrorPath</key>
+    <string>$APP_DIR/seren-memory.err</string>
+</dict>
+</plist>
+PLISTEOF
+    # Unload first in case it was previously registered, then load.
+    launchctl unload "$PLIST" 2>/dev/null || true
+    launchctl load -w "$PLIST"
+    ok "launchd agent installed: $PLIST"
+    ok "Starts automatically at login. Logs: $APP_DIR/seren-memory.log"
+    step "Waiting for it to come up"
+    for i in $(seq 1 30); do
+      sleep 0.5
+      if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+        ok "SerenMemory is responding"; break
+      fi
+      [[ $i -eq 30 ]] && warn "Didn't respond in 15s - check: tail -f $APP_DIR/seren-memory.log"
+    done
+  else
+    # ── Linux: systemd system service (needs sudo) ───────────────────────────
+    step "Installing systemd service (needs sudo)"
+    UNIT=/etc/systemd/system/seren-memory.service
+    ENVFILE="$APP_DIR/seren-memory.env"
+    # Keep the token out of the unit text (it shows in `systemctl show`).
+    if [[ -n "$TOKEN" ]]; then
+      printf 'SEREN_MEMORY_BEARER_TOKEN=%s\n' "$TOKEN" > "$ENVFILE"
+      chmod 600 "$ENVFILE"
+    fi
+    sudo tee "$UNIT" >/dev/null <<UNITEOF
 [Unit]
 Description=SerenMemory - three-tier LLM memory
 After=network-online.target
@@ -238,17 +293,18 @@ MemoryMax=2G
 [Install]
 WantedBy=multi-user.target
 UNITEOF
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now seren-memory
-  ok "Service installed and started"
-  step "Waiting for it to come up"
-  for i in $(seq 1 30); do
-    sleep 0.5
-    if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-      ok "SerenMemory is responding"; break
-    fi
-    [[ $i -eq 30 ]] && warn "Didn't respond in 15s - check: journalctl -u seren-memory -f"
-  done
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now seren-memory
+    ok "Service installed and started"
+    step "Waiting for it to come up"
+    for i in $(seq 1 30); do
+      sleep 0.5
+      if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+        ok "SerenMemory is responding"; break
+      fi
+      [[ $i -eq 30 ]] && warn "Didn't respond in 15s - check: journalctl -u seren-memory -f"
+    done
+  fi
 fi
 
 # ── done ───────────────────────────────────────────────────────────────────
