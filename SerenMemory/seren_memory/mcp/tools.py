@@ -3,14 +3,14 @@ seren_memory.mcp.tools
 ══════════════════════
 
 The tools the MCP server exposes. Each tool is a thin wrapper over
-MemoryStore (in-process) — we're mounted INTO the same FastAPI app that
+MemoryStore (in-process) - we're mounted INTO the same FastAPI app that
 owns the store, so there's no point in HTTP-round-tripping ourselves.
 
 STRUCTURE
 
 `MemoryToolImpl` holds every tool as a method. `register_tools` wires
 each method onto a FastMCP instance via the `@mcp.tool()` decorator. The
-split exists for testability — `MemoryToolImpl(...).remember(...)` is
+split exists for testability - `MemoryToolImpl(...).remember(...)` is
 directly callable in unit tests without going through FastMCP, an MCP
 client, or an HTTP roundtrip. See `tests/test_mcp_tools.py`.
 
@@ -43,7 +43,7 @@ TOOL ROSTER (organised by what they do, not API path):
 
   Self-consolidation (when no consolidator model is configured):
     prepare_consolidation       returns unconsolidated shorts + a synthesis
-                                template — the ACTIVE model does the synthesis
+                                template - the ACTIVE model does the synthesis
                                 in its own reasoning
     commit_consolidation        model sends back its synthesised draft;
                                 server persists as pending draft
@@ -71,7 +71,7 @@ from ..models.schemas import (
 
 
 # Tier weights duplicated from routes/search.py to keep recall logic
-# fully in-process. Refactor target if these ever diverge — for now,
+# fully in-process. Refactor target if these ever diverge - for now,
 # small enough to inline rather than couple the modules.
 _TIER_WEIGHT = {"short": 1.0, "near": 0.9, "long": 0.8}
 
@@ -80,7 +80,7 @@ class MemoryToolImpl:
     """The actual tool implementations, callable both via FastMCP
     decoration (in production) and directly (in unit tests).
 
-    Each method's return shape is JSON-serialisable — the FastMCP layer
+    Each method's return shape is JSON-serialisable - the FastMCP layer
     serialises it on the way out to the MCP client.
 
     consolidator may be None on deploys with no local LLM. Tools that
@@ -94,9 +94,9 @@ class MemoryToolImpl:
         self.config = config
         self.consolidator = consolidator
 
-    # ── Core memory ──────────────────────────────────────────────────────
+    # -- Core memory ------------------------------------------------------
     def remember(self, content: str, topic: Optional[str] = None) -> dict:
-        """Write a short-term memory. The default tier — use this for
+        """Write a short-term memory. The default tier - use this for
         anything you might want to recall later in this session or have
         the consolidator promote to long-term if it recurs.
 
@@ -112,7 +112,7 @@ class MemoryToolImpl:
                include_near: bool = True,
                include_long: bool = True,
                include_superseded: bool = False) -> dict:
-        """Search memory for relevant context. The main retrieval path —
+        """Search memory for relevant context. The main retrieval path -
         call this before answering anything that might benefit from past
         context. Returns ranked hits across the requested tiers.
 
@@ -175,7 +175,7 @@ class MemoryToolImpl:
         """List recent short-term entries (debug / self-reflection). Filter
         by topic if given. Newest first.
 
-        NOT a recall — use 'recall' for relevance-ranked search. This is
+        NOT a recall - use 'recall' for relevance-ranked search. This is
         the inventory view: 'what's been written down recently.'
         """
         rows = self.store.get_short_all(limit=None)
@@ -194,18 +194,18 @@ class MemoryToolImpl:
             ],
         }
 
-    # ── Open loops (near-term) ───────────────────────────────────────────
+    # -- Open loops (near-term) -------------------------------------------
     def remember_for_later(self, intent: str,
                            trigger_type: str = "always",
                            trigger_value: Optional[str] = None,
                            expires_at: Optional[float] = None,
                            topic: Optional[str] = None) -> dict:
-        """Write a future-tense intent — 'bring this up later', 'do X
+        """Write a future-tense intent - 'bring this up later', 'do X
         next time', 'check Y after Z'. Lives until completed or expired.
 
         trigger_type: 'time' (trigger_value = unix ts after which it's due),
         'event' (trigger_value = match string like 'mentions:balatro'), or
-        'always' (standing note — surfaces on any relevant query).
+        'always' (standing note - surfaces on any relevant query).
         """
         try:
             tt = TriggerType(trigger_type)
@@ -233,10 +233,10 @@ class MemoryToolImpl:
             return {"ok": False, "error": f"no near-term entry '{intent_id}'"}
         return {"ok": True, "completed": intent_id}
 
-    # ── Agency surface ───────────────────────────────────────────────────
+    # -- Agency surface ---------------------------------------------------
     def preserve_memory_verbatim(self, short_id: str) -> dict:
         """Mark a short-term entry for verbatim promotion on the next
-        consolidator cycle — preserves exact phrasing instead of having
+        consolidator cycle - preserves exact phrasing instead of having
         the consolidator synthesise. Use when the words matter, not just
         the gist (a specific quote, a precise spec).
 
@@ -253,7 +253,7 @@ class MemoryToolImpl:
         """Immediately move a short-term entry to long-term verbatim,
         skipping the consolidator cycle. 'I know this is durable, don't
         make me wait' override. The right tool when you need to add to
-        long-term right now — direct POST /long is correctly forbidden
+        long-term right now - direct POST /long is correctly forbidden
         (consolidator owns long-term writes); this is the agent-side
         escape hatch.
         """
@@ -265,7 +265,7 @@ class MemoryToolImpl:
     def forget_memory(self, long_id: str, reason: str) -> dict:
         """Flag a long-term memory for the consolidator's attention. PII
         keywords trigger purge; other reasons demote the entry (zero
-        evidence_count, marks demoted_reason). Never a surgical delete —
+        evidence_count, marks demoted_reason). Never a surgical delete -
         the Lacuna gate is a flag, not a scalpel.
 
         Use when the user asks to forget something OR when you discover
@@ -278,7 +278,7 @@ class MemoryToolImpl:
             return {"ok": False, "error": f"no long-term entry '{long_id}'"}
         return {"ok": True, "id": long_id, "flagged_reason": reason}
 
-    # ── Brief + consolidation ────────────────────────────────────────────
+    # -- Brief + consolidation --------------------------------------------
     def submit_brief(self, summary: str,
                      promote_hints: Optional[list[str]] = None,
                      noise_hints: Optional[list[str]] = None,
@@ -292,7 +292,7 @@ class MemoryToolImpl:
         completed_intents: near-term intents that look done
 
         The hints get matched against the haystack of topics + content
-        during cluster promotion — they ARE the lever for steering what
+        during cluster promotion - they ARE the lever for steering what
         becomes long-term. Use them.
         """
         brief = DailyBrief(
@@ -305,7 +305,7 @@ class MemoryToolImpl:
         return {"ok": True, "id": saved.id}
 
     def consolidate_now(self) -> dict:
-        """Trigger a consolidation cycle right now. Synchronous — returns
+        """Trigger a consolidation cycle right now. Synchronous - returns
         when the cycle finishes.
 
         REQUIRES a configured consolidator model (Nemotron-style local
@@ -322,7 +322,7 @@ class MemoryToolImpl:
             return {"ok": False, "error": f"consolidator busy: {e}"}
         return {"ok": True, "report": report}
 
-    # ── Draft review ─────────────────────────────────────────────────────
+    # -- Draft review -----------------------------------------------------
     def list_drafts(self, status: Optional[str] = None,
                     limit: int = 20) -> dict:
         """List consolidator drafts (the model review queue). Filter by
@@ -335,7 +335,7 @@ class MemoryToolImpl:
     def get_draft_chain(self, draft_id: str) -> dict:
         """Return all synthesis attempts for the same cluster as draft_id,
         ordered by attempt number. Use this when a draft is in
-        requires_selection state — compare all attempts before selecting
+        requires_selection state - compare all attempts before selecting
         the best via select_draft.
         """
         row = self.store._get_draft_row(draft_id)
@@ -347,7 +347,7 @@ class MemoryToolImpl:
 
     def approve_draft(self, draft_id: str,
                       note: Optional[str] = None) -> dict:
-        """Approve a pending draft — commits to long-term and archives
+        """Approve a pending draft - commits to long-term and archives
         source shorts to pruned. Optional note recorded with approval.
         """
         result = self.store.approve_draft(draft_id, note=note)
@@ -363,7 +363,7 @@ class MemoryToolImpl:
     def reject_draft(self, draft_id: str, critique: str) -> dict:
         """Reject a draft with a critique. The consolidator will redraft
         (up to max_redraft_attempts). Once exhausted, the chain flips
-        to requires_selection — at which point use select_draft.
+        to requires_selection - at which point use select_draft.
 
         Critique should be SPECIFIC ('conflated X with Y; separate them
         and emphasise Y') not generic ('wrong vibe'). The next attempt
@@ -408,7 +408,7 @@ class MemoryToolImpl:
 
         edited_content: optional revised text to commit INSTEAD of the
         draft. Use when none of the chain attempts is quite right but
-        one is closest — pick that one + send the polished version. The
+        one is closest - pick that one + send the polished version. The
         original draft text is preserved on the draft row for audit;
         long-term gets the edit.
         """
@@ -426,13 +426,13 @@ class MemoryToolImpl:
                     f"draft '{draft_id}' is '{status}', not requires_selection"}
         return {"ok": True, "draft_id": draft_id, **result}
 
-    # ── Self-consolidation (model-as-consolidator) ───────────────────────
+    # -- Self-consolidation (model-as-consolidator) -----------------------
     def prepare_consolidation(self, max_entries: int = 50) -> dict:
         """Return unconsolidated short-term entries + a synthesis prompt
         template. The CALLING MODEL does the synthesis in its own
         reasoning, then calls commit_consolidation with the result.
 
-        Use when no dedicated consolidator model is available — the
+        Use when no dedicated consolidator model is available - the
         active model becomes the consolidator. Pairs with
         commit_consolidation. Entries grouped by topic so you can pick
         a cluster to synthesise.
@@ -456,7 +456,7 @@ class MemoryToolImpl:
             "long-term statement.\n\n"
             "Topic: {topic}\n\n"
             "Fragments:\n{fragments}\n\n"
-            "Produce ONE concise, durable statement of fact — present tense, "
+            "Produce ONE concise, durable statement of fact - present tense, "
             "no preamble, no 'the user said'. Just the consolidated truth.\n\n"
             "Then call commit_consolidation with:\n"
             "  draft_text: your synthesised statement\n"
@@ -474,12 +474,12 @@ class MemoryToolImpl:
                              source_short_ids: list[str],
                              topic: Optional[str] = None) -> dict:
         """Persist a model-synthesised consolidation draft. Lands as
-        pending in the draft queue — a stronger reviewer (different
+        pending in the draft queue - a stronger reviewer (different
         model, later session) can review normally; if none ever does,
         the draft sits as candidate evidence.
 
         Pairs with prepare_consolidation. The draft does NOT auto-commit
-        to long-term — single-model self-review is too weak a gate.
+        to long-term - single-model self-review is too weak a gate.
         """
         if not draft_text or not draft_text.strip():
             return {"ok": False, "error": "draft_text required"}

@@ -15,7 +15,7 @@ import { SerenClient, SerenApiError } from "../seren_memory-vscode/src/client";
 import { SerenConfig } from "../seren_memory-vscode/src/config";
 import { SecretStorage } from "./mocks/vscode";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// -- helpers ------------------------------------------------------------------
 
 function makeClient(endpoint = "http://localhost:7420"): SerenClient {
   // SerenConfig reads endpoint from vscode.workspace.getConfiguration which
@@ -43,7 +43,7 @@ function lastFetch() {
 beforeEach(() => vi.restoreAllMocks());
 afterEach(() => vi.restoreAllMocks());
 
-// ── ping ─────────────────────────────────────────────────────────────────────
+// -- ping ---------------------------------------------------------------------
 
 describe("ping", () => {
   it("returns true when /health responds", async () => {
@@ -57,7 +57,7 @@ describe("ping", () => {
   });
 });
 
-// ── writeShort ───────────────────────────────────────────────────────────────
+// -- writeShort ---------------------------------------------------------------
 
 describe("writeShort", () => {
   it("POSTs to /short with content and topic", async () => {
@@ -71,7 +71,7 @@ describe("writeShort", () => {
   });
 });
 
-// ── writeNear ────────────────────────────────────────────────────────────────
+// -- writeNear ----------------------------------------------------------------
 
 describe("writeNear", () => {
   it("POSTs to /near with intent and topic (not content)", async () => {
@@ -83,7 +83,7 @@ describe("writeNear", () => {
   });
 });
 
-// ── search ───────────────────────────────────────────────────────────────────
+// -- search -------------------------------------------------------------------
 
 describe("search", () => {
   it("POSTs to /search with all params", async () => {
@@ -102,7 +102,7 @@ describe("search", () => {
   });
 });
 
-// ── approveDraft ─────────────────────────────────────────────────────────────
+// -- approveDraft -------------------------------------------------------------
 
 describe("approveDraft", () => {
   it("POSTs to /drafts/:id/approve with no body when note omitted", async () => {
@@ -121,7 +121,7 @@ describe("approveDraft", () => {
   });
 });
 
-// ── rejectDraft ───────────────────────────────────────────────────────────────
+// -- rejectDraft ---------------------------------------------------------------
 
 describe("rejectDraft", () => {
   it("POSTs to /drafts/:id/reject with critique", async () => {
@@ -133,7 +133,7 @@ describe("rejectDraft", () => {
   });
 });
 
-// ── selectDraft ───────────────────────────────────────────────────────────────
+// -- selectDraft ---------------------------------------------------------------
 
 describe("selectDraft", () => {
   it("sends no body when neither edited_content nor note provided", async () => {
@@ -161,7 +161,7 @@ describe("selectDraft", () => {
   });
 });
 
-// ── SerenApiError ─────────────────────────────────────────────────────────────
+// -- SerenApiError -------------------------------------------------------------
 
 describe("SerenApiError", () => {
   it("is thrown on non-2xx responses", async () => {
@@ -181,7 +181,7 @@ describe("SerenApiError", () => {
   });
 });
 
-// ── URL encoding ──────────────────────────────────────────────────────────────
+// -- URL encoding --------------------------------------------------------------
 
 describe("URL encoding", () => {
   it("encodes special characters in IDs", async () => {

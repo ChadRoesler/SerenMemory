@@ -455,3 +455,9 @@ chroma/
 
 # Test artifacts
 .pytest_cache/
+# -- Seren-specific ----------------------------------------------------------
+# setuptools-scm writes the tag-derived version here at build time; it ships
+# inside the wheel but must never be committed (it'd go stale instantly).
+**/_version.py
+# Local test-runner output (leaks machine hostname/username into XML).
+TestResults/

@@ -30,7 +30,7 @@ from seren_memory.config import MemoryConfig, ConsolidatorConfig
 from seren_memory.consolidator import service as svc_mod
 
 
-# ── fixtures ─────────────────────────────────────────────────────────────────
+# -- fixtures -----------------------------------------------------------------
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def _make_pending_draft(client, topic: str = "drafttest", n: int = 2) -> str:
     return pending[0]["id"]
 
 
-# ── approve happy path ───────────────────────────────────────────────────────
+# -- approve happy path -------------------------------------------------------
 
 
 def test_approve_creates_long_archives_shorts(client):
@@ -123,7 +123,7 @@ def test_approve_accepts_optional_note(client):
     assert approved["metadata"].get("review_note") == "checked it twice"
 
 
-# ── reject / redraft happy path ───────────────────────────────────────────────
+# -- reject / redraft happy path -----------------------------------------------
 
 
 def test_reject_triggers_redraft_and_preserves_shorts(client):
@@ -181,7 +181,7 @@ def test_reject_accepts_legacy_reason_key(client):
     assert r.json()["ok"] is True
 
 
-# ── redraft chain / requires_selection ───────────────────────────────────────
+# -- redraft chain / requires_selection ---------------------------------------
 
 
 def test_exhausting_redrafts_flips_to_requires_selection(client):
@@ -259,7 +259,7 @@ def test_select_on_pending_draft_returns_409(client):
     assert r.status_code == 409
 
 
-# ── edit-on-select ───────────────────────────────────────────────────────────
+# -- edit-on-select -----------------------------------------------------------
 
 
 def _exhaust_to_requires_selection(client, topic: str = "edit_chain",
@@ -366,7 +366,7 @@ def test_select_preserves_original_in_draft_for_audit(client):
     assert selected["metadata"]["status"] == "approved"
 
 
-# ── error paths ──────────────────────────────────────────────────────────────
+# -- error paths --------------------------------------------------------------
 
 
 def test_approve_missing_draft_404(client):
@@ -420,7 +420,7 @@ def test_reject_then_reject_again_409(client):
                        json={"critique": "drop again"}).status_code == 409
 
 
-# ── listing / filter behaviour ───────────────────────────────────────────────
+# -- listing / filter behaviour -----------------------------------------------
 
 
 def test_pending_filter_excludes_reviewed_drafts(client):

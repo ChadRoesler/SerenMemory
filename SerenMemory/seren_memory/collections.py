@@ -143,9 +143,9 @@ class MemoryStore:
             except AttributeError:
                 pass
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  ShortTerm
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def add_short(self, entry: ShortTermEntry) -> ShortTermEntry:
         meta = _clean_meta({
             "topic": entry.topic,
@@ -212,9 +212,9 @@ class MemoryStore:
         self.short.delete(ids=[entry_id])
         return long_entry.id
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  NearTerm
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def add_near(self, entry: NearTermEntry) -> NearTermEntry:
         meta = _clean_meta({
             "topic": entry.topic,
@@ -252,10 +252,10 @@ class MemoryStore:
         if ids:
             self.near.delete(ids=ids)
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  LongTerm - writes are consolidator-only by convention (the route
     #  layer enforces; this layer trusts its callers). Reads open.
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def add_long(self, entry: LongTermEntry) -> LongTermEntry:
         meta = _clean_meta({
             "topic": entry.topic,
@@ -299,9 +299,9 @@ class MemoryStore:
         res = self.long.get(include=["documents", "metadatas"])
         return _zip_get(res, None)
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Briefs
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def add_brief(self, brief: DailyBrief) -> DailyBrief:
         meta = _clean_meta({
             "completed_intents": brief.completed_intents,
@@ -327,9 +327,9 @@ class MemoryStore:
         rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
         return rows[:limit]
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Pruned safety net
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def archive_pruned(self, rows: list[dict[str, Any]]) -> None:
         """Copy aged-out short-term rows to the pruned collection before
         deleting from short-term. Insurance window configured by
@@ -352,9 +352,9 @@ class MemoryStore:
             self.pruned.delete(ids=stale)
         return len(stale)
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Consolidator run history
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def add_run(self, run: "ConsolidatorRun") -> "ConsolidatorRun":
         """Record one consolidation pass. The document text is a short
         human-readable summary (good for the embedding + viewer); the full
@@ -403,10 +403,10 @@ class MemoryStore:
         rows.sort(key=lambda r: r["metadata"].get("finished_at", 0), reverse=True)
         return rows[:limit]
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Consolidator drafts - HITL gate between cluster synthesis and
     #  long-term commit. See DraftEntry docstring for the philosophy.
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def add_draft(self, draft: DraftEntry) -> DraftEntry:
         """Stage a synthesized cluster as a draft. Source shorts stay in
         place - they're the evidence trail until the draft is approved
@@ -677,9 +677,9 @@ class MemoryStore:
         return {"long_term_id": long_entry.id, "shorts_archived": shorts_archived,
                 "edited": was_edited, "edit_delta_chars": edit_delta}
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Query - used by the unified search route
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def query(self, collection_name: str, query_text: str, n: int) -> list[dict[str, Any]]:
         """Similarity search against one collection. Returns hits with
         distance. collection_name in {short, near, long}."""

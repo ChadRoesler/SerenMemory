@@ -11,7 +11,7 @@ bugs made the endpoint unreachable in practice:
      Starlette, so session_manager.run() was never entered and every request
      500'd with "Task group is not initialized".
   3. host check: FastMCP's DNS-rebinding protection defaults to localhost-only,
-     421'ing the cross-host (nuc:7420) access the route exists for.
+     421'ing the cross-host (memory-host:7420) access the route exists for.
 
 These tests drive an actual JSON-RPC `initialize` through the live app (with
 the lifespan entered, the way uvicorn runs it) so the whole path is exercised.
@@ -82,7 +82,7 @@ def test_initialize_handshake_succeeds_at_mcp(mcp_client):
 
 
 def test_mcp_trailing_slash_also_works(mcp_client):
-    """`http://nuc:7420/mcp/` (with the slash - the form Chad was hitting)
+    """`http://memory-host:7420/mcp/` (with the slash - the form some clients send)
     must resolve too, not 404."""
     r = mcp_client.post("/mcp/", json=_INIT, headers=_MCP_HEADERS,
                         follow_redirects=True)

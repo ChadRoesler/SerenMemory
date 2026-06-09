@@ -33,24 +33,24 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# -- helpers ------------------------------------------------------------------
 
 function Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Die([string]$msg)  { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 
-# ── guard: must run from SerenMemoryVSCode/ ───────────────────────────────────
+# -- guard: must run from SerenMemoryVSCode/ -----------------------------------
 
 if (-not (Test-Path "package.json")) {
 	Die "Run this script from the SerenMemoryVSCode/ directory (package.json not found here)."
 }
 
-# ── 1. install deps ───────────────────────────────────────────────────────────
+# -- 1. install deps -----------------------------------------------------------
 
 Step "Installing dependencies"
 npm install
 if ($LASTEXITCODE -ne 0) { Die "npm install failed." }
 
-# ── 2. tests ──────────────────────────────────────────────────────────────────
+# -- 2. tests ------------------------------------------------------------------
 
 if (-not $SkipTests) {
 	Step "Running unit tests"
@@ -60,13 +60,13 @@ if (-not $SkipTests) {
 	Write-Host "  (tests skipped)" -ForegroundColor Yellow
 }
 
-# ── 3. production build ───────────────────────────────────────────────────────
+# -- 3. production build -------------------------------------------------------
 
 Step "Building production bundle"
 npm run build -- --production
 if ($LASTEXITCODE -ne 0) { Die "Build failed." }
 
-# ── 4. package ────────────────────────────────────────────────────────────────
+# -- 4. package ----------------------------------------------------------------
 
 Step "Packaging extension (.vsix)"
 npm run package
@@ -76,7 +76,7 @@ $vsix = Get-ChildItem -Filter "*.vsix" | Sort-Object LastWriteTime -Descending |
 if (-not $vsix) { Die "No .vsix file found after packaging." }
 Write-Host "  Packaged: $($vsix.Name)" -ForegroundColor Green
 
-# ── 5. publish ────────────────────────────────────────────────────────────────
+# -- 5. publish ----------------------------------------------------------------
 
 if ($Publish) {
 	if (-not $env:VSCE_PAT) {

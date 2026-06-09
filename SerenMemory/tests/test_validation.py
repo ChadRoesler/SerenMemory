@@ -20,7 +20,7 @@ def client(make_client):
     ))
 
 
-# ── /short ────────────────────────────────────────────────────────────────
+# -- /short ----------------------------------------------------------------
 
 def test_short_missing_content_is_422(client):
     r = client.post("/short", json={"topic": "no_content_field"})
@@ -37,7 +37,7 @@ def test_short_non_json_body_is_422(client):
     assert r.status_code == 422
 
 
-# ── /near ─────────────────────────────────────────────────────────────────
+# -- /near -----------------------------------------------------------------
 
 def test_near_missing_intent_is_422(client):
     r = client.post("/near", json={"topic": "no_intent"})
@@ -49,7 +49,7 @@ def test_near_empty_body_is_422(client):
     assert r.status_code == 422
 
 
-# ── /search ───────────────────────────────────────────────────────────────
+# -- /search ---------------------------------------------------------------
 
 def test_search_missing_query_is_422(client):
     r = client.post("/search", json={"n_results": 5})
@@ -71,7 +71,7 @@ def test_search_empty_body_is_422(client):
     assert r.status_code == 422
 
 
-# ── /long forget ──────────────────────────────────────────────────────────
+# -- /long forget ----------------------------------------------------------
 
 def test_forget_missing_reason_is_400(client):
     r = client.post("/long/nonexistent/forget", json={})
@@ -83,7 +83,7 @@ def test_forget_empty_reason_is_400(client):
     assert r.status_code == 400
 
 
-# ── /brief ────────────────────────────────────────────────────────────────
+# -- /brief ----------------------------------------------------------------
 
 def test_brief_missing_summary_is_422(client):
     r = client.post("/brief", json={"promote_hints": ["something"]})
@@ -95,7 +95,7 @@ def test_brief_empty_body_is_422(client):
     assert r.status_code == 422
 
 
-# ── method not allowed ────────────────────────────────────────────────────
+# -- method not allowed ----------------------------------------------------
 
 def test_post_long_directly_is_405(client):
     r = client.post("/long", json={"content": "should not work"})

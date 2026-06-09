@@ -27,7 +27,7 @@ export class SerenApiError extends Error {
 export class SerenClient {
   constructor(private readonly config: SerenConfig) {}
 
-  // ── helpers ────────────────────────────────────────────────────────────────
+  // -- helpers ----------------------------------------------------------------
 
   private async request<T>(
     method: string,
@@ -69,7 +69,7 @@ export class SerenClient {
     return this.request<T>("POST", path, body, signal);
   }
 
-  // ── health ─────────────────────────────────────────────────────────────────
+  // -- health -----------------------------------------------------------------
 
   async ping(): Promise<boolean> {
     try {
@@ -80,7 +80,7 @@ export class SerenClient {
     }
   }
 
-  // ── write tiers ────────────────────────────────────────────────────────────
+  // -- write tiers ------------------------------------------------------------
   //
   // CONTRACT NOTES (don't drift):
   //   /short  takes ShortTermEntry  -> { content, topic? }
@@ -116,7 +116,7 @@ export class SerenClient {
     return this.post("/brief", body, signal);
   }
 
-  // ── agency (verbatim / promote / forget / complete) ────────────────────────
+  // -- agency (verbatim / promote / forget / complete) ------------------------
 
   async preserveVerbatim(shortId: string, signal?: AbortSignal): Promise<unknown> {
     return this.post(`/short/${encodeURIComponent(shortId)}/preserve`, undefined, signal);
@@ -134,7 +134,7 @@ export class SerenClient {
     return this.post(`/near/${encodeURIComponent(intentId)}/complete`, undefined, signal);
   }
 
-  // ── search ─────────────────────────────────────────────────────────────────
+  // -- search -----------------------------------------------------------------
   //
   // CONTRACT NOTES (don't drift):
   //   /search takes SearchRequest -> {
@@ -161,7 +161,7 @@ export class SerenClient {
     );
   }
 
-  // ── consolidation ──────────────────────────────────────────────────────────
+  // -- consolidation ----------------------------------------------------------
 
   async wakeConsolidator(signal?: AbortSignal): Promise<unknown> {
     return this.post("/consolidate/wake", undefined, signal);
@@ -171,7 +171,7 @@ export class SerenClient {
     return this.post("/consolidate/run", undefined, signal);
   }
 
-  // ── drafts ─────────────────────────────────────────────────────────────────
+  // -- drafts -----------------------------------------------------------------
 
   async listDrafts(status?: string, signal?: AbortSignal): Promise<unknown> {
     const qs = status ? `?status=${encodeURIComponent(status)}` : "";

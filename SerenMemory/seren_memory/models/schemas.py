@@ -48,12 +48,12 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  Provenance - who wrote this, so the consolidator (and Chad) can reason
 #  about trust. A memory written by the user is a different kind of fact
 #  than one Rhys inferred, which is different from one the consolidator
 #  synthesized from many short-term entries.
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class Source(str, Enum):
     USER = "user"               # Chad said this, directly
     ASSISTANT = "assistant"     # Rhys wrote this about the conversation
@@ -62,9 +62,9 @@ class Source(str, Enum):
     BRIEF = "brief"             # came from a daily brief
 
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  ShortTerm
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class ShortTermEntry(BaseModel):
     """A working-memory item. Cheap to write, expected to be transient."""
 
@@ -85,9 +85,9 @@ class ShortTermEntry(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  NearTerm - the open loops
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class TriggerType(str, Enum):
     """How a near-term intent knows it's time to surface."""
     TIME = "time"          # surface after trigger_value (unix ts)
@@ -123,9 +123,9 @@ class NearTermEntry(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  LongTerm - consolidated, durable, gated
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class LongTermEntry(BaseModel):
     """A consolidated fact. Written ONLY by the consolidator."""
 
@@ -157,7 +157,7 @@ class LongTermEntry(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  Consolidator drafts - the model-review gate between synthesis and
 #  long-term commit.
 #
@@ -170,7 +170,7 @@ class LongTermEntry(BaseModel):
 #
 #  Verbatim peel-off and direct-promote bypass this gate - both already
 #  carry an explicit model review-in-advance signal.
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class DraftStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -224,7 +224,7 @@ class DraftEntry(BaseModel):
     # the draft side.
     long_term_id: Optional[str] = Field(None)
 
-    # ── Edit-on-select audit trail ──
+    # -- Edit-on-select audit trail --
     # When all redraft attempts are rejected and the chain flips to
     # requires_selection, the editor (the same model role that did the
     # reviews) can commit the best attempt AS-IS or with revisions. If
@@ -245,11 +245,11 @@ class DraftEntry(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  Daily brief - the main model's "here's what mattered" note that steers
 #  the consolidator's search. Input to consolidation; also a LongTerm
 #  candidate itself.
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class DailyBrief(BaseModel):
     """Main model's end-of-cycle summary. Steers consolidation."""
 
@@ -272,9 +272,9 @@ class DailyBrief(BaseModel):
     id: str = Field(default_factory=_new_id)
 
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  Unified search - query across all three tiers, ranked.
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class SearchRequest(BaseModel):
     query: str
     n_results: int = Field(default=5, ge=1, le=50)
@@ -302,7 +302,7 @@ class SearchResponse(BaseModel):
     hits: list[SearchHit]
     searched_tiers: list[str]
 
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 #  Consolidator runs - operational record of each dream-cycle.
 #
 #  Each call to Consolidator.run_once() emits one of these on completion
@@ -313,7 +313,7 @@ class SearchResponse(BaseModel):
 #
 #  The fields mirror the report dict run_once() already builds - we're not
 #  adding new instrumentation, just persisting what's already being computed.
-# ─────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
 class ConsolidatorRunStatus(str, Enum):
     """Outcome of one consolidation pass."""
     SUCCESS = "success"   # ran and did work

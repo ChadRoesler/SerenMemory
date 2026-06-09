@@ -90,9 +90,9 @@ class Consolidator:
         and draft review instead."""
         return bool(self._cfg.consolidator.model_url.strip())
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Entry point - one full consolidation pass.
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def run_once(self) -> dict[str, Any]:
         """Public entry point - serializes runs via _run_lock.
 
@@ -146,7 +146,7 @@ class Consolidator:
         error_msg: Optional[str] = None
 
         try:
-            # ── Brief acquisition: push wins, pull is the Oliver-Twist fallback ──
+            # -- Brief acquisition: push wins, pull is the Oliver-Twist fallback --
             if not self._model_configured:
                 self._log("running in closed-system mode (no model_url); brief pull and synthesis skipped - use Copilot tools to manage briefs, drafts, and consolidation")
             brief = self._ensure_fresh_brief()
@@ -165,7 +165,7 @@ class Consolidator:
                 if self._model_configured:
                     self._log("no brief available (push absent + pull failed); proceeding with mechanical heuristics only")
 
-            # ── The existing work, unchanged ──
+            # -- The existing work, unchanged --
             report["forget_flags_handled"] = self._handle_forget_flags()
             promotion = self._promote_short_term(promote_hints, noise_hints, brief_id_used)
             report["promoted"] = promotion["promoted"]
@@ -239,9 +239,9 @@ class Consolidator:
             report["error"] = error_msg
         return report
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Step 1: brief acquisition (push wins, pull is fallback)
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def _ensure_fresh_brief(self) -> Optional[dict[str, Any]]:
         """Get a brief to steer THIS run.
 
@@ -374,9 +374,9 @@ class Consolidator:
             "_pulled": True,
         }
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Step 2: forget-flags
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def _handle_forget_flags(self) -> int:
         rows = self._store.get_long_all()
         flagged = [r for r in rows if r["metadata"].get("forget_flag")]
@@ -402,9 +402,9 @@ class Consolidator:
                 handled += 1
         return handled
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Step 3: promote short-term → long-term
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def _promote_short_term(self, promote_hints: set[str], noise_hints: set[str],
                              brief_id: Optional[str] = None) -> dict[str, int]:
         """Promote / draft eligible short-term clusters.
@@ -446,7 +446,7 @@ class Consolidator:
         promoted_ids: list[str] = []
 
         for topic, entries in clusters.items():
-            # ── Peel off verbatim entries first ──
+            # -- Peel off verbatim entries first --
             # When Rhys flagged an entry's exact phrasing as the point (not
             # the gist), respect it. These go to long-term AS-IS, individually,
             # no synthesis. The rest of the cluster follows the normal path.
@@ -464,7 +464,7 @@ class Consolidator:
                 promoted_ids.append(ve["id"])
                 self._log(f"promoted verbatim entry {ve['id']} → long-term as-is")
 
-            # ── Normal cluster path for non-verbatim remainder ──
+            # -- Normal cluster path for non-verbatim remainder --
             remaining = [e for e in entries if not e["metadata"].get("verbatim")]
             if not remaining:
                 continue
@@ -509,7 +509,7 @@ class Consolidator:
             if not synthesis:
                 continue
 
-            # ── Model-review gate: cluster synthesis goes to drafts ──
+            # -- Model-review gate: cluster synthesis goes to drafts --
             # Source shorts STAY in the pool. On approve, they archive to
             # pruned and the draft becomes durable. On reject with critique,
             # the reject endpoint triggers a redraft pass (up to
@@ -593,10 +593,10 @@ class Consolidator:
             self._log(f"_synthesize raised {type(exc).__name__}: {exc}")
             return fallback
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Redraft - triggered by the reject endpoint when the main model
     #  sends a critique back.
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def redraft_cluster(self, cluster_id: str, rejected_draft_id: str,
                         critique: str, attempt: int,
                         source_short_ids: list[str],
@@ -704,9 +704,9 @@ class Consolidator:
             self._log(f"_redraft_synthesis raised {type(exc).__name__}: {exc}")
             return fallback
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Step 4: age out short-term
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def _age_out_short_term(self) -> int:
         rows = self._store.get_short_all(limit=None)
         now = time.time()
@@ -723,9 +723,9 @@ class Consolidator:
         self._log(f"aged out {len(stale)} short-term entries (archived to pruned)")
         return len(stale)
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Step 5: maintain near-term
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def _maintain_near_term(self) -> dict[str, int]:
         rows = self._store.get_near_all()
         now = time.time()
@@ -760,9 +760,9 @@ class Consolidator:
 
         return {"expired": len(expired_ids), "completed_promoted": completed_promoted}
 
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     #  Model plumbing
-    # ──────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def _call_model(self, prompt: str, max_tokens: int = 200) -> str:
         """Call the configured OpenAI-compatible chat endpoint. Synchronous
         (consolidation runs in its own thread/process, not the event loop).

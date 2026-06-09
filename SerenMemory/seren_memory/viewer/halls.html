@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Halls of Memory · SerenMemory</title>
 <style>
-    /* ─────────────────────────────────────────────────────────────────
+    /* -----------------------------------------------------------------
        Theme tokens - lifted from the Seren dashboard so this peek tool
        feels like part of the same family. Deep space navy, electric
        purple, mint for the gated tier. Mole-man approved.
-       ───────────────────────────────────────────────────────────────── */
+       ----------------------------------------------------------------- */
     :root {
         --bg-page: #0F1222;
         --bg-card: #13151E;
@@ -278,9 +278,9 @@
 <script>
 'use strict';
 
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 // State
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 const state = {
     tab: 'short',
     // Base URL resolution:
@@ -354,9 +354,9 @@ function relAge(ms) {
     return `${d}d ago`;
 }
 
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 // Rendering
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 function renderCounts(counts) {
     if (!counts) { $('counts').innerHTML = ''; return; }
     const pill = (label, n, color) =>
@@ -539,9 +539,9 @@ function renderEntries(html) {
     $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
 }
 
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 // Loaders per tab
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 async function loadShort() {
     setHint('Working memory · ~8 day lifetime · free read/write');
     setExtraToggle(null);
@@ -622,9 +622,9 @@ async function doSearch() {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 // Toolbar helpers
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 function setHint(text) { $('list-hint').textContent = text; }
 
 let _extraHandler = null;
@@ -640,9 +640,9 @@ $('extra-toggle').addEventListener('change', (e) => {
     if (_extraHandler) _extraHandler(e.target.checked);
 });
 
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 // Tab switching
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 async function switchTab(tier) {
     state.tab = tier;
     document.querySelectorAll('.tab').forEach(t =>
@@ -669,9 +669,9 @@ async function switchTab(tier) {
 document.querySelectorAll('.tab').forEach(t =>
     t.addEventListener('click', () => switchTab(t.dataset.tier)));
 
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 // Connection + refresh
-// ──────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------
 async function refresh() {
     // Blank input = use the smart default (same-origin when served, localhost
     // when file://). Only override if the user typed something explicit.

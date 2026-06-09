@@ -28,7 +28,7 @@ from seren_memory.config import ConsolidatorConfig, MemoryConfig
 from seren_memory.consolidator.service import Consolidator
 
 
-# ─── fixtures ────────────────────────────────────────────────────────────────
+# --- fixtures ----------------------------------------------------------------
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def wired_app(tmp_path, fake_embedder):
     store.close()
 
 
-# ─── tests ──────────────────────────────────────────────────────────────────
+# --- tests ------------------------------------------------------------------
 
 
 def test_mount_succeeds_when_state_wired(wired_app):

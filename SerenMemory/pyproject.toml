@@ -61,6 +61,11 @@ seren_memory = ["viewer/*.html"]
 # .git is one level above pyproject.toml (repo root, not the SerenMemory subdir)
 root = ".."
 version_scheme = "release-branch-semver"
+# Write the tag-derived version into the package (shipped in the wheel, read
+# by __init__ / importlib.metadata). Replaces the old sed-on-__init__ hack -
+# version now flows from the git tag with no manual step. _version.py is
+# gitignored; it's a build artifact, never committed.
+version_file = "seren_memory/_version.py"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -7,7 +7,7 @@ Wires the FastMCP server INTO the existing FastAPI app at /mcp.
 DESIGN
 
 Same process, same port. The MCP tools call MemoryStore directly via
-captured closures — no HTTP round-trip back to ourselves. One install,
+captured closures - no HTTP round-trip back to ourselves. One install,
 one approval surface, one set of logs. (See seren_memory.mcp.__init__
 for the rationale.)
 
@@ -16,11 +16,11 @@ you need to share the namespace with something else.
 
 SDK COMPATIBILITY
 
-The Python `mcp` SDK is moving fast — the modern transport is
+The Python `mcp` SDK is moving fast - the modern transport is
 "streamable HTTP" (`streamable_http_app()`); older versions used SSE
 (`sse_app()`). This module tries the newer call first and falls back,
 so it works across a range of installed versions. If neither attribute
-exists, we raise a clear error with the SDK version we saw — better than
+exists, we raise a clear error with the SDK version we saw - better than
 a cryptic AttributeError at mount time.
 """
 from __future__ import annotations
@@ -72,7 +72,7 @@ def mount_mcp_routes(app: FastAPI):
     mcp = FastMCP("seren-memory")
     register_tools(mcp, store, config, consolidator)
 
-    # ── Bug 1: the double-/mcp footgun ──
+    # -- Bug 1: the double-/mcp footgun --
     # streamable_http_app()/sse_app() serve their endpoint at the path in
     # settings.streamable_http_path, which DEFAULTS TO "/mcp". If we then
     # app.mount(mount_path="/mcp", asgi_app), the real endpoint lands at
@@ -83,16 +83,16 @@ def mount_mcp_routes(app: FastAPI):
     if hasattr(mcp.settings, "streamable_http_path"):
         mcp.settings.streamable_http_path = "/"
 
-    # ── Bug 3: DNS-rebinding host check vs. cross-host LAN access ──
+    # -- Bug 3: DNS-rebinding host check vs. cross-host LAN access --
     # FastMCP >=1.x ships DNS-rebinding protection that validates the Host
     # header against allowed_hosts, defaulting to localhost-only
     # (127.0.0.1:*, localhost:*, [::1]:*). That silently 421s the exact
     # use case this route exists for: VSCode/Copilot on a workstation
-    # reaching the NUC as `nuc:7420`. The rest of Seren is trusted-LAN with
+    # reaching the box as `memory-host:7420`. The rest of Seren is trusted-LAN with
     # the optional bearer token (see app.py bearer_auth) as the real gate,
     # so we default the host check OFF to match that posture. Operators who
     # want it back on set SEREN_MCP_ALLOWED_HOSTS (comma-sep, e.g.
-    # "nuc:*,192.168.0.200:*,localhost:*") and optionally
+    # "memory-host:*,192.168.1.50:*,localhost:*") and optionally
     # SEREN_MCP_ALLOWED_ORIGINS. hasattr-guarded for SDK drift.
     if hasattr(mcp.settings, "transport_security"):
         _apply_transport_security(mcp)
@@ -102,7 +102,7 @@ def mount_mcp_routes(app: FastAPI):
     logger.info("[seren-memory] MCP server mounted at %s (%d tools)",
                 mount_path, _count_tools(mcp))
 
-    # ── Bug 2: the mounted sub-app's lifespan never runs ──
+    # -- Bug 2: the mounted sub-app's lifespan never runs --
     # Returned so the caller (app.py lifespan) can run the streamable-HTTP
     # session manager's task group. Starlette does NOT fire a mounted
     # sub-app's lifespan, and the session manager raises "Task group is not
@@ -166,7 +166,7 @@ def _resolve_transport_app(mcp) -> object:
         version = "unknown"
     raise RuntimeError(
         f"mcp SDK version {version} exposes neither streamable_http_app "
-        "nor sse_app on FastMCP — cannot mount HTTP transport. Try "
+        "nor sse_app on FastMCP - cannot mount HTTP transport. Try "
         "`pip install -U mcp` or pin a known-good version in extras."
     )
 
