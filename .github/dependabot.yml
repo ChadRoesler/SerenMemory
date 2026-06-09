@@ -1,8 +1,3 @@
-# Dependabot keeps dependencies fresh - and it's the other half of SHA-pinning.
-# Pinning Actions to a commit SHA makes them immutable (a moved tag can't slip
-# compromised code in, the 2025 tj-actions lesson), but a frozen SHA also stops
-# getting security patches - so Dependabot opens PRs to bump the pinned SHA when
-# a new release lands. Pin + Dependabot together = immutable AND maintained.
 version: 2
 updates:
   # GitHub Actions used in .github/workflows/*. Dependabot rewrites the pinned
