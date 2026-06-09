@@ -31,7 +31,7 @@ def client(make_client, monkeypatch):
     ))
 
 
-# ── basic brief storage ───────────────────────────────────────────────────
+# -- basic brief storage ---------------------------------------------------
 
 def test_brief_accepted(client):
     r = client.post("/brief", json={"summary": "Worked on memory consolidation today."})
@@ -58,7 +58,7 @@ def test_multiple_briefs_accepted(client):
         assert r.json()["ok"] is True
 
 
-# ── brief promote_hints steer consolidation ───────────────────────────────
+# -- brief promote_hints steer consolidation -------------------------------
 
 def test_promote_hint_overrides_evidence_threshold(client, approve_pending_drafts):
     """A single short-term entry should clear the cluster threshold when its
@@ -84,7 +84,7 @@ def test_promote_hint_overrides_evidence_threshold(client, approve_pending_draft
     assert after_long > before_long, "approved draft should have landed in long-term"
 
 
-# ── brief noise_hints suppress consolidation ──────────────────────────────
+# -- brief noise_hints suppress consolidation ------------------------------
 
 def test_noise_hint_suppresses_promotion(client):
     """Entries whose topic matches a noise_hint should NOT be promoted even

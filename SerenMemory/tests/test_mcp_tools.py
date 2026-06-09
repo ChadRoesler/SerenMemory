@@ -37,7 +37,7 @@ from seren_memory.config import ConsolidatorConfig, MemoryConfig
 from seren_memory.consolidator.service import Consolidator
 
 
-# ─── fixtures ────────────────────────────────────────────────────────────────
+# --- fixtures ----------------------------------------------------------------
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def mcp_impl_with_consolidator(store, cfg, monkeypatch):
     return MemoryToolImpl(store, cfg, consolidator=consolidator)
 
 
-# ─── helper: seed shorts for tests that need them ───────────────────────────
+# --- helper: seed shorts for tests that need them ---------------------------
 
 
 def _seed_shorts(impl: MemoryToolImpl, *items) -> list[str]:

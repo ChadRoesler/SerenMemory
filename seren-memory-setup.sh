@@ -36,19 +36,19 @@
 # ==========================================================================
 set -euo pipefail
 
-# ── OS detection ───────────────────────────────────────────────────────────
+# -- OS detection -----------------------------------------------------------
 OS="$(uname -s)"
 IS_MAC=false
 [[ "$OS" == "Darwin" ]] && IS_MAC=true
 
-# ── pretty output ──────────────────────────────────────────────────────────
+# -- pretty output ----------------------------------------------------------
 G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[0;34m'; NC='\033[0m'; DC='\033[0;36m'; DM='\033[35m'
 step() { echo -e "\n${B}==>${NC} $1"; }
 ok()   { echo -e "${G}  ✓${NC} $1"; }
 warn() { echo -e "${Y}  !${NC} $1"; }
 die()  { echo -e "${R}ERROR:${NC} $1" >&2; exit 1; }
 
-# ── defaults ───────────────────────────────────────────────────────────────
+# -- defaults ---------------------------------------------------------------
 PORT=7420
 HOST="127.0.0.1"          # this machine only. Safe by default.
 TOKEN=""
@@ -62,7 +62,7 @@ VENV_DIR="$HOME/seren-venvs/memory"
 APP_DIR="$HOME/seren-memory"
 CFG_PATH="$APP_DIR/seren-memory.yaml"
 
-# ── flag parsing (while/case) ──────────────────────────────────────────────
+# -- flag parsing (while/case) ----------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port)      PORT="$2"; shift 2 ;;
@@ -84,7 +84,7 @@ echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenMemory setup (macOS)${NC}" || echo -e "${G}  SerenMemory setup (Linux)${NC}"
 echo -e "${G}==========================================${NC}"
 
-# ── 1. find a usable Python ────────────────────────────────────────────────
+# -- 1. find a usable Python ------------------------------------------------
 # chroma 1.x ships a binary wheel (no compiler needed) but its transitive
 # deps don't build on Python 3.13+ yet, and the package needs >=3.10. So we
 # want 3.10, 3.11, or 3.12 - 3.11/3.12 are the sweet spot.
@@ -110,7 +110,7 @@ fi
 PYVER="$("$PYBIN" -c 'import sys; print("%d.%d.%d"%sys.version_info[:3])')"
 ok "Using $PYBIN (Python $PYVER)"
 
-# ── 2. resolve the wheel to install ────────────────────────────────────────
+# -- 2. resolve the wheel to install ----------------------------------------
 WHEEL_SRC=""          # local path we'll pip-install
 CLEANUP_WHEEL=false
 if [[ -n "$WHEEL" ]]; then
@@ -144,7 +144,7 @@ PY
   ok "Downloaded"
 fi
 
-# ── 3. venv + install ──────────────────────────────────────────────────────
+# -- 3. venv + install ------------------------------------------------------
 step "Creating venv at $VENV_DIR"
 if [[ -x "$VENV_DIR/bin/python" ]]; then
   warn "venv already exists - reusing it (will upgrade the package)"
@@ -168,7 +168,7 @@ else
     ok "Installed"
 fi
 
-# ── 4. sanity check (import + the viewer asset that's bitten us before) ─────
+# -- 4. sanity check (import + the viewer asset that's bitten us before) -----
 step "Sanity-checking the install"
 CHECK="$("$VPY" - <<'PY'
 import pathlib
@@ -186,7 +186,7 @@ case "$CHECK" in
   *) die "Install looks broken: $CHECK" ;;
 esac
 
-# ── 5. config ──────────────────────────────────────────────────────────────
+# -- 5. config --------------------------------------------------------------
 step "Writing config at $CFG_PATH"
 mkdir -p "$APP_DIR"
 $GEN_TOKEN && TOKEN="$("$VPY" -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -214,7 +214,7 @@ YAML
 [[ -n "$TOKEN" ]] && chmod 600 "$CFG_PATH" && ok "Config locked to 0600 (it holds your token)"
 ok "Config written"
 
-# ── 6. launcher (the rip-it-and-win artifact) ──────────────────────────────
+# -- 6. launcher (the rip-it-and-win artifact) ------------------------------
 LAUNCHER="$APP_DIR/run-seren-memory.sh"
 cat > "$LAUNCHER" <<SH
 #!/usr/bin/env bash
@@ -224,10 +224,10 @@ SH
 chmod +x "$LAUNCHER"
 ok "Launcher: $LAUNCHER"
 
-# ── 7. optional autostart ──────────────────────────────────────────────────
+# -- 7. optional autostart --------------------------------------------------
 if $INSTALL_SERVICE; then
   if $IS_MAC; then
-    # ── macOS: launchd user agent (no sudo needed) ──────────────────────────
+    # -- macOS: launchd user agent (no sudo needed) --------------------------
     step "Installing launchd user agent (starts at login, no sudo needed)"
     PLIST_DIR="$HOME/Library/LaunchAgents"
     PLIST="$PLIST_DIR/com.chadroesler.seren-memory.plist"
@@ -274,7 +274,7 @@ PLISTEOF
       [[ $i -eq 30 ]] && warn "Didn't respond in 15s - check: tail -f $APP_DIR/seren-memory.log"
     done
   else
-    # ── Linux: systemd system service (needs sudo) ───────────────────────────
+    # -- Linux: systemd system service (needs sudo) ---------------------------
     step "Installing systemd service (needs sudo)"
     UNIT=/etc/systemd/system/seren-memory.service
     ENVFILE="$APP_DIR/seren-memory.env"
@@ -316,7 +316,7 @@ UNITEOF
   fi
 fi
 
-# ── done ───────────────────────────────────────────────────────────────────
+# -- done -------------------------------------------------------------------
 echo
 echo -e "${G}==========================================${NC}"
 echo -e "${G}  SerenMemory is set up ✓${NC}"

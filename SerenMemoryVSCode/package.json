@@ -1,20 +1,27 @@
 {
   "name": "seren-memory",
   "displayName": "Seren Memory",
-  "description": "Gives GitHub Copilot access to the SerenMemory store - search, write, brief, consolidate, and manage drafts.",
+  "description": "Gives GitHub Copilot and the user access to the SerenMemory store - search, write, brief, consolidate, and manage drafts.",
   "version": "0.2.0",
   "publisher": "ChadRoesler",
   "repository": {
     "type": "git",
     "url": "https://github.com/ChadRoesler/SerenMemory"
   },
+  "icon": "resources/SerenIcon.png",
+  "galleryBanner": {
+    "color": "#1a1a2e",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
     "AI",
-    "Other"
+    "Other",
+    "RAG"
   ],
+
   "activationEvents": [
     "onStartupFinished"
   ],

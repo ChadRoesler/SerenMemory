@@ -41,7 +41,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ── pretty output ──────────────────────────────────────────────────────────
+# -- pretty output ----------------------------------------------------------
 function Step($m) { Write-Host "`n==> $m" -ForegroundColor Blue }
 function Ok($m)   { Write-Host "  + $m"   -ForegroundColor Green }
 function Warn($m) { Write-Host "  ! $m"   -ForegroundColor Yellow }
@@ -54,7 +54,7 @@ Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenMemory setup (Windows)"            -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 
-# ── 1. find a usable Python ────────────────────────────────────────────────
+# -- 1. find a usable Python ------------------------------------------------
 # chroma 1.x ships a binary wheel (no compiler/Build-Tools needed) but its
 # deps don't build on Python 3.13+ yet, and the package needs >=3.10. So we
 # want 3.10-3.12. The py launcher lets us ask for an exact version.
@@ -85,7 +85,7 @@ Install one, e.g.:
 $pyVer = & $PyCmd @($PyPre) -c "import sys;print('%d.%d.%d'%sys.version_info[:3])"
 Ok "Using '$PyCmd $($PyPre -join ' ')' (Python $pyVer)"
 
-# ── 2. resolve the wheel to install ────────────────────────────────────────
+# -- 2. resolve the wheel to install ----------------------------------------
 $WheelSrc = ""; $CleanupWheel = $false
 if ($Wheel) {
   if (-not (Test-Path $Wheel)) { Die "wheel not found: $Wheel" }
@@ -107,7 +107,7 @@ if ($Wheel) {
   Ok "Downloaded"
 }
 
-# ── 3. venv + install ──────────────────────────────────────────────────────
+# -- 3. venv + install ------------------------------------------------------
 Step "Creating venv at $VenvDir"
 $Vpy = Join-Path $VenvDir "Scripts\python.exe"
 if (Test-Path $Vpy) {
@@ -137,7 +137,7 @@ if ($Mcp) {
     if ($CleanupWheel) { Remove-Item $WheelSrc -ErrorAction SilentlyContinue }
 }
 
-# ── 4. sanity check (import + the viewer asset that's bitten us before) ─────
+# -- 4. sanity check (import + the viewer asset that's bitten us before) -----
 Step "Sanity-checking the install"
 $check = & $Vpy -c @"
 import pathlib
@@ -154,7 +154,7 @@ switch -Wildcard ($check) {
   default          { Die "Install looks broken: $check" }
 }
 
-# ── 5. config ──────────────────────────────────────────────────────────────
+# -- 5. config --------------------------------------------------------------
 Step "Writing config at $CfgPath"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 if ($GenToken) { $Token = (& $Vpy -c "import secrets;print(secrets.token_urlsafe(32))").Trim() }
@@ -189,7 +189,7 @@ if ($Token) {
   } catch { Warn "Couldn't tighten the config ACL automatically - do it by hand if this box is shared." }
 }
 
-# ── 6. launcher (the rip-it-and-win artifact) ──────────────────────────────
+# -- 6. launcher (the rip-it-and-win artifact) ------------------------------
 $Launcher = "$AppDir\start-seren-memory.cmd"
 @"
 @echo off
@@ -198,7 +198,7 @@ REM Start SerenMemory. Double-click this, or run it from a terminal.
 "@ | Set-Content -Path $Launcher -Encoding ASCII
 Ok "Launcher: $Launcher  (double-clickable)"
 
-# ── 7. optional logon autostart (no admin service wrapper needed) ──────────
+# -- 7. optional logon autostart (no admin service wrapper needed) ----------
 if ($AutoStart) {
   Step "Registering a logon Scheduled Task (starts SerenMemory when you log in)"
   try {
@@ -245,7 +245,7 @@ if ($AutoStart) {
   }
 }
 
-# ── done ───────────────────────────────────────────────────────────────────
+# -- done -------------------------------------------------------------------
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenMemory is set up +"                  -ForegroundColor Green

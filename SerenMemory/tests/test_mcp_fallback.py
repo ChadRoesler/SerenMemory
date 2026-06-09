@@ -42,7 +42,7 @@ def cfg_for_tmp(tmp_path):
     })
 
 
-# ─── tests ──────────────────────────────────────────────────────────────────
+# --- tests ------------------------------------------------------------------
 
 
 def test_missing_extras_logs_http_only_and_skips_mcp_mount(

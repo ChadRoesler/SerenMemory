@@ -23,7 +23,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const config = new SerenConfig(context.secrets);
   const client = new SerenClient(config);
 
-  // ── status bar ─────────────────────────────────────────────────────────────
+  // -- status bar -------------------------------------------------------------
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = "serenMemory.checkHealth";
   statusBar.text = "$(database) Seren";
@@ -31,7 +31,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar.show();
   context.subscriptions.push(statusBar);
 
-  // ── commands ───────────────────────────────────────────────────────────────
+  // -- commands ---------------------------------------------------------------
   context.subscriptions.push(
     vscode.commands.registerCommand("serenMemory.setToken", () =>
       promptSetToken(config)
@@ -71,7 +71,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // ── register LM tools ──────────────────────────────────────────────────────
+  // -- register LM tools ------------------------------------------------------
   context.subscriptions.push(
     vscode.lm.registerTool("seren_memory_search", new SearchTool(client)),
     vscode.lm.registerTool("seren_memory_write", new WriteTool(client)),
@@ -88,7 +88,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.lm.registerTool("seren_memory_select_draft", new SelectDraftTool(client))
   );
 
-  // ── startup health check ───────────────────────────────────────────────────
+  // -- startup health check ---------------------------------------------------
   const alive = await client.ping();
   setStatusBar(alive);
 
@@ -121,7 +121,7 @@ export function deactivate(): void {
   statusBar?.dispose();
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────
+// -- helpers ----------------------------------------------------------------
 
 function setStatusBar(alive: boolean): void {
   if (alive) {

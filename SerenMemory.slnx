@@ -5,6 +5,9 @@
     <File Path="SerenMemoryVSCode/publish.ps1" />
     <File Path="SerenMemoryVSCode/tsconfig.json" />
   </Folder>
+  <Folder Name="/SerenMemoryVSCode/resources/">
+    <File Path="SerenMemoryVSCode/resources/SerenIcon.png" />
+  </Folder>
    <Folder Name="/SerenMemoryVSCode/seren_memory-vscode/">
     <File Path="SerenMemoryVSCode/seren_memory-vscode/extension.js" />
     <File Path="SerenMemoryVSCode/seren_memory-vscode/extension.js.map" />
@@ -26,7 +29,9 @@
     <File Path="seren-memory-setup.ps1" />
     <File Path="seren-memory-setup.sh" />
   </Folder>
-  <Folder Name="/Solution Items/.github/" />
+  <Folder Name="/Solution Items/.github/">
+    <File Path="dependabot.yml" />
+  </Folder>
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path=".github/workflows/release.yml" />
   </Folder>

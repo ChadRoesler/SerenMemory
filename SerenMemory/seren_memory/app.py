@@ -34,6 +34,7 @@ ENDPOINTS:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import time
 from contextlib import asynccontextmanager, AsyncExitStack
 from typing import Optional
@@ -72,7 +73,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # ── Startup ──
+        # -- Startup --
         store = MemoryStore(cfg, embedding_function=embedding_function,
                             _allow_reset=_allow_store_reset)
         app.state.store = store
@@ -81,7 +82,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         print(f"[seren-memory] store ready at {cfg.resolved_persist_dir()}")
         print(f"[seren-memory] tiers: {store.counts()}")
 
-        # ── Optional MCP server ──
+        # -- Optional MCP server --
         # Mounted ONLY if the [mcp] extras are installed. The import is
         # inside the try block so a missing `mcp` package falls back to
         # pure-HTTP mode without crashing startup. One install option
@@ -143,7 +144,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             # Expose the loop starter for the wake endpoint.
             app.state._start_consolidation_loop = _start_loop
 
-        # ── Run the MCP session manager's task group (Bug 2 fix) ──
+        # -- Run the MCP session manager's task group (Bug 2 fix) --
         # The streamable-HTTP transport keeps its anyio task group alive in
         # session_manager.run(); without entering it here every MCP request
         # 500s with "Task group is not initialized". A mounted sub-app's own
@@ -157,7 +158,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                 print("[seren-memory] MCP session manager running")
             yield
 
-        # ── Shutdown ──
+        # -- Shutdown --
         if stop_event is not None:
             stop_event.set()
             task = getattr(app.state, "_consolidation_task", None)
@@ -180,7 +181,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         lifespan=lifespan,
     )
 
-    # ── Optional bearer auth ──
+    # -- Optional bearer auth --
     # Same trusted-LAN posture as the rest of Seren: if a token is set,
     # enforce it on everything except / and /health. If empty, no auth.
     @app.middleware("http")
@@ -194,11 +195,16 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             public = request.url.path in ("/", "/health", "/viewer")
             if not public:
                 auth = request.headers.get("authorization", "")
-                if auth != f"Bearer {token}":
+                # Constant-time compare so the 401 path doesn't leak how many
+                # leading bytes of the token matched (stdlib hmac, same as the
+                # agent's auth). Encode to bytes so non-ASCII can't raise.
+                expected = f"Bearer {token}"
+                if not hmac.compare_digest(auth.encode("utf-8"),
+                                           expected.encode("utf-8")):
                     return JSONResponse({"error": "unauthorized"}, status_code=401)
         return await call_next(request)
 
-    # ── Info routes ──
+    # -- Info routes --
     @app.get("/")
     async def root(request: Request):
         store = request.app.state.store
@@ -217,7 +223,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     async def health():
         return {"ok": True, "ts": time.time()}
 
-    # ── The Halls viewer ──
+    # -- The Halls viewer --
     # Serves the introspection UI same-origin. This isn't just a debug tool -
     # it's the window into the consolidator: are memories clustering sensibly,
     # is near-term filling with stale loops, did a fact actually supersede the
@@ -243,7 +249,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                 status_code=404)
         return FileResponse(html_path, media_type="text/html")
 
-    # ── Consolidator operational status ──
+    # -- Consolidator operational status --
     @app.get("/consolidator/status")
     async def consolidator_status(request: Request):
         """Operational snapshot: when did the consolidator last run, how did
@@ -265,7 +271,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             },
         }
 
-    # ── Brief submission ──
+    # -- Brief submission --
     @app.post("/brief")
     async def submit_brief(request: Request, brief: DailyBrief = Body(...)):
         """Submit a daily brief. The main model calls this at the end of a
@@ -285,7 +291,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         rows = store.get_recent_briefs(limit=limit)
         return {"entries": rows, "count": len(rows)}
 
-    # ── Consolidator drafts (model review queue) ──
+    # -- Consolidator drafts (model review queue) --
     @app.get("/drafts")
     async def list_drafts(request: Request, limit: int = 20,
                           status: Optional[str] = None):
@@ -463,7 +469,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             "edit_delta_chars": result["edit_delta_chars"],
         }
 
-    # ── Short-term agency endpoints (preserve_verbatim + promote_memory) ──
+    # -- Short-term agency endpoints (preserve_verbatim + promote_memory) --
     @app.post("/short/{entry_id}/preserve")
     async def preserve_short_verbatim(request: Request, entry_id: str):
         """Mark a short-term entry to be promoted VERBATIM (no synthesis,
@@ -490,7 +496,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                 detail=f"short-term entry '{entry_id}' not found")
         return {"ok": True, "long_term_id": long_id, "removed_short_id": entry_id}
 
-    # ── Manual consolidation trigger + wake ──
+    # -- Manual consolidation trigger + wake --
     @app.post("/consolidate/run")
     async def consolidate_now(request: Request):
         """Run a consolidation pass right now. Used in 'external' mode (a
@@ -533,7 +539,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         return {"ok": True, "status": "woken",
                 "detail": "background consolidation loop restarted"}
 
-    # ── Tier routes ──
+    # -- Tier routes --
     app.include_router(short_routes.router)
     app.include_router(near_routes.router)
     app.include_router(long_routes.router)

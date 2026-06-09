@@ -26,6 +26,9 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="seren_memory\mcp\server.py" />
+    <Compile Include="seren_memory\mcp\tools.py" />
+    <Compile Include="seren_memory\mcp\__init__.py" />
     <Compile Include="seren_memory\__init__.py" />
     <Compile Include="seren_memory\__main__.py" />
     <Compile Include="seren_memory\app.py" />
@@ -56,6 +59,8 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="seren_memory\" />
+    <Folder Include="seren_memory\mcp\" />
+    <Folder Include="seren_memory\mcp\__pycache__\" />
     <Folder Include="seren_memory\models\" />
     <Folder Include="seren_memory\routes\" />
     <Folder Include="seren_memory\consolidator\" />
@@ -67,6 +72,9 @@
     <Content Include="pyproject.toml" />
     <Content Include="seren-memory.yaml.sample" />
     <Content Include="seren-memory.service.sample" />
+    <Content Include="seren_memory\mcp\__pycache__\server.cpython-311.pyc" />
+    <Content Include="seren_memory\mcp\__pycache__\tools.cpython-311.pyc" />
+    <Content Include="seren_memory\mcp\__pycache__\__init__.cpython-311.pyc" />
     <Content Include="seren_memory\viewer\halls.html" />
     <Content Include="tests\__pycache__\test_smoke.cpython-311-pytest-9.0.3.pyc" />
     <Content Include="tests\__pycache__\__init__.cpython-311.pyc" />

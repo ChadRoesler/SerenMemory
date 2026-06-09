@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { SerenClient, SerenApiError } from "./client";
 
-// ── helpers ────────────────────────────────────────────────────────────────
+// -- helpers ----------------------------------------------------------------
 
 function ok(text: string): vscode.LanguageModelToolResult {
   return new vscode.LanguageModelToolResult([
@@ -40,7 +40,7 @@ function signalFromToken(token: vscode.CancellationToken): AbortSignal {
   return controller.signal;
 }
 
-// ── seren_memory_search ────────────────────────────────────────────────────
+// -- seren_memory_search ----------------------------------------------------
 
 interface SearchInput {
   query: string;
@@ -78,7 +78,7 @@ export class SearchTool implements vscode.LanguageModelTool<SearchInput> {
   }
 }
 
-// ── seren_memory_write ─────────────────────────────────────────────────────
+// -- seren_memory_write -----------------------------------------------------
 
 interface WriteInput {
   content: string;
@@ -113,7 +113,7 @@ export class WriteTool implements vscode.LanguageModelTool<WriteInput> {
   }
 }
 
-// ── seren_memory_brief ─────────────────────────────────────────────────────
+// -- seren_memory_brief -----------------------------------------------------
 
 interface BriefInput {
   summary: string;
@@ -142,7 +142,7 @@ export class BriefTool implements vscode.LanguageModelTool<BriefInput> {
   }
 }
 
-// ── seren_memory_consolidate ───────────────────────────────────────────────
+// -- seren_memory_consolidate -----------------------------------------------
 
 export class ConsolidateTool implements vscode.LanguageModelTool<object> {
   constructor(private readonly client: SerenClient) {}
@@ -162,7 +162,7 @@ export class ConsolidateTool implements vscode.LanguageModelTool<object> {
   }
 }
 
-// ── seren_memory_preserve_verbatim ─────────────────────────────────────────
+// -- seren_memory_preserve_verbatim -----------------------------------------
 
 interface ShortIdInput {
   short_id: string;
@@ -185,7 +185,7 @@ export class PreserveVerbatimTool implements vscode.LanguageModelTool<ShortIdInp
   }
 }
 
-// ── seren_memory_promote_now ───────────────────────────────────────────────
+// -- seren_memory_promote_now -----------------------------------------------
 
 export class PromoteNowTool implements vscode.LanguageModelTool<ShortIdInput> {
   constructor(private readonly client: SerenClient) {}
@@ -204,7 +204,7 @@ export class PromoteNowTool implements vscode.LanguageModelTool<ShortIdInput> {
   }
 }
 
-// ── seren_memory_forget_long ───────────────────────────────────────────────
+// -- seren_memory_forget_long -----------------------------------------------
 
 interface ForgetLongInput {
   long_id: string;
@@ -228,7 +228,7 @@ export class ForgetLongTool implements vscode.LanguageModelTool<ForgetLongInput>
   }
 }
 
-// ── seren_memory_complete_intent ───────────────────────────────────────────
+// -- seren_memory_complete_intent -------------------------------------------
 
 interface IntentIdInput {
   intent_id: string;
@@ -251,7 +251,7 @@ export class CompleteIntentTool implements vscode.LanguageModelTool<IntentIdInpu
   }
 }
 
-// ── seren_memory_list_drafts ───────────────────────────────────────────────
+// -- seren_memory_list_drafts -----------------------------------------------
 
 interface ListDraftsInput {
   status?: string;
@@ -274,7 +274,7 @@ export class ListDraftsTool implements vscode.LanguageModelTool<ListDraftsInput>
   }
 }
 
-// ── seren_memory_draft_chain ───────────────────────────────────────────────
+// -- seren_memory_draft_chain -----------------------------------------------
 
 interface DraftIdInput {
   draft_id: string;
@@ -297,7 +297,7 @@ export class DraftChainTool implements vscode.LanguageModelTool<DraftIdInput> {
   }
 }
 
-// ── seren_memory_approve_draft ─────────────────────────────────────────────
+// -- seren_memory_approve_draft ---------------------------------------------
 
 interface ApproveInput {
   draft_id: string;
@@ -321,7 +321,7 @@ export class ApproveDraftTool implements vscode.LanguageModelTool<ApproveInput> 
   }
 }
 
-// ── seren_memory_reject_draft ──────────────────────────────────────────────
+// -- seren_memory_reject_draft ----------------------------------------------
 
 interface RejectInput {
   draft_id: string;
@@ -345,7 +345,7 @@ export class RejectDraftTool implements vscode.LanguageModelTool<RejectInput> {
   }
 }
 
-// ── seren_memory_select_draft ──────────────────────────────────────────────
+// -- seren_memory_select_draft ----------------------------------------------
 
 interface SelectInput {
   draft_id: string;
