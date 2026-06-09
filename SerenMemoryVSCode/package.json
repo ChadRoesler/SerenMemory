@@ -481,7 +481,7 @@
   "devDependencies": {
     "@types/vscode": "^1.90.0",
     "@types/node": "^20.0.0",
-    "esbuild": "^0.21.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.4.0",
     "@vscode/vsce": "^3.9.2",
     "vitest": "^1.0.0"
