@@ -94,7 +94,7 @@ jobs:
           path: SerenMemory/dist/
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: SerenMemory/dist/*
 
@@ -152,6 +152,6 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Upload .vsix to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: SerenMemoryVSCode/*.vsix
