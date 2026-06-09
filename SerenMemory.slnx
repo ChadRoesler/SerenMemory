@@ -30,7 +30,7 @@
     <File Path="seren-memory-setup.sh" />
   </Folder>
   <Folder Name="/Solution Items/.github/">
-    <File Path="dependabot.yml" />
+    <File Path=".github/dependabot.yml" />
   </Folder>
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path=".github/workflows/release.yml" />
