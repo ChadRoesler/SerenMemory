@@ -28,7 +28,7 @@ import types
 import pytest
 
 from seren_memory.config import MemoryConfig, load_config
-from seren_memory import _maybe_inject_truststore, _force_utf8_stdio
+from seren_memory.__main__ import _maybe_inject_truststore, _force_utf8_stdio
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
