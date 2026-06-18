@@ -1,5 +1,4 @@
 {
-{
   "name": "seren-memory",
   "displayName": "Seren Memory",
   "description": "Gives GitHub Copilot and the user access to the SerenMemory store - search, write, brief, consolidate, and manage drafts.",
