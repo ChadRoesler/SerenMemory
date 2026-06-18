@@ -142,7 +142,7 @@ class LongTermEntry(BaseModel):
     last_confirmed: float = Field(default_factory=_now)
 
     # Supersession (the non-destructive update path). When a fact changes
-    # ("favorite color blue → yellow"), the consolidator writes a NEW entry
+    # ("favorite color blue -> yellow"), the consolidator writes a NEW entry
     # and sets the old one's superseded_by to the new id. Default recall
     # filters out superseded entries; history queries can still find them.
     superseded_by: Optional[str] = Field(None)

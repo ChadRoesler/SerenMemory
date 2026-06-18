@@ -13,11 +13,11 @@ THE CYCLE, IN ORDER:
      model's "here's what mattered" note tells the consolidator what to
      look for.
 
-  2. Honor forget-flags on long-term. PII → purge. Disputed → supersede
+  2. Honor forget-flags on long-term. PII -> purge. Disputed -> supersede
      with a corrected entry or just mark. (The flag carries the reason; we
      branch on keyword heuristics + optionally ask the model.)
 
-  3. Promote short-term → long-term:
+  3. Promote short-term -> long-term:
        - cluster short-term entries by topic + similarity
        - clusters with >= promote_min_evidence entries get consolidated
          into ONE long-term entry (model writes the synthesis)
@@ -30,9 +30,9 @@ THE CYCLE, IN ORDER:
      get promoted get archived to 'pruned' (safety net) then deleted.
 
   5. Maintain near-term:
-       - expired (past expires_at) → drop
-       - completed → promote to long-term as a record, then drop from near
-       - long-unfulfilled → review (model decides keep/let-go)
+       - expired (past expires_at) -> drop
+       - completed -> promote to long-term as a record, then drop from near
+       - long-unfulfilled -> review (model decides keep/let-go)
 
   6. Sweep the pruned safety net (true-delete past the safety window).
 
@@ -383,7 +383,7 @@ class Consolidator:
         handled = 0
         for r in flagged:
             reason = str(r["metadata"]["forget_flag"]).lower()
-            # PII / secret keywords → hard purge (true delete). This is the
+            # PII / secret keywords -> hard purge (true delete). This is the
             # ONE place SerenMemory truly deletes long-term content, and only
             # because leaving PII in is worse than the no-delete principle.
             if any(k in reason for k in ("ssn", "password", "secret", "pii",
@@ -403,7 +403,7 @@ class Consolidator:
         return handled
 
     # ------------------------------------------------------------------
-    #  Step 3: promote short-term → long-term
+    #  Step 3: promote short-term -> long-term
     # ------------------------------------------------------------------
     def _promote_short_term(self, promote_hints: set[str], noise_hints: set[str],
                              brief_id: Optional[str] = None) -> dict[str, int]:
@@ -462,7 +462,7 @@ class Consolidator:
                 self._store.add_long(v_entry)
                 promoted += 1
                 promoted_ids.append(ve["id"])
-                self._log(f"promoted verbatim entry {ve['id']} → long-term as-is")
+                self._log(f"promoted verbatim entry {ve['id']} -> long-term as-is")
 
             # -- Normal cluster path for non-verbatim remainder --
             remaining = [e for e in entries if not e["metadata"].get("verbatim")]
@@ -479,7 +479,7 @@ class Consolidator:
             # matching meant the brief correctly identified the entries but
             # couldn't route them to promotion. The haystack bridges that
             # gap; the "||" separator prevents accidental matches across
-            # the topic→content boundary. We use ALL entries (including
+            # the topic->content boundary. We use ALL entries (including
             # verbatim ones) for hint matching because the brief was
             # generated against the full cluster's worth of content, so
             # the hints apply to the full cluster's worth.
@@ -489,11 +489,11 @@ class Consolidator:
             if any(h.lower() in haystack for h in promote_hints):
                 threshold = 1
                 self._log(
-                    f"cluster '{topic}': promote hint matched → threshold=1")
+                    f"cluster '{topic}': promote hint matched -> threshold=1")
             if any(h.lower() in haystack for h in noise_hints):
                 threshold = 999
                 self._log(
-                    f"cluster '{topic}': noise hint matched → threshold=999")
+                    f"cluster '{topic}': noise hint matched -> threshold=999")
 
             self._log(
                 f"cluster '{topic}': entries={len(remaining)}, "
@@ -531,7 +531,7 @@ class Consolidator:
             drafted += 1
             self._log(
                 f"cluster '{topic}': drafted (id={draft.id}, {len(remaining)} entries) "
-                f"→ awaiting model review")
+                f"-> awaiting model review")
 
         # Only verbatim auto-commit ids are in promoted_ids; cluster shorts
         # stay until their draft is approved/rejected/selected. The delete
@@ -619,7 +619,7 @@ class Consolidator:
             self._store.mark_chain_requires_selection(cluster_id)
             self._log(
                 f"cluster '{cluster_id}': {max_attempts} attempts exhausted "
-                f"→ requires_selection")
+                f"-> requires_selection")
             return {"action": "requires_selection", "draft_id": None,
                     "attempt": attempt}
 
@@ -735,7 +735,7 @@ class Consolidator:
 
         for r in rows:
             meta = r["metadata"]
-            # Completed → promote to long-term as a record of "we did this."
+            # Completed -> promote to long-term as a record of "we did this."
             if meta.get("completed"):
                 entry = LongTermEntry(
                     content=f"Completed intent: {r['content']}",
@@ -747,7 +747,7 @@ class Consolidator:
                 completed_promoted += 1
                 completed_ids.append(r["id"])
                 continue
-            # Expired → drop.
+            # Expired -> drop.
             exp = meta.get("expires_at")
             if isinstance(exp, (int, float)) and exp > 0 and now > exp:
                 expired_ids.append(r["id"])

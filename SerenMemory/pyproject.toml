@@ -31,10 +31,18 @@ mcp = [
     # The Python MCP SDK from Anthropic. FastMCP (the high-level server
     # API) was merged into the main SDK; this single dep gives us both.
     # Pin loosely - the SDK is moving fast; our server.py is written to
-    # tolerate the streamable_http→sse transport-name drift across recent
+    # tolerate the streamable_http->sse transport-name drift across recent
     # versions.
     "mcp>=1.0",
 ]
+corp = [
+    # Corporate / intercepting-proxy support. Routes Python TLS through the OS
+    # trust store so a corp root CA (Zscaler/Netskope/etc.) is honored without
+    # hand-exporting .pem files. Opt-in: `pip install seren-memory[corp]`.
+    # Enable at runtime with `tls.trust_system_store: true` (the --corp installer
+    # flag sets both for you). truststore needs Python 3.10+, which we already
+    # require.
+    "truststore>=0.9",
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

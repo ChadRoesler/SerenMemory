@@ -57,7 +57,7 @@ _INIT = {
 @pytest.fixture
 def mcp_client(make_client):
     """Live app with the MCP route mounted and its lifespan entered
-    (make_client calls TestClient.__enter__, which runs startup → the
+    (make_client calls TestClient.__enter__, which runs startup -> the
     session manager task group is live)."""
     return make_client(
         MemoryConfig(consolidator=ConsolidatorConfig(enabled=False)),

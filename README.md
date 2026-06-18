@@ -133,12 +133,12 @@ curl -X POST localhost:7420/long/<id>/forget \
 ```
 
 The consolidator acts on the flag on its next run:
-- **PII / secrets** ("contains my SSN") → purged. This is the one case
+- **PII / secrets** ("contains my SSN") -> purged. This is the one case
   where long-term content is truly deleted, because leaking PII is worse
   than the no-delete principle.
-- **Disputed / wrong** → demoted (evidence zeroed, ranks near-bottom) but
+- **Disputed / wrong** -> demoted (evidence zeroed, ranks near-bottom) but
   kept for history.
-- **Stale** → may be let go over time.
+- **Stale** -> may be let go over time.
 
 The flag is your voice. The action is the consolidator's judgment. If you
 need something gone *right now* for a genuine emergency (a leaked secret),

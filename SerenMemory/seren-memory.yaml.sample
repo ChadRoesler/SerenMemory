@@ -87,3 +87,14 @@ consolidator:
   # attempts via GET /drafts/{id}/chain and commit the best via POST
   # /drafts/{id}/select.
   max_redraft_attempts: 3
+
+# -- Corporate / intercepting-proxy support (opt-in) ------------------------
+# If you're on a corporate network that does TLS interception (Zscaler,
+# Netskope, etc.), the proxy's root CA is in your OS trust store but not in
+# Python's bundled certs, so outbound HTTPS fails with CERTIFICATE_VERIFY_FAILED.
+# Turn this on to route TLS through the OS trust store instead.
+#
+# Requires the corp extra:  pip install seren-memory[corp]
+# Or just run the installer with --corp (it sets this and installs the extra).
+# tls:
+#   trust_system_store: true

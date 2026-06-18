@@ -38,9 +38,9 @@ async def flag_forget(request: Request, entry_id: str, body: dict = Body(...)):
     """Flag a long-term memory for the consolidator's attention. Provide a
     reason - it steers what the consolidator does:
 
-        - PII / secrets ("contains my SSN")  → consolidator purges
-        - disputed fact ("that's wrong")     → consolidator demotes/supersedes
-        - no-longer-relevant                 → consolidator may let it age
+        - PII / secrets ("contains my SSN")  -> consolidator purges
+        - disputed fact ("that's wrong")     -> consolidator demotes/supersedes
+        - no-longer-relevant                 -> consolidator may let it age
 
     This does NOT immediately delete. The flag is recorded; the consolidator
     acts on its next run. If you need something gone RIGHT NOW for safety
