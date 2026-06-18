@@ -41,12 +41,32 @@ test-mcp:
 	Remove-Item -Recurse -Force $(VENV_MCP) -ErrorAction SilentlyContinue; 
 	exit $$status
 
+test-corp:
+	Remove-Item -Recurse -Force $(VENV_MCP) -ErrorAction SilentlyContinue; 
+	python -m venv $(VENV_MCP); 
+	$$env:SETUPTOOLS_SCM_PRETEND_VERSION='0.0.0'; 
+	.\.venv-mcp\Scripts\pip.exe install -e "$(PKG_DIR)/.[dev,corp]"; 
+	.\.venv-mcp\Scripts\python.exe -m pytest $(PKG_DIR)/tests/ -v; 
+	$$status=$$LASTEXITCODE; 
+	Remove-Item -Recurse -Force $(VENV_MCP) -ErrorAction SilentlyContinue; 
+	exit $$status
+
+test-corp-mcp:
+	Remove-Item -Recurse -Force $(VENV_MCP) -ErrorAction SilentlyContinue; 
+	python -m venv $(VENV_MCP); 
+	$$env:SETUPTOOLS_SCM_PRETEND_VERSION='0.0.0'; 
+	.\.venv-mcp\Scripts\pip.exe install -e "$(PKG_DIR)/.[dev,corp,mcp]"; 
+	.\.venv-mcp\Scripts\python.exe -m pytest $(PKG_DIR)/tests/ -v; 
+	$$status=$$LASTEXITCODE; 
+	Remove-Item -Recurse -Force $(VENV_MCP) -ErrorAction SilentlyContinue; 
+	exit $$status
+
 test-vscode:
 	npm --prefix $(VSCODE_DIR) install; 
 	npm --prefix $(VSCODE_DIR) test; 
 	exit $$LASTEXITCODE
 
-test-all: test test-mcp test-vscode
+test-all: test test-mcp test-corp test-corp-mcp test-vscode
 
 clean:
 	Remove-Item -Recurse -Force $(VENV_BASE), $(VENV_MCP) -ErrorAction SilentlyContinue
