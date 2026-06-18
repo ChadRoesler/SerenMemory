@@ -191,13 +191,13 @@ def test_exhausting_redrafts_flips_to_requires_selection(client):
     # Attempt 1 (initial draft created by consolidation).
     draft_id = _make_pending_draft(client, topic="exhaust_chain", n=2)
 
-    # Rejection 1 → attempt 2 produced (redrafted).
+    # Rejection 1 -> attempt 2 produced (redrafted).
     r1 = client.post(f"/drafts/{draft_id}/reject",
                      json={"critique": "first critique"})
     assert r1.json()["action"] == "redrafted"
     draft_id_2 = r1.json()["new_draft_id"]
 
-    # Rejection 2 → limit reached → requires_selection.
+    # Rejection 2 -> limit reached -> requires_selection.
     r2 = client.post(f"/drafts/{draft_id_2}/reject",
                      json={"critique": "second critique"})
     assert r2.status_code == 200

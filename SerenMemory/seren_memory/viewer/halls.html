@@ -387,7 +387,7 @@ function entryCard(tier, content, meta, opts = {}) {
     if (tsField != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(tsField))}</span>`);
     if (meta.trigger_type) {
         let trig = meta.trigger_type;
-        if (meta.trigger_value) trig += ` → ${meta.trigger_value}`;
+        if (meta.trigger_value) trig += ` -> ${meta.trigger_value}`;
         metaBits.push(`<span><span class="k">trigger</span> ${escapeHtml(trig)}</span>`);
     }
     if (meta.expires_at) metaBits.push(`<span><span class="k">expires</span> ${escapeHtml(fmtTs(meta.expires_at))}</span>`);
@@ -464,7 +464,7 @@ function draftCard(draft) {
 
     const badges = [`<span class="badge tier-draft">draft</span>`];
     badges.push(`<span class="badge status-${escapeHtml(status)}">${escapeHtml(status)}</span>`);
-    if (meta.long_term_id) badges.push(`<span class="badge">→ long</span>`);
+    if (meta.long_term_id) badges.push(`<span class="badge">-> long</span>`);
 
     const metaBits = [];
     if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);

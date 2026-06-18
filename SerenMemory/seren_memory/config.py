@@ -61,6 +61,19 @@ class LifetimeConfig(BaseModel):
     near_term_review_seconds: int = 30 * 24 * 3600
 
 
+class TlsConfig(BaseModel):
+    # Opt-in: route Python's TLS through the OS trust store (via the
+    # `truststore` package) instead of certifi's bundled CAs. The fix for a
+    # corporate box behind a TLS-intercepting proxy (Zscaler/Netskope/corp
+    # Palo Alto) whose root CA is in the OS store but NOT in certifi.
+    #
+    # Default OFF: a normal box uses certifi happily, and we don't change TLS
+    # behavior for everyone to serve the corp case (same structural-opt-in
+    # spirit as Margin's 127.0.0.1). Requires `pip install seren-memory[corp]`
+    # to pull in truststore; the --corp installer flag sets this true for you.
+    trust_system_store: bool = False
+
+
 class ConsolidatorConfig(BaseModel):
     enabled: bool = True
 
@@ -113,6 +126,7 @@ class MemoryConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     lifetimes: LifetimeConfig = Field(default_factory=LifetimeConfig)
     consolidator: ConsolidatorConfig = Field(default_factory=ConsolidatorConfig)
+    tls: TlsConfig = Field(default_factory=TlsConfig)
 
     def resolved_persist_dir(self) -> Path:
         """Expand ~ and return an absolute Path, creating it if needed."""
@@ -141,6 +155,8 @@ def _apply_env_overrides(cfg: MemoryConfig) -> MemoryConfig:
         cfg.consolidator.model_name = v
     if v := env.get("SEREN_MEMORY_CONSOLIDATOR_ENABLED"):
         cfg.consolidator.enabled = v.lower() in ("1", "true", "yes", "on")
+    if v := env.get("SEREN_MEMORY_TRUST_SYSTEM_STORE"):
+        cfg.tls.trust_system_store = v.lower() in ("1", "true", "yes", "on")
     return cfg
 
 

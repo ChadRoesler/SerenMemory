@@ -7,7 +7,7 @@ memory into context. One call, all tiers, ranked.
 
 THE RANKING MODEL (this is where the memory hierarchy becomes behavior):
 
-    raw similarity → chroma gives cosine distance (lower = closer)
+    raw similarity -> chroma gives cosine distance (lower = closer)
     we convert to a base score (1 / (1 + distance)) so higher = better
 
     then apply a tier weight:

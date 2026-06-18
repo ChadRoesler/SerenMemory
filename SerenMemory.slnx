@@ -15,8 +15,6 @@
     <File Path="SerenMemoryVSCode/resources/SerenIcon.png" />
   </Folder>
    <Folder Name="/SerenMemoryVSCode/seren_memory-vscode/">
-    <File Path="SerenMemoryVSCode/seren_memory-vscode/extension.js" />
-    <File Path="SerenMemoryVSCode/seren_memory-vscode/extension.js.map" />
     <File Path="SerenMemoryVSCode/seren_memory-vscode/esbuild.js" />
      <File Path="LICENSE" />
     <File Path="SerenMemoryVSCode/seren_memory-vscode/.vscodeignore" />
@@ -34,7 +32,7 @@
     <File Path="README.md" />
     <File Path="SECURITY.md" />
   </Folder>
-  <Project Path="SerenMemory/SerenMemory.pyproj" Type="888888a0-9f3d-457c-b088-3a5042f75d52" Id="b1e7c0de-5e12-4a7b-9f3a-5e7e7a5e7e7a">
+  <Project Path="D:/serenDaemon/SerenMemory/SerenMemory/SerenMemory.pyproj" Type="888888a0-9f3d-457c-b088-3a5042f75d52" Id="b1e7c0de-5e12-4a7b-9f3a-5e7e7a5e7e7a">
     <Build Project="false" />
   </Project>
 </Solution>

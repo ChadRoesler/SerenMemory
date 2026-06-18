@@ -2,7 +2,7 @@
 Smoke test for SerenMemory.
 
 Boots the app with an isolated temp persist dir, exercises the full loop:
-write short → write near → search → submit brief → consolidate → verify.
+write short -> write near -> search -> submit brief -> consolidate -> verify.
 
 The consolidator's model call is monkeypatched so the test doesn't need a
 live LLM - we verify the MECHANICAL pipeline (clustering, promotion, aging,
@@ -133,7 +133,7 @@ def test_consolidation_promotes_completed_near(client):
 
 
 def test_forget_flag_does_not_instantly_delete(client, approve_pending_drafts):
-    # Promote something to long-term first (consolidate → approve draft).
+    # Promote something to long-term first (consolidate -> approve draft).
     for i in range(2):
         client.post("/short", json={"content": f"flag test entry {i}", "topic": "flagtest"})
     client.post("/consolidate/run")
@@ -149,7 +149,7 @@ def test_forget_flag_does_not_instantly_delete(client, approve_pending_drafts):
     still_there = client.get("/long").json()["entries"]
     assert any(e["id"] == target for e in still_there), "flag should not instant-delete"
 
-    # After consolidation, non-PII flag demotes (evidence → 0), keeps content.
+    # After consolidation, non-PII flag demotes (evidence -> 0), keeps content.
     # No approval step here - forget-handling is a direct consolidator action,
     # not a draft-creating one.
     client.post("/consolidate/run")
