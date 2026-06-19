@@ -68,16 +68,39 @@ except Exception:  # noqa: BLE001 - never let version lookup break startup
 
 
 def create_app(config: MemoryConfig | None = None, embedding_function=None,
-               _allow_store_reset: bool = False) -> FastAPI:
+               _allow_store_reset: bool = False,
+               embedder_mismatch: dict | None = None,
+               config_path: str | None = None) -> FastAPI:
     cfg = config or load_config()
+    # Safe-mode: set when the startup guard found the store was built with a
+    # different embedder than the config asks for. While set, memory read/write
+    # routes are blocked (they'd touch an incompatible vector space); only the
+    # viewer, health, and /migrate/* control endpoints are reachable.
+    from .embedder import MigrationProgress
+    _safe_mode = {"active": embedder_mismatch is not None,
+                  "mismatch": embedder_mismatch}
+    _migration_progress = MigrationProgress()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # -- Startup --
+        app.state.config = cfg
+        app.state._safe_mode = _safe_mode
+        app.state._migration_progress = _migration_progress
+        if _safe_mode["active"]:
+            # Mismatch: do NOT build the store (would embed under the wrong
+            # model against existing data). Come up reachable-but-gated so the
+            # Halls migration modal can drive the fix.
+            app.state.store = None
+            app.state.consolidator = None
+            print("[seren-memory] SAFE-MODE active (embedder mismatch); "
+                  "memory ops disabled until migration or revert.")
+            yield
+            print("[seren-memory] shut down (safe-mode)")
+            return
         store = MemoryStore(cfg, embedding_function=embedding_function,
                             _allow_reset=_allow_store_reset)
         app.state.store = store
-        app.state.config = cfg
         app.state.consolidator = Consolidator(store, cfg)
         print(f"[seren-memory] store ready at {cfg.resolved_persist_dir()}")
         print(f"[seren-memory] tiers: {store.counts()}")
@@ -186,6 +209,21 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     # enforce it on everything except / and /health. If empty, no auth.
     @app.middleware("http")
     async def bearer_auth(request: Request, call_next):
+        # Safe-mode gate FIRST: if the embedder-mismatch guard tripped, only
+        # the UI shell, health, and migration-control endpoints are reachable.
+        # Everything that would read/write memory in the wrong vector space is
+        # blocked with 503 + a marker the viewer uses to raise the modal.
+        if _safe_mode["active"]:
+            allowed = request.url.path in (
+                "/", "/health", "/viewer",
+                "/migrate/status", "/migrate/accept", "/migrate/deny",
+                "/migrate/restart")
+            if not allowed:
+                return JSONResponse(
+                    {"error": "safe_mode",
+                     "reason": "embedder_mismatch",
+                     "detail": "store embedder changed; migrate or revert via /viewer"},
+                    status_code=503)
         token = cfg.server.bearer_token
         if token:
             # /viewer serves the HTML shell - it must be public so the page
@@ -538,6 +576,144 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         starter()
         return {"ok": True, "status": "woken",
                 "detail": "background consolidation loop restarted"}
+
+    # -- Migration control (drives the Halls 'embedder changed' modal) --
+    @app.get("/migrate/status")
+    async def migrate_status(request: Request):
+        """Current safe-mode + migration progress. The modal polls this for
+        the loading bar and to know when to redirect back to the Halls.
+        `supervised` tells the UI whether the restart button can actually
+        bounce the service or should show manual instructions instead."""
+        from ._supervised import detect_supervised
+        return {
+            "safe_mode": _safe_mode["active"],
+            "mismatch": _safe_mode["mismatch"],
+            "migration": _migration_progress.snapshot(),
+            "supervised": detect_supervised()["supervised"],
+        }
+
+    @app.post("/migrate/accept")
+    async def migrate_accept(request: Request):
+        """Accept: re-embed the store into a NEW persist_dir under the
+        configured model, on a background thread. Old dir is left as rollback.
+        On success the operator restarts pointed at the new dir (the response
+        tells them where). 409 if not in safe-mode or already running."""
+        import asyncio
+        from pathlib import Path
+        from .embedder import migrate_store, MigrationProgress
+        if not _safe_mode["active"]:
+            raise HTTPException(409, "not in safe-mode; nothing to migrate")
+        if _migration_progress.state == "running":
+            raise HTTPException(409, "migration already running")
+
+        mm = _safe_mode["mismatch"] or {}
+        live_dir = cfg.resolved_persist_dir()
+
+        coll_names = {
+            "short_collection": cfg.storage.short_collection,
+            "near_collection": cfg.storage.near_collection,
+            "long_collection": cfg.storage.long_collection,
+            "brief_collection": cfg.storage.brief_collection,
+            "draft_collection": cfg.storage.draft_collection,
+        }
+
+        # Reset progress and run migrate_store off the event loop. IN-PLACE:
+        # migrate_store re-embeds the LIVE dir (no path change) and keeps a
+        # timestamped backup as rollback. Args are POSITIONAL and must match
+        # embedder.migrate_store(persist_dir, old_model, new_model,
+        # collection_names, progress[, device]).
+        prog = app.state._migration_progress
+        prog.__init__()  # reset to idle
+        asyncio.get_event_loop().run_in_executor(
+            None, migrate_store,
+            live_dir,                              # persist_dir (live, in place)
+            mm.get("stamped_model") or None,       # old_model
+            mm.get("configured_model") or None,    # new_model
+            coll_names,                            # collection_names
+            prog)                                  # progress
+        return {"ok": True, "started": True,
+                "note": "Migration running in place (live store re-embedded, "
+                        "timestamped backup kept). Poll /migrate/status; when "
+                        "done, restart to load the migrated store."}
+
+    @app.post("/migrate/deny")
+    async def migrate_deny(request: Request):
+        """Deny: revert the config's embedding_model back to the stamped value
+        so the mismatch is resolved permanently, then ask the operator to
+        restart. We rewrite the yaml if we know its path; otherwise we return
+        the value to set. 409 if not in safe-mode."""
+        import yaml
+        from pathlib import Path
+        if not _safe_mode["active"]:
+            raise HTTPException(409, "not in safe-mode; nothing to revert")
+        mm = _safe_mode["mismatch"] or {}
+        stamped = mm.get("stamped_model") or ""
+        target = stamped or None  # '' default -> null in yaml
+
+        rewritten = False
+        if config_path:
+            p = Path(config_path).expanduser()
+            if p.is_file():
+                data = yaml.safe_load(p.read_text()) or {}
+                data.setdefault("storage", {})
+                data["storage"]["embedding_model"] = target
+                p.write_text(yaml.safe_dump(data, default_flow_style=False,
+                                            sort_keys=False))
+                rewritten = True
+        return {
+            "ok": True,
+            "reverted_to": target,
+            "config_rewritten": rewritten,
+            "detail": ("Config reverted; restart the service to resume normally."
+                       if rewritten else
+                       "No writable config path known; set storage.embedding_model "
+                       f"to {target!r} yourself, then restart."),
+        }
+
+    @app.post("/migrate/restart")
+    async def migrate_restart(request: Request):
+        """Restart the service so a migrated/reverted store loads. GATED: only
+        self-exits when we're confident a manager will bring us back (our
+        SEREN_SUPERVISED flag, or systemd's INVOCATION_ID). Otherwise returns
+        manual instructions - never kill a process with nothing to revive it.
+
+        The exit is scheduled AFTER the response is sent (a background task on
+        a short delay), so the HTTP call completes before the process goes.
+        """
+        from ._supervised import detect_supervised
+        import os, sys, asyncio, platform
+
+        sup = detect_supervised()
+        if not sup["supervised"]:
+            # Build a best-effort manual hint for the platform.
+            if platform.system() == "Windows":
+                hint = "Restart the SerenMemory service (e.g. `nssm restart SerenMemory`), or stop and re-run it."
+            else:
+                hint = "Restart the service: `sudo systemctl restart seren-memory` (or re-run however you started it)."
+            return {
+                "ok": True,
+                "action": "manual_restart_required",
+                "detail": "Migration is complete, but this process isn't under "
+                          "a manager that auto-restarts it. Restart SerenMemory "
+                          "yourself to load the migrated store.",
+                "hint": hint,
+                "signals": sup["signals"],
+            }
+
+        async def _exit_soon():
+            # Let the response flush, then exit. The manager restarts us.
+            await asyncio.sleep(0.5)
+            # os._exit avoids running atexit/cleanup that could hang; the
+            # manager's restart policy handles bringing us back fresh.
+            os._exit(0)
+
+        asyncio.create_task(_exit_soon())
+        return {
+            "ok": True,
+            "action": "restarting",
+            "detail": "Service is supervised; exiting now so the manager "
+                      "restarts it with the migrated store.",
+        }
 
     # -- Tier routes --
     app.include_router(short_routes.router)

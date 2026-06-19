@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import time
 from typing import Any, Optional
+from pathlib import Path
 
 import chromadb
 from chromadb.config import Settings
@@ -98,12 +99,23 @@ class MemoryStore:
         s = config.storage
         # Embedding function resolution:
         #   - explicit embedding_function arg wins (tests, custom embedders)
-        #   - else chroma's default (all-MiniLM-L6-v2, downloaded on first use)
+        #   - else the configured storage.embedding_model (resolved to a
+        #     SentenceTransformer EF); None/"" -> chroma's default all-MiniLM.
         # We pass it to every collection so they share one embedding space -
         # critical for the unified /search to compare across tiers meaningfully.
+        # NOTE: changing embedding_model on a store that already has data
+        # silently corrupts recall (incompatible vector spaces). The startup
+        # guard in __main__/app (check_store_state) catches that BEFORE we get
+        # here; by the time MemoryStore is built, the model is either fresh,
+        # matching, or post-migration - always consistent with the data.
+        from .embedder import resolve_embedding_function, read_stamp, write_stamp
         ef_kwargs = {}
         if embedding_function is not None:
             ef_kwargs["embedding_function"] = embedding_function
+        else:
+            resolved_ef = resolve_embedding_function(s.embedding_model)
+            if resolved_ef is not None:
+                ef_kwargs["embedding_function"] = resolved_ef
 
         # get_or_create so first boot just works.
         self.short = self._client.get_or_create_collection(s.short_collection, **ef_kwargs)
@@ -124,6 +136,14 @@ class MemoryStore:
         # explicit pre-approval signals). On approve: shorts archive to pruned,
         # draft becomes long-term. On reject: critique stored, redraft triggered.
         self.drafts = self._client.get_or_create_collection(s.draft_collection, **ef_kwargs)
+
+        # Stamp which embedder built this store (sidecar JSON in the persist
+        # dir), so the next startup's guard can detect an embedder change. Only
+        # write when we're NOT using a test-injected EF (those are ephemeral
+        # and shouldn't claim the store was built with the configured model).
+        # Idempotent: re-stamping with the same value each boot is harmless.
+        if embedding_function is None:
+            write_stamp(Path(persist), s.embedding_model)
 
     def close(self) -> None:
         """Release the ChromaDB client and all collection references. In tests

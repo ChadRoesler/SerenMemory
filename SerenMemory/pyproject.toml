@@ -24,6 +24,15 @@ dependencies = [
     "pyyaml>=6.0.2",
     "httpx>=0.27.0",
     "chromadb>=0.5.0",
+    # Named embedding models (storage.embedding_model) build a chroma
+    # SentenceTransformerEmbeddingFunction, which needs this. chroma's DEFAULT
+    # embedder is bundled (ONNX MiniLM-L6) so the zero-config path doesn't
+    # touch it - but the moment an operator picks a model, or runs an embedder
+    # migration, it's required. Declaring it core (not an extra) means the
+    # embedder knob and migration 'just work' rather than exploding at runtime
+    # with a bare ImportError. Python<3.13 cap above already keeps torch's
+    # 3.13 gap out of scope.
+    "sentence-transformers>=3.0",
 ]
 
 [project.optional-dependencies]

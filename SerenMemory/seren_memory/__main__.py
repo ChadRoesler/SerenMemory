@@ -10,6 +10,8 @@ import sys
 
 import uvicorn
 
+from typing import Optional
+
 from .app import create_app
 from .config import load_config
 
@@ -64,6 +66,41 @@ def _maybe_inject_truststore(cfg, log=print) -> None:
     log("[seren-memory] TLS: using OS trust store (truststore injected)")
 
 
+def _check_embedder_guard(cfg, log=print) -> Optional[dict]:
+    """Compare the store's stamped embedder against the configured one.
+
+    Returns None if all is well (fresh/match -> normal boot). Returns a dict
+    describing the mismatch if the store has data built with a DIFFERENT
+    embedder than the config now asks for - the caller boots in safe-mode and
+    surfaces the migration modal instead of corrupting recall.
+    """
+    from pathlib import Path
+    from .embedder import read_stamp, check_store_state, model_label
+
+    persist = cfg.resolved_persist_dir()
+    stamp = read_stamp(persist)
+
+    # Cheap data-existence check: any chroma sqlite with content. We can't
+    # call MemoryStore yet (that would build under the wrong EF), so peek at
+    # the directory - a fresh persist_dir has no chroma.sqlite3 with rows.
+    # Simplest robust signal: the stamp's own absence means fresh; if stamped,
+    # assume data may exist (the guard only matters when stamped anyway).
+    has_data = stamp is not None  # if never stamped, it's fresh by definition
+
+    state = check_store_state(stamp, cfg.storage.embedding_model, has_data)
+    if state == "mismatch":
+        stamped_model = (stamp or {}).get("embedding_model", "")
+        log("[seren-memory] EMBEDDER MISMATCH: store built with "
+            f"'{model_label(stamped_model)}', config asks for "
+            f"'{model_label(cfg.storage.embedding_model)}'. Booting SAFE-MODE "
+            "(memory ops disabled) - resolve via the Halls migration modal.")
+        return {
+            "stamped_model": stamped_model,
+            "configured_model": cfg.storage.embedding_model or "",
+        }
+    return None
+
+
 def main() -> None:
     _force_utf8_stdio()
     parser = argparse.ArgumentParser(
@@ -81,7 +118,12 @@ def main() -> None:
     # corp-proxied box, the trust store has to be injected first or that
     # download fails with CERTIFICATE_VERIFY_FAILED.
     _maybe_inject_truststore(cfg)
-    app = create_app(cfg)
+    # Embedder guard: if the store was built with a different embedder than the
+    # config now asks for (and has data), boot safe-mode instead of corrupting
+    # recall. mismatch is the dict the migration modal needs; None = normal.
+    mismatch = _check_embedder_guard(cfg)
+    app = create_app(cfg, embedder_mismatch=mismatch,
+                     config_path=args.config)
 
     print(f"[seren-memory] listening on {cfg.server.host}:{cfg.server.port}")
     print(f"[seren-memory] auth: "

@@ -1,715 +1,1377 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Halls of Memory · SerenMemory</title>
-<style>
-    /* -----------------------------------------------------------------
-       Theme tokens - lifted from the Seren dashboard so this peek tool
-       feels like part of the same family. Deep space navy, electric
-       purple, mint for the gated tier. Mole-man approved.
-       ----------------------------------------------------------------- */
-    :root {
-        --bg-page: #0F1222;
-        --bg-card: #13151E;
-        --bg-row: #29326D;
-        --bg-row-alt: #161A2E;
-        --border: #1E2A78;
-        --border-hi: #6F3AFF;
-        --text-hi: #E6F0FF;
-        --text-mid: #B7C5E0;
-        --text-lo: #6A7AA0;
-        --accent: #6F3AFF;
-        --accent-strong: #FF59E6;
-        --accent-info: #00C2C7;
-        /* Tier colors - each Hall gets an identity */
-        --short: #B7FF4C;   /* electric green - working memory, alive */
-        --near: #FFD23F;    /* amber - open loops, pending */
-        --long: #6FF3D6;    /* mint - durable, gated */
-        --brief: #C7A6FF;   /* soft lavender - steering, not memory */
-        --draft: #FFAB91;   /* soft coral - synthesis in-flight, awaiting review */
-        --radius: 6px;
-        --gap: 12px;
-        --pad: 14px;
-    }
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body { margin: 0; padding: 0; }
-    body {
-        background: var(--bg-page);
-        color: var(--text-hi);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 13px;
-        line-height: 1.5;
-    }
-    a { color: var(--accent-info); }
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Halls of Memory · SerenMemory</title>
+    <style>
+         /* -----------------------------------------------------------------
+        Theme tokens - lifted from the Seren dashboard so this peek tool
+        feels like part of the same family. Deep space navy, electric
+        purple, mint for the gated tier. Mole-man approved.
+        ----------------------------------------------------------------- */
+         :root {
+             --bg-page: #0F1222;
+             --bg-card: #13151E;
+             --bg-row: #29326D;
+             --bg-row-alt: #161A2E;
+             --border: #1E2A78;
+             --border-hi: #6F3AFF;
+             --text-hi: #E6F0FF;
+             --text-mid: #B7C5E0;
+             --text-lo: #6A7AA0;
+             --accent: #6F3AFF;
+             --accent-strong: #FF59E6;
+             --accent-info: #00C2C7;
+             /* Tier colors - each Hall gets an identity */
+             --short: #B7FF4C; /* electric green - working memory, alive */
+             --near: #FFD23F; /* amber - open loops, pending */
+             --long: #6FF3D6; /* mint - durable, gated */
+             --brief: #C7A6FF; /* soft lavender - steering, not memory */
+             --draft: #FFAB91; /* soft coral - synthesis in-flight, awaiting review */
+             --radius: 6px;
+             --gap: 12px;
+             --pad: 14px;
+         }
 
-    header {
-        padding: var(--pad);
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        gap: var(--gap);
-        flex-wrap: wrap;
-    }
-    header h1 {
-        font-size: 16px;
-        margin: 0;
-        color: var(--text-hi);
-        letter-spacing: 0.5px;
-    }
-    header h1 .sub { color: var(--text-lo); font-weight: normal; font-size: 12px; }
+         * {
+             box-sizing: border-box;
+             -webkit-tap-highlight-color: transparent;
+         }
 
-    .conn {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        margin-left: auto;
-        flex-wrap: wrap;
-    }
-    input, select, button {
-        background: var(--bg-card);
-        color: var(--text-hi);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 6px 10px;
-        font-family: inherit;
-        font-size: 12px;
-    }
-    input:focus, select:focus { outline: none; border-color: var(--border-hi); }
-    input::placeholder { color: var(--text-lo); }
-    button {
-        cursor: pointer;
-        background: var(--bg-row);
-        border-color: var(--border-hi);
-        transition: background 0.12s, border-color 0.12s;
-    }
-    button:hover { background: var(--accent); }
-    button.ghost { background: var(--bg-card); }
-    button.ghost:hover { background: var(--bg-row); }
+         html, body {
+             margin: 0;
+             padding: 0;
+         }
 
-    .counts {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        font-size: 11px;
-        color: var(--text-lo);
-    }
-    .count-pill {
-        padding: 2px 8px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-    }
-    .count-pill b { color: var(--text-hi); }
+         body {
+             background: var(--bg-page);
+             color: var(--text-hi);
+             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+             font-size: 13px;
+             line-height: 1.5;
+         }
 
-    /* Tab bar - the four Halls + search */
-    .tabs {
-        display: flex;
-        gap: 2px;
-        padding: 0 var(--pad);
-        border-bottom: 1px solid var(--border);
-        flex-wrap: wrap;
-    }
-    .tab {
-        padding: 10px 16px;
-        cursor: pointer;
-        color: var(--text-mid);
-        border-bottom: 2px solid transparent;
-        user-select: none;
-        font-size: 12px;
-    }
-    .tab:hover { color: var(--text-hi); }
-    .tab.active { color: var(--text-hi); border-bottom-color: var(--accent-strong); }
-    .tab .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-    .tab[data-tier="short"] .dot { background: var(--short); }
-    .tab[data-tier="near"] .dot { background: var(--near); }
-    .tab[data-tier="long"] .dot { background: var(--long); }
-    .tab[data-tier="briefs"] .dot { background: var(--brief); }
-    .tab[data-tier="drafts"] .dot { background: var(--draft); }
-    .tab[data-tier="search"] .dot { background: var(--accent-strong); }
+         a {
+             color: var(--accent-info);
+         }
 
-    main { padding: var(--pad); }
+         header {
+             padding: var(--pad);
+             border-bottom: 1px solid var(--border);
+             display: flex;
+             align-items: center;
+             gap: var(--gap);
+             flex-wrap: wrap;
+         }
 
-    /* Search bar - only visible on the search tab */
-    .searchbar {
-        display: flex;
-        gap: 8px;
-        margin-bottom: var(--gap);
-        flex-wrap: wrap;
-    }
-    .searchbar input[type=text] { flex: 1; min-width: 200px; }
-    .searchbar label { display: flex; align-items: center; gap: 4px; color: var(--text-mid); font-size: 11px; }
+             header h1 {
+                 font-size: 16px;
+                 margin: 0;
+                 color: var(--text-hi);
+                 letter-spacing: 0.5px;
+             }
 
-    /* Entry list */
-    .entries { display: flex; flex-direction: column; gap: 8px; }
-    .entry {
-        background: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: var(--pad);
-        border-left-width: 3px;
-    }
-    .entry.short { border-left-color: var(--short); }
-    .entry.near  { border-left-color: var(--near); }
-    .entry.long  { border-left-color: var(--long); }
-    .entry.brief { border-left-color: var(--brief); }
-    .entry.draft { border-left-color: var(--draft); }
-    .entry .content { color: var(--text-hi); white-space: pre-wrap; word-break: break-word; }
-    .entry .meta {
-        margin-top: 8px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        font-size: 11px;
-        color: var(--text-lo);
-    }
-    .entry .meta .k { color: var(--text-mid); }
-    .entry .badge {
-        font-size: 10px;
-        padding: 1px 6px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        color: var(--text-mid);
-    }
-    .entry .badge.tier-short { color: var(--short); border-color: var(--short); }
-    .entry .badge.tier-near  { color: var(--near); border-color: var(--near); }
-    .entry .badge.tier-long  { color: var(--long); border-color: var(--long); }
-    .entry .badge.tier-brief { color: var(--brief); border-color: var(--brief); }
-    .entry .badge.tier-draft { color: var(--draft); border-color: var(--draft); }
-    .entry .badge.status-pending  { color: var(--draft); border-color: var(--draft); }
-    .entry .badge.status-approved { color: var(--short); border-color: var(--short); }
-    .entry .badge.status-rejected { color: var(--accent-strong); border-color: var(--accent-strong); }
-    .entry .chip.evidence { color: var(--text-mid, #9aa3c7); border: 1px solid #3a3f5a; padding: 1px 6px; border-radius: 9px; font-size: 11px; margin: 1px 3px 1px 0; display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .entry .chip.promote { color: var(--short); border: 1px solid var(--short); padding: 1px 6px; border-radius: 9px; font-size: 11px; margin: 1px 3px 1px 0; display: inline-block; }
-    .entry .chip.noise   { color: var(--accent-strong); border: 1px solid var(--accent-strong); padding: 1px 6px; border-radius: 9px; font-size: 11px; margin: 1px 3px 1px 0; display: inline-block; }
-    .entry .chip.intent  { color: var(--near); border: 1px solid var(--near); padding: 1px 6px; border-radius: 9px; font-size: 11px; margin: 1px 3px 1px 0; display: inline-block; }
-    .entry .chip-row { margin-top: 6px; }
-    .entry .chip-row .k { color: var(--accent-info); font-size: 11px; margin-right: 4px; }
-    .entry .actions { margin-top: 8px; display: flex; gap: 8px; }
-    .entry .actions button.approve { background: transparent; color: var(--short); border: 1px solid var(--short); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-    .entry .actions button.approve:hover { background: var(--short); color: var(--bg-page); }
-    .entry .actions button.reject { background: transparent; color: var(--accent-strong); border: 1px solid var(--accent-strong); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-    .entry .actions button.reject:hover { background: var(--accent-strong); color: var(--bg-page); }
-    .entry .review-note { margin-top: 8px; font-size: 12px; color: var(--text-mid, #9aa3c7); font-style: italic; }
-    .entry .badge.score { color: var(--accent-strong); border-color: var(--accent-strong); }
-    .entry .badge.pinned { color: var(--accent-info); border-color: var(--accent-info); }
-    .entry .badge.completed { color: var(--text-lo); }
-    .entry .badge.superseded { color: var(--status-down, #FF4D6D); border-color: var(--status-down, #FF4D6D); }
+                 header h1 .sub {
+                     color: var(--text-lo);
+                     font-weight: normal;
+                     font-size: 12px;
+                 }
 
-    .empty { color: var(--text-lo); padding: 30px; text-align: center; }
-    .err {
-        background: #2A0F18;
-        border: 1px solid var(--accent-strong);
-        color: #FFC2E6;
-        padding: var(--pad);
-        border-radius: var(--radius);
-        margin-bottom: var(--gap);
-    }
-    .toolbar {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        margin-bottom: var(--gap);
-        flex-wrap: wrap;
-    }
-    .toolbar .spacer { flex: 1; }
-    .hint { color: var(--text-lo); font-size: 11px; }
-    code.id { color: var(--text-lo); font-size: 10px; }
+         .conn {
+             display: flex;
+             gap: 8px;
+             align-items: center;
+             margin-left: auto;
+             flex-wrap: wrap;
+         }
 
-    /* Auth gate - tabs and main hidden until a successful API response */
-    .locked #tabs,
-    .locked main { display: none; }
-    .lock-hint {
-        padding: 40px var(--pad);
-        text-align: center;
-        color: var(--text-lo);
-        font-size: 13px;
-    }
-    .lock-hint span { color: var(--accent); }
-</style>
+         input, select, button {
+             background: var(--bg-card);
+             color: var(--text-hi);
+             border: 1px solid var(--border);
+             border-radius: var(--radius);
+             padding: 6px 10px;
+             font-family: inherit;
+             font-size: 12px;
+         }
+
+             input:focus, select:focus {
+                 outline: none;
+                 border-color: var(--border-hi);
+             }
+
+             input::placeholder {
+                 color: var(--text-lo);
+             }
+
+         button {
+             cursor: pointer;
+             background: var(--bg-row);
+             border-color: var(--border-hi);
+             transition: background 0.12s, border-color 0.12s;
+         }
+
+             button:hover {
+                 background: var(--accent);
+             }
+
+             button.ghost {
+                 background: var(--bg-card);
+             }
+
+                 button.ghost:hover {
+                     background: var(--bg-row);
+                 }
+
+         .counts {
+             display: flex;
+             gap: 6px;
+             align-items: center;
+             font-size: 11px;
+             color: var(--text-lo);
+         }
+
+         .count-pill {
+             padding: 2px 8px;
+             border-radius: 999px;
+             border: 1px solid var(--border);
+         }
+
+             .count-pill b {
+                 color: var(--text-hi);
+             }
+
+         /* Tab bar - the four Halls + search */
+         .tabs {
+             display: flex;
+             gap: 2px;
+             padding: 0 var(--pad);
+             border-bottom: 1px solid var(--border);
+             flex-wrap: wrap;
+         }
+
+         .tab {
+             padding: 10px 16px;
+             cursor: pointer;
+             color: var(--text-mid);
+             border-bottom: 2px solid transparent;
+             user-select: none;
+             font-size: 12px;
+         }
+
+             .tab:hover {
+                 color: var(--text-hi);
+             }
+
+             .tab.active {
+                 color: var(--text-hi);
+                 border-bottom-color: var(--accent-strong);
+             }
+
+             .tab .dot {
+                 display: inline-block;
+                 width: 8px;
+                 height: 8px;
+                 border-radius: 50%;
+                 margin-right: 6px;
+                 vertical-align: middle;
+             }
+
+             .tab[data-tier="short"] .dot {
+                 background: var(--short);
+             }
+
+             .tab[data-tier="near"] .dot {
+                 background: var(--near);
+             }
+
+             .tab[data-tier="long"] .dot {
+                 background: var(--long);
+             }
+
+             .tab[data-tier="briefs"] .dot {
+                 background: var(--brief);
+             }
+
+             .tab[data-tier="drafts"] .dot {
+                 background: var(--draft);
+             }
+
+             .tab[data-tier="search"] .dot {
+                 background: var(--accent-strong);
+             }
+
+         main {
+             padding: var(--pad);
+         }
+
+         /* Search bar - only visible on the search tab */
+         .searchbar {
+             display: flex;
+             gap: 8px;
+             margin-bottom: var(--gap);
+             flex-wrap: wrap;
+         }
+
+             .searchbar input[type=text] {
+                 flex: 1;
+                 min-width: 200px;
+             }
+
+             .searchbar label {
+                 display: flex;
+                 align-items: center;
+                 gap: 4px;
+                 color: var(--text-mid);
+                 font-size: 11px;
+             }
+
+         /* Entry list */
+         .entries {
+             display: flex;
+             flex-direction: column;
+             gap: 8px;
+         }
+
+         .entry {
+             background: var(--bg-card);
+             border: 1px solid var(--border);
+             border-radius: var(--radius);
+             padding: var(--pad);
+             border-left-width: 3px;
+         }
+
+             .entry.short {
+                 border-left-color: var(--short);
+             }
+
+             .entry.near {
+                 border-left-color: var(--near);
+             }
+
+             .entry.long {
+                 border-left-color: var(--long);
+             }
+
+             .entry.brief {
+                 border-left-color: var(--brief);
+             }
+
+             .entry.draft {
+                 border-left-color: var(--draft);
+             }
+
+             .entry .content {
+                 color: var(--text-hi);
+                 white-space: pre-wrap;
+                 word-break: break-word;
+             }
+
+             .entry .meta {
+                 margin-top: 8px;
+                 display: flex;
+                 gap: 10px;
+                 flex-wrap: wrap;
+                 font-size: 11px;
+                 color: var(--text-lo);
+             }
+
+                 .entry .meta .k {
+                     color: var(--text-mid);
+                 }
+
+             .entry .badge {
+                 font-size: 10px;
+                 padding: 1px 6px;
+                 border-radius: 999px;
+                 border: 1px solid var(--border);
+                 color: var(--text-mid);
+             }
+
+                 .entry .badge.tier-short {
+                     color: var(--short);
+                     border-color: var(--short);
+                 }
+
+                 .entry .badge.tier-near {
+                     color: var(--near);
+                     border-color: var(--near);
+                 }
+
+                 .entry .badge.tier-long {
+                     color: var(--long);
+                     border-color: var(--long);
+                 }
+
+                 .entry .badge.tier-brief {
+                     color: var(--brief);
+                     border-color: var(--brief);
+                 }
+
+                 .entry .badge.tier-draft {
+                     color: var(--draft);
+                     border-color: var(--draft);
+                 }
+
+                 .entry .badge.status-pending {
+                     color: var(--draft);
+                     border-color: var(--draft);
+                 }
+
+                 .entry .badge.status-approved {
+                     color: var(--short);
+                     border-color: var(--short);
+                 }
+
+                 .entry .badge.status-rejected {
+                     color: var(--accent-strong);
+                     border-color: var(--accent-strong);
+                 }
+
+             .entry .chip.evidence {
+                 color: var(--text-mid, #9aa3c7);
+                 border: 1px solid #3a3f5a;
+                 padding: 1px 6px;
+                 border-radius: 9px;
+                 font-size: 11px;
+                 margin: 1px 3px 1px 0;
+                 display: inline-block;
+                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             }
+
+             .entry .chip.promote {
+                 color: var(--short);
+                 border: 1px solid var(--short);
+                 padding: 1px 6px;
+                 border-radius: 9px;
+                 font-size: 11px;
+                 margin: 1px 3px 1px 0;
+                 display: inline-block;
+             }
+
+             .entry .chip.noise {
+                 color: var(--accent-strong);
+                 border: 1px solid var(--accent-strong);
+                 padding: 1px 6px;
+                 border-radius: 9px;
+                 font-size: 11px;
+                 margin: 1px 3px 1px 0;
+                 display: inline-block;
+             }
+
+             .entry .chip.intent {
+                 color: var(--near);
+                 border: 1px solid var(--near);
+                 padding: 1px 6px;
+                 border-radius: 9px;
+                 font-size: 11px;
+                 margin: 1px 3px 1px 0;
+                 display: inline-block;
+             }
+
+             .entry .chip-row {
+                 margin-top: 6px;
+             }
+
+                 .entry .chip-row .k {
+                     color: var(--accent-info);
+                     font-size: 11px;
+                     margin-right: 4px;
+                 }
+
+             .entry .actions {
+                 margin-top: 8px;
+                 display: flex;
+                 gap: 8px;
+             }
+
+                 .entry .actions button.approve {
+                     background: transparent;
+                     color: var(--short);
+                     border: 1px solid var(--short);
+                     padding: 4px 12px;
+                     border-radius: 4px;
+                     cursor: pointer;
+                     font-size: 12px;
+                 }
+
+                     .entry .actions button.approve:hover {
+                         background: var(--short);
+                         color: var(--bg-page);
+                     }
+
+                 .entry .actions button.reject {
+                     background: transparent;
+                     color: var(--accent-strong);
+                     border: 1px solid var(--accent-strong);
+                     padding: 4px 12px;
+                     border-radius: 4px;
+                     cursor: pointer;
+                     font-size: 12px;
+                 }
+
+                     .entry .actions button.reject:hover {
+                         background: var(--accent-strong);
+                         color: var(--bg-page);
+                     }
+
+             .entry .review-note {
+                 margin-top: 8px;
+                 font-size: 12px;
+                 color: var(--text-mid, #9aa3c7);
+                 font-style: italic;
+             }
+
+             .entry .badge.score {
+                 color: var(--accent-strong);
+                 border-color: var(--accent-strong);
+             }
+
+             .entry .badge.pinned {
+                 color: var(--accent-info);
+                 border-color: var(--accent-info);
+             }
+
+             .entry .badge.completed {
+                 color: var(--text-lo);
+             }
+
+             .entry .badge.superseded {
+                 color: var(--status-down, #FF4D6D);
+                 border-color: var(--status-down, #FF4D6D);
+             }
+
+         .empty {
+             color: var(--text-lo);
+             padding: 30px;
+             text-align: center;
+         }
+
+         .err {
+             background: #2A0F18;
+             border: 1px solid var(--accent-strong);
+             color: #FFC2E6;
+             padding: var(--pad);
+             border-radius: var(--radius);
+             margin-bottom: var(--gap);
+         }
+
+         .toolbar {
+             display: flex;
+             gap: 8px;
+             align-items: center;
+             margin-bottom: var(--gap);
+             flex-wrap: wrap;
+         }
+
+             .toolbar .spacer {
+                 flex: 1;
+             }
+
+         .hint {
+             color: var(--text-lo);
+             font-size: 11px;
+         }
+
+         code.id {
+             color: var(--text-lo);
+             font-size: 10px;
+         }
+
+         /* Auth gate - tabs and main hidden until a successful API response */
+         .locked #tabs,
+         .locked main {
+             display: none;
+         }
+
+         .lock-hint {
+             padding: 40px var(--pad);
+             text-align: center;
+             color: var(--text-lo);
+             font-size: 13px;
+         }
+
+             .lock-hint span {
+                 color: var(--accent);
+             }
+
+         /* Migration modal - reuses the Seren palette. Coral (--draft) is the
+        warning accent: same "in-flight, needs a human" meaning as drafts. */
+         .mig-overlay {
+             position: fixed;
+             inset: 0;
+             background: rgba(8, 10, 22, 0.72);
+             backdrop-filter: blur(6px);
+             -webkit-backdrop-filter: blur(6px);
+             display: none;
+             align-items: center;
+             justify-content: center;
+             z-index: 1000;
+             padding: var(--pad);
+         }
+
+             .mig-overlay.show {
+                 display: flex;
+             }
+
+         .mig-card {
+             background: var(--bg-card);
+             border: 1px solid var(--draft);
+             border-radius: var(--radius);
+             max-width: 540px;
+             width: 100%;
+             padding: 24px;
+             box-shadow: 0 0 0 1px rgba(255,171,145,0.15), 0 18px 60px rgba(0,0,0,0.55);
+         }
+
+             .mig-card h2 {
+                 margin: 0 0 4px;
+                 font-size: 16px;
+                 color: var(--text-hi);
+                 display: flex;
+                 align-items: center;
+                 gap: 10px;
+                 letter-spacing: 0.3px;
+             }
+
+             .mig-card .warn-ico {
+                 color: var(--draft);
+                 font-size: 20px;
+                 line-height: 1;
+             }
+
+             .mig-card p {
+                 color: var(--text-mid);
+                 margin: 10px 0;
+                 font-size: 12.5px;
+             }
+
+             .mig-card .models {
+                 background: var(--bg-page);
+                 border: 1px solid var(--border);
+                 border-radius: var(--radius);
+                 padding: 10px 12px;
+                 margin: 12px 0;
+                 font-size: 12px;
+             }
+
+                 .mig-card .models .row {
+                     display: flex;
+                     gap: 8px;
+                     padding: 2px 0;
+                 }
+
+                 .mig-card .models .k {
+                     color: var(--text-lo);
+                     width: 48px;
+                 }
+
+                 .mig-card .models .v {
+                     color: var(--text-hi);
+                     word-break: break-word;
+                 }
+
+                     .mig-card .models .v.from {
+                         color: var(--text-mid);
+                     }
+
+                     .mig-card .models .v.to {
+                         color: var(--draft);
+                     }
+
+         .mig-actions {
+             display: flex;
+             gap: 10px;
+             margin-top: 18px;
+             justify-content: flex-end;
+         }
+
+             .mig-actions button {
+                 padding: 8px 18px;
+                 border-radius: 4px;
+                 font-size: 12.5px;
+                 cursor: pointer;
+                 font-family: inherit;
+             }
+
+             .mig-actions .deny {
+                 background: transparent;
+                 color: var(--text-mid);
+                 border: 1px solid var(--border);
+             }
+
+                 .mig-actions .deny:hover {
+                     background: var(--bg-row);
+                     color: var(--text-hi);
+                 }
+
+             .mig-actions .accept {
+                 background: transparent;
+                 color: var(--draft);
+                 border: 1px solid var(--draft);
+             }
+
+                 .mig-actions .accept:hover {
+                     background: var(--draft);
+                     color: var(--bg-page);
+                 }
+
+             .mig-actions .primary {
+                 background: var(--accent);
+                 color: var(--text-hi);
+                 border: 1px solid var(--border-hi);
+             }
+
+                 .mig-actions .primary:hover {
+                     background: var(--border-hi);
+                 }
+
+         /* Loading bar */
+         .mig-bar-wrap {
+             background: var(--bg-page);
+             border: 1px solid var(--border);
+             border-radius: 999px;
+             height: 16px;
+             overflow: hidden;
+             margin: 14px 0 6px;
+         }
+
+         .mig-bar {
+             height: 100%;
+             width: 0%;
+             background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+             transition: width 0.4s ease;
+         }
+
+         .mig-pct {
+             font-size: 11px;
+             color: var(--text-lo);
+             text-align: right;
+         }
+
+         .mig-done-ico {
+             color: var(--short);
+             font-size: 22px;
+         }
+
+         .mig-err {
+             background: #2A0F18;
+             border: 1px solid var(--accent-strong);
+             color: #FFC2E6;
+             padding: 10px 12px;
+             border-radius: var(--radius);
+             font-size: 12px;
+             margin-top: 12px;
+         }
+
+         .mig-cmd {
+             background: var(--bg-page);
+             border: 1px solid var(--border);
+             border-radius: var(--radius);
+             padding: 8px 10px;
+             margin-top: 10px;
+             font-size: 11.5px;
+             color: var(--accent-info);
+             word-break: break-all;
+         }
+    </style>
 </head>
 <body class="locked">
-<header>
-    <h1>Halls of Memory <span class="sub">· SerenMemory peek</span></h1>
-    <div class="conn">
-        <input type="text" id="base-url" placeholder="(same origin - leave blank if served from SerenMemory)" value="" size="32" />
-        <input type="password" id="token" placeholder="bearer token (if any)" size="18" />
-        <button id="refresh">refresh</button>
-        <div class="counts" id="counts"></div>
-    </div>
-</header>
+    <header>
+        <h1>Halls of Memory <span class="sub">· SerenMemory peek</span></h1>
+        <div class="conn">
+            <input type="text" id="base-url" placeholder="(same origin - leave blank if served from SerenMemory)" value="" size="32" />
+            <input type="password" id="token" placeholder="bearer token (if any)" size="18" />
+            <button id="refresh">refresh</button>
+            <div class="counts" id="counts"></div>
+        </div>
+    </header>
 
-<div class="lock-hint" id="lock-hint">Enter your <span>bearer token</span> above and hit refresh to connect.</div>
+    <div class="lock-hint" id="lock-hint">Enter your <span>bearer token</span> above and hit refresh to connect.</div>
 
-<div class="tabs" id="tabs">
-    <div class="tab active" data-tier="short"><span class="dot"></span>ShortTerm</div>
-    <div class="tab" data-tier="near"><span class="dot"></span>NearTerm</div>
-    <div class="tab" data-tier="long"><span class="dot"></span>LongTerm</div>
-    <div class="tab" data-tier="briefs"><span class="dot"></span>Briefs</div>
-    <div class="tab" data-tier="drafts"><span class="dot"></span>Drafts</div>
-    <div class="tab" data-tier="search"><span class="dot"></span>Search</div>
-</div>
-
-<main>
-    <div id="error-slot"></div>
-
-    <!-- Search controls (shown only on search tab) -->
-    <div class="searchbar" id="searchbar" style="display:none;">
-        <input type="text" id="search-query" placeholder="semantic query across all tiers…" />
-        <label><input type="checkbox" id="inc-short" checked /> short</label>
-        <label><input type="checkbox" id="inc-near" checked /> near</label>
-        <label><input type="checkbox" id="inc-long" checked /> long</label>
-        <label>n=<input type="number" id="search-n" value="10" min="1" max="50" style="width:56px;" /></label>
-        <button id="do-search">search</button>
+    <div class="tabs" id="tabs">
+        <div class="tab active" data-tier="short"><span class="dot"></span>ShortTerm</div>
+        <div class="tab" data-tier="near"><span class="dot"></span>NearTerm</div>
+        <div class="tab" data-tier="long"><span class="dot"></span>LongTerm</div>
+        <div class="tab" data-tier="briefs"><span class="dot"></span>Briefs</div>
+        <div class="tab" data-tier="drafts"><span class="dot"></span>Drafts</div>
+        <div class="tab" data-tier="search"><span class="dot"></span>Search</div>
     </div>
 
-    <!-- List controls (shown on tier tabs) -->
-    <div class="toolbar" id="list-toolbar">
-        <span class="hint" id="list-hint"></span>
-        <div class="spacer"></div>
-        <label class="hint" id="extra-toggle-wrap" style="display:none;">
-            <input type="checkbox" id="extra-toggle" /> <span id="extra-label"></span>
-        </label>
-    </div>
+    <main>
+        <div id="error-slot"></div>
 
-    <div class="entries" id="entries"></div>
-</main>
+        <!-- Search controls (shown only on search tab) -->
+        <div class="searchbar" id="searchbar" style="display:none;">
+            <input type="text" id="search-query" placeholder="semantic query across all tiers…" />
+            <label><input type="checkbox" id="inc-short" checked /> short</label>
+            <label><input type="checkbox" id="inc-near" checked /> near</label>
+            <label><input type="checkbox" id="inc-long" checked /> long</label>
+            <label>n=<input type="number" id="search-n" value="10" min="1" max="50" style="width:56px;" /></label>
+            <button id="do-search">search</button>
+        </div>
 
-<script>
-'use strict';
+        <!-- List controls (shown on tier tabs) -->
+        <div class="toolbar" id="list-toolbar">
+            <span class="hint" id="list-hint"></span>
+            <div class="spacer"></div>
+            <label class="hint" id="extra-toggle-wrap" style="display:none;">
+                <input type="checkbox" id="extra-toggle" /> <span id="extra-label"></span>
+            </label>
+        </div>
 
-// ----------------------------------------------------------------------
-// State
-// ----------------------------------------------------------------------
-const state = {
-    tab: 'short',
-    // Base URL resolution:
-    //  - Served from SerenMemory (http/https origin): use '' = relative =
-    //    same-origin fetches. No CORS, works on any host/port automatically.
-    //  - Opened as a file:// (standalone debugging): fall back to the
-    //    canonical localhost:7420 so it still works off-cluster.
-    baseUrl: (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:7420',
-    token: sessionStorage.getItem('seren_token') ?? '',
-};
+        <div class="entries" id="entries"></div>
+    </main>
 
-function unlock() {
-    document.body.classList.remove('locked');
-    $('lock-hint').style.display = 'none';
-}
-function lock() {
-    document.body.classList.add('locked');
-    $('lock-hint').style.display = '';
-}
+    <script>
+        'use strict';
 
-const $ = (id) => document.getElementById(id);
+        // ----------------------------------------------------------------------
+        // State
+        // ----------------------------------------------------------------------
+        const state = {
+            tab: 'short',
+            // Base URL resolution:
+            //  - Served from SerenMemory (http/https origin): use '' = relative =
+            //    same-origin fetches. No CORS, works on any host/port automatically.
+            //  - Opened as a file:// (standalone debugging): fall back to the
+            //    canonical localhost:7420 so it still works off-cluster.
+            baseUrl: (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:7420',
+            token: sessionStorage.getItem('seren_token') ?? '',
+        };
 
-function headers() {
-    const h = { 'content-type': 'application/json' };
-    if (state.token) h['authorization'] = `Bearer ${state.token}`;
-    return h;
-}
+        function unlock() {
+            document.body.classList.remove('locked');
+            $('lock-hint').style.display = 'none';
+        }
+        function lock() {
+            document.body.classList.add('locked');
+            $('lock-hint').style.display = '';
+        }
 
-async function api(path, opts = {}) {
-    const url = state.baseUrl.replace(/\/$/, '') + path;
-    const resp = await fetch(url, { headers: headers(), ...opts });
-    if (!resp.ok) {
-        let detail = `HTTP ${resp.status}`;
-        try { const j = await resp.json(); detail += ' · ' + (j.error || j.detail || JSON.stringify(j)); } catch {}
-        throw new Error(detail);
-    }
-    return resp.json();
-}
+        const $ = (id) => document.getElementById(id);
 
-function showError(msg) {
-    $('error-slot').innerHTML = `<div class="err">⚠ ${escapeHtml(msg)}<br><span class="hint">Is SerenMemory running at this URL? Check the base URL + token above.</span></div>`;
-}
-function clearError() { $('error-slot').innerHTML = ''; }
+        function headers() {
+            const h = { 'content-type': 'application/json' };
+            if (state.token) h['authorization'] = `Bearer ${state.token}`;
+            return h;
+        }
 
-function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, c => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-    ));
-}
+        async function api(path, opts = {}) {
+            const url = state.baseUrl.replace(/\/$/, '') + path;
+            const resp = await fetch(url, { headers: headers(), ...opts });
+            if (!resp.ok) {
+                let detail = `HTTP ${resp.status}`;
+                try { const j = await resp.json(); detail += ' · ' + (j.error || j.detail || JSON.stringify(j)); } catch { }
+                throw new Error(detail);
+            }
+            return resp.json();
+        }
 
-function fmtTs(ts) {
-    if (ts == null) return '-';
-    const n = typeof ts === 'string' ? parseFloat(ts) : ts;
-    if (!isFinite(n)) return String(ts);
-    const d = new Date(n * 1000);
-    if (isNaN(d.getTime())) return String(ts);
-    // Compact local time + relative age
-    const ageMs = Date.now() - d.getTime();
-    const ageStr = relAge(ageMs);
-    return `${d.toLocaleString()} (${ageStr})`;
-}
+        function showError(msg) {
+            $('error-slot').innerHTML = `<div class="err">⚠ ${escapeHtml(msg)}<br><span class="hint">Is SerenMemory running at this URL? Check the base URL + token above.</span></div>`;
+        }
+        function clearError() { $('error-slot').innerHTML = ''; }
 
-function relAge(ms) {
-    const s = Math.round(ms / 1000);
-    if (s < 60) return `${s}s ago`;
-    const m = Math.round(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.round(m / 60);
-    if (h < 48) return `${h}h ago`;
-    const d = Math.round(h / 24);
-    return `${d}d ago`;
-}
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+            ));
+        }
 
-// ----------------------------------------------------------------------
-// Rendering
-// ----------------------------------------------------------------------
-function renderCounts(counts) {
-    if (!counts) { $('counts').innerHTML = ''; return; }
-    const pill = (label, n, color) =>
-        `<span class="count-pill" style="border-color:${color}"><b>${n}</b> ${label}</span>`;
-    $('counts').innerHTML =
-        pill('short', counts.short ?? '?', 'var(--short)') +
-        pill('near', counts.near ?? '?', 'var(--near)') +
-        pill('long', counts.long ?? '?', 'var(--long)') +
-        (counts.pruned != null ? pill('pruned', counts.pruned, 'var(--text-lo)') : '');
-}
+        function fmtTs(ts) {
+            if (ts == null) return '-';
+            const n = typeof ts === 'string' ? parseFloat(ts) : ts;
+            if (!isFinite(n)) return String(ts);
+            const d = new Date(n * 1000);
+            if (isNaN(d.getTime())) return String(ts);
+            // Compact local time + relative age
+            const ageMs = Date.now() - d.getTime();
+            const ageStr = relAge(ageMs);
+            return `${d.toLocaleString()} (${ageStr})`;
+        }
 
-function entryCard(tier, content, meta, opts = {}) {
-    const badges = [];
-    badges.push(`<span class="badge tier-${tier}">${tier}</span>`);
-    if (opts.score != null) badges.push(`<span class="badge score">score ${opts.score.toFixed(3)}</span>`);
-    if (meta.pinned === true || meta.pinned === 'true') badges.push(`<span class="badge pinned">pinned</span>`);
-    if (meta.completed === true || meta.completed === 'true') badges.push(`<span class="badge completed">completed</span>`);
-    if (meta.superseded_by) badges.push(`<span class="badge superseded">superseded</span>`);
-    if (meta.forget_flag) badges.push(`<span class="badge superseded">flagged</span>`);
-    if (meta.demoted_reason) badges.push(`<span class="badge superseded">demoted</span>`);
+        function relAge(ms) {
+            const s = Math.round(ms / 1000);
+            if (s < 60) return `${s}s ago`;
+            const m = Math.round(s / 60);
+            if (m < 60) return `${m}m ago`;
+            const h = Math.round(m / 60);
+            if (h < 48) return `${h}h ago`;
+            const d = Math.round(h / 24);
+            return `${d}d ago`;
+        }
 
-    const metaBits = [];
-    if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);
-    if (meta.source) metaBits.push(`<span><span class="k">src</span> ${escapeHtml(meta.source)}</span>`);
-    if (meta.evidence_count != null) metaBits.push(`<span><span class="k">evidence</span> ${escapeHtml(meta.evidence_count)}</span>`);
-    // Timestamps - whichever the tier has
-    const tsField = meta.ts ?? meta.created_at ?? meta.last_confirmed;
-    if (tsField != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(tsField))}</span>`);
-    if (meta.trigger_type) {
-        let trig = meta.trigger_type;
-        if (meta.trigger_value) trig += ` -> ${meta.trigger_value}`;
-        metaBits.push(`<span><span class="k">trigger</span> ${escapeHtml(trig)}</span>`);
-    }
-    if (meta.expires_at) metaBits.push(`<span><span class="k">expires</span> ${escapeHtml(fmtTs(meta.expires_at))}</span>`);
-    if (opts.id) metaBits.push(`<code class="id">${escapeHtml(opts.id)}</code>`);
+        // ----------------------------------------------------------------------
+        // Rendering
+        // ----------------------------------------------------------------------
+        function renderCounts(counts) {
+            if (!counts) { $('counts').innerHTML = ''; return; }
+            const pill = (label, n, color) =>
+                `<span class="count-pill" style="border-color:${color}"><b>${n}</b> ${label}</span>`;
+            $('counts').innerHTML =
+                pill('short', counts.short ?? '?', 'var(--short)') +
+                pill('near', counts.near ?? '?', 'var(--near)') +
+                pill('long', counts.long ?? '?', 'var(--long)') +
+                (counts.pruned != null ? pill('pruned', counts.pruned, 'var(--text-lo)') : '');
+        }
 
-    return `
-        <div class="entry ${tier}">
-            <div class="content">${escapeHtml(content)}</div>
-            <div class="meta">
-                ${badges.join(' ')}
-                ${metaBits.join('')}
-            </div>
-        </div>`;
-}
+        function entryCard(tier, content, meta, opts = {}) {
+            const badges = [];
+            badges.push(`<span class="badge tier-${tier}">${tier}</span>`);
+            if (opts.score != null) badges.push(`<span class="badge score">score ${opts.score.toFixed(3)}</span>`);
+            if (meta.pinned === true || meta.pinned === 'true') badges.push(`<span class="badge pinned">pinned</span>`);
+            if (meta.completed === true || meta.completed === 'true') badges.push(`<span class="badge completed">completed</span>`);
+            if (meta.superseded_by) badges.push(`<span class="badge superseded">superseded</span>`);
+            if (meta.forget_flag) badges.push(`<span class="badge superseded">flagged</span>`);
+            if (meta.demoted_reason) badges.push(`<span class="badge superseded">demoted</span>`);
 
-function briefCard(brief) {
-    // Brief shape is different from tier entries: the content is the summary,
-    // and the value-add is the steering payload (promote_hints/noise_hints/
-    // completed_intents). Render as chip rows so each cluster of guidance
-    // is visually distinct.
-    const meta = brief.metadata || {};
-    const id = brief.id;
+            const metaBits = [];
+            if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);
+            if (meta.source) metaBits.push(`<span><span class="k">src</span> ${escapeHtml(meta.source)}</span>`);
+            if (meta.evidence_count != null) metaBits.push(`<span><span class="k">evidence</span> ${escapeHtml(meta.evidence_count)}</span>`);
+            // Timestamps - whichever the tier has
+            const tsField = meta.ts ?? meta.created_at ?? meta.last_confirmed;
+            if (tsField != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(tsField))}</span>`);
+            if (meta.trigger_type) {
+                let trig = meta.trigger_type;
+                if (meta.trigger_value) trig += ` -> ${meta.trigger_value}`;
+                metaBits.push(`<span><span class="k">trigger</span> ${escapeHtml(trig)}</span>`);
+            }
+            if (meta.expires_at) metaBits.push(`<span><span class="k">expires</span> ${escapeHtml(fmtTs(meta.expires_at))}</span>`);
+            if (opts.id) metaBits.push(`<code class="id">${escapeHtml(opts.id)}</code>`);
 
-    const promoteHints = Array.isArray(meta.promote_hints) ? meta.promote_hints : [];
-    const noiseHints = Array.isArray(meta.noise_hints) ? meta.noise_hints : [];
-    const intents = Array.isArray(meta.completed_intents) ? meta.completed_intents : [];
-
-    const badges = [`<span class="badge tier-brief">brief</span>`];
-
-    const metaBits = [];
-    if (meta.created_at != null) {
-        metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(meta.created_at))}</span>`);
-    }
-    metaBits.push(`<code class="id">${escapeHtml(id)}</code>`);
-
-    const chipRows = [];
-    if (promoteHints.length) {
-        chipRows.push(`<div class="chip-row"><span class="k">promote</span>` +
-            promoteHints.map(h => `<span class="chip promote">${escapeHtml(h)}</span>`).join('') +
-            `</div>`);
-    }
-    if (noiseHints.length) {
-        chipRows.push(`<div class="chip-row"><span class="k">noise</span>` +
-            noiseHints.map(h => `<span class="chip noise">${escapeHtml(h)}</span>`).join('') +
-            `</div>`);
-    }
-    if (intents.length) {
-        chipRows.push(`<div class="chip-row"><span class="k">completed</span>` +
-            intents.map(i => `<span class="chip intent">${escapeHtml(i)}</span>`).join('') +
-            `</div>`);
-    }
-
-    return `
-        <div class="entry brief">
-            <div class="content">${escapeHtml(brief.content || '(no summary)')}</div>
-            ${chipRows.join('')}
-            <div class="meta">
-                ${badges.join(' ')}
-                ${metaBits.join('')}
-            </div>
-        </div>`;
-}
-
-function draftCard(draft) {
-    // Drafts are synthesized cluster candidates awaiting human review.
-    // The content is the synthesis; the value-add for review is the
-    // evidence trail (source_short_ids) and the steering context
-    // (brief_id_used). Approve/reject buttons appear only on pending
-    // drafts; reviewed drafts show their review note as history.
-    const meta = draft.metadata || {};
-    const id = draft.id;
-    const status = meta.status || 'pending';
-    const sourceShortIds = Array.isArray(meta.source_short_ids) ? meta.source_short_ids : [];
-
-    const badges = [`<span class="badge tier-draft">draft</span>`];
-    badges.push(`<span class="badge status-${escapeHtml(status)}">${escapeHtml(status)}</span>`);
-    if (meta.long_term_id) badges.push(`<span class="badge">-> long</span>`);
-
-    const metaBits = [];
-    if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);
-    if (meta.evidence_count != null) metaBits.push(`<span><span class="k">evidence</span> ${escapeHtml(meta.evidence_count)}</span>`);
-    if (meta.brief_id_used) metaBits.push(`<span><span class="k">via brief</span> <code class="id">${escapeHtml(meta.brief_id_used)}</code></span>`);
-    if (meta.created_at != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(meta.created_at))}</span>`);
-    if (meta.reviewed_at != null) metaBits.push(`<span><span class="k">reviewed</span> ${escapeHtml(fmtTs(meta.reviewed_at))}</span>`);
-    metaBits.push(`<code class="id">${escapeHtml(id)}</code>`);
-
-    const chipRows = [];
-    if (sourceShortIds.length) {
-        chipRows.push(`<div class="chip-row"><span class="k">evidence (${sourceShortIds.length} shorts)</span>` +
-            sourceShortIds.map(sid => `<span class="chip evidence">${escapeHtml(String(sid).slice(0, 8))}…</span>`).join('') +
-            `</div>`);
-    }
-
-    // Action row: approve/reject buttons on pending, review_note on history.
-    let actionRow = '';
-    if (status === 'pending') {
-        actionRow = `
-            <div class="actions">
-                <button class="approve" onclick="approveDraft('${escapeHtml(id)}')">approve</button>
-                <button class="reject" onclick="rejectDraft('${escapeHtml(id)}')">reject</button>
+            return `
+            <div class="entry ${tier}">
+                <div class="content">${escapeHtml(content)}</div>
+                <div class="meta">
+                    ${badges.join(' ')}
+                    ${metaBits.join('')}
+                </div>
             </div>`;
-    } else if (meta.review_note) {
-        actionRow = `<div class="review-note">${escapeHtml(status)}: ${escapeHtml(meta.review_note)}</div>`;
-    }
+        }
 
-    return `
-        <div class="entry draft">
-            <div class="content">${escapeHtml(draft.content || '(empty synthesis)')}</div>
-            ${chipRows.join('')}
-            ${actionRow}
-            <div class="meta">
-                ${badges.join(' ')}
-                ${metaBits.join('')}
+        function briefCard(brief) {
+            // Brief shape is different from tier entries: the content is the summary,
+            // and the value-add is the steering payload (promote_hints/noise_hints/
+            // completed_intents). Render as chip rows so each cluster of guidance
+            // is visually distinct.
+            const meta = brief.metadata || {};
+            const id = brief.id;
+
+            const promoteHints = Array.isArray(meta.promote_hints) ? meta.promote_hints : [];
+            const noiseHints = Array.isArray(meta.noise_hints) ? meta.noise_hints : [];
+            const intents = Array.isArray(meta.completed_intents) ? meta.completed_intents : [];
+
+            const badges = [`<span class="badge tier-brief">brief</span>`];
+
+            const metaBits = [];
+            if (meta.created_at != null) {
+                metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(meta.created_at))}</span>`);
+            }
+            metaBits.push(`<code class="id">${escapeHtml(id)}</code>`);
+
+            const chipRows = [];
+            if (promoteHints.length) {
+                chipRows.push(`<div class="chip-row"><span class="k">promote</span>` +
+                    promoteHints.map(h => `<span class="chip promote">${escapeHtml(h)}</span>`).join('') +
+                    `</div>`);
+            }
+            if (noiseHints.length) {
+                chipRows.push(`<div class="chip-row"><span class="k">noise</span>` +
+                    noiseHints.map(h => `<span class="chip noise">${escapeHtml(h)}</span>`).join('') +
+                    `</div>`);
+            }
+            if (intents.length) {
+                chipRows.push(`<div class="chip-row"><span class="k">completed</span>` +
+                    intents.map(i => `<span class="chip intent">${escapeHtml(i)}</span>`).join('') +
+                    `</div>`);
+            }
+
+            return `
+            <div class="entry brief">
+                <div class="content">${escapeHtml(brief.content || '(no summary)')}</div>
+                ${chipRows.join('')}
+                <div class="meta">
+                    ${badges.join(' ')}
+                    ${metaBits.join('')}
+                </div>
+            </div>`;
+        }
+
+        function draftCard(draft) {
+            // Drafts are synthesized cluster candidates awaiting human review.
+            // The content is the synthesis; the value-add for review is the
+            // evidence trail (source_short_ids) and the steering context
+            // (brief_id_used). Approve/reject buttons appear only on pending
+            // drafts; reviewed drafts show their review note as history.
+            const meta = draft.metadata || {};
+            const id = draft.id;
+            const status = meta.status || 'pending';
+            const sourceShortIds = Array.isArray(meta.source_short_ids) ? meta.source_short_ids : [];
+
+            const badges = [`<span class="badge tier-draft">draft</span>`];
+            badges.push(`<span class="badge status-${escapeHtml(status)}">${escapeHtml(status)}</span>`);
+            if (meta.long_term_id) badges.push(`<span class="badge">-> long</span>`);
+
+            const metaBits = [];
+            if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);
+            if (meta.evidence_count != null) metaBits.push(`<span><span class="k">evidence</span> ${escapeHtml(meta.evidence_count)}</span>`);
+            if (meta.brief_id_used) metaBits.push(`<span><span class="k">via brief</span> <code class="id">${escapeHtml(meta.brief_id_used)}</code></span>`);
+            if (meta.created_at != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(meta.created_at))}</span>`);
+            if (meta.reviewed_at != null) metaBits.push(`<span><span class="k">reviewed</span> ${escapeHtml(fmtTs(meta.reviewed_at))}</span>`);
+            metaBits.push(`<code class="id">${escapeHtml(id)}</code>`);
+
+            const chipRows = [];
+            if (sourceShortIds.length) {
+                chipRows.push(`<div class="chip-row"><span class="k">evidence (${sourceShortIds.length} shorts)</span>` +
+                    sourceShortIds.map(sid => `<span class="chip evidence">${escapeHtml(String(sid).slice(0, 8))}…</span>`).join('') +
+                    `</div>`);
+            }
+
+            // Action row: approve/reject buttons on pending, review_note on history.
+            let actionRow = '';
+            if (status === 'pending') {
+                actionRow = `
+                <div class="actions">
+                    <button class="approve" onclick="approveDraft('${escapeHtml(id)}')">approve</button>
+                    <button class="reject" onclick="rejectDraft('${escapeHtml(id)}')">reject</button>
+                </div>`;
+            } else if (meta.review_note) {
+                actionRow = `<div class="review-note">${escapeHtml(status)}: ${escapeHtml(meta.review_note)}</div>`;
+            }
+
+            return `
+            <div class="entry draft">
+                <div class="content">${escapeHtml(draft.content || '(empty synthesis)')}</div>
+                ${chipRows.join('')}
+                ${actionRow}
+                <div class="meta">
+                    ${badges.join(' ')}
+                    ${metaBits.join('')}
+                </div>
+            </div>`;
+        }
+
+        async function approveDraft(draftId) {
+            try {
+                const resp = await fetch(`${state.baseUrl}/drafts/${draftId}/approve`, {
+                    method: 'POST',
+                    headers: headers(),
+                    body: JSON.stringify({})
+                });
+                if (!resp.ok) throw new Error(`approve failed: ${resp.status} ${await resp.text()}`);
+                await loadDrafts();
+            } catch (e) {
+                showError(e.message);
+            }
+        }
+
+        async function rejectDraft(draftId) {
+            const reason = window.prompt('Reason for rejection? (required)');
+            if (!reason || !reason.trim()) return;
+            try {
+                const resp = await fetch(`${state.baseUrl}/drafts/${draftId}/reject`, {
+                    method: 'POST',
+                    headers: headers(),
+                    body: JSON.stringify({ reason: reason.trim() })
+                });
+                if (!resp.ok) throw new Error(`reject failed: ${resp.status} ${await resp.text()}`);
+                await loadDrafts();
+            } catch (e) {
+                showError(e.message);
+            }
+        }
+
+        function renderEntries(html) {
+            $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
+        }
+
+        // ----------------------------------------------------------------------
+        // Loaders per tab
+        // ----------------------------------------------------------------------
+        async function loadShort() {
+            setHint('Working memory · ~8 day lifetime · free read/write');
+            setExtraToggle(null);
+            const data = await api('/short?limit=200');
+            const html = (data.entries || []).map(e =>
+                entryCard('short', e.content, e.metadata || {}, { id: e.id })
+            ).join('');
+            renderEntries(html);
+        }
+
+        async function loadNear() {
+            setHint('Open loops · future-tense intents · lives until fulfilled or expired');
+            setExtraToggle('include completed', async (checked) => loadNearInner(checked));
+            await loadNearInner($('extra-toggle').checked);
+        }
+        async function loadNearInner(includeCompleted) {
+            const data = await api(`/near?include_completed=${includeCompleted ? 'true' : 'false'}`);
+            const html = (data.entries || []).map(e =>
+                entryCard('near', e.content, e.metadata || {}, { id: e.id })
+            ).join('');
+            renderEntries(html);
+        }
+
+        async function loadLong() {
+            setHint('Consolidated knowledge · gated (consolidator writes only) · no scalpel');
+            setExtraToggle('include superseded', async (checked) => loadLongInner(checked));
+            await loadLongInner($('extra-toggle').checked);
+        }
+        async function loadLongInner(includeSuperseded) {
+            const data = await api(`/long?include_superseded=${includeSuperseded ? 'true' : 'false'}`);
+            const html = (data.entries || []).map(e =>
+                entryCard('long', e.content, e.metadata || {}, { id: e.id })
+            ).join('');
+            renderEntries(html);
+        }
+
+        async function loadBriefs() {
+            setHint('Daily briefs · steering payload for the consolidator · newest first');
+            setExtraToggle(null);
+            const data = await api('/brief?limit=50');
+            const html = (data.entries || []).map(b => briefCard(b)).join('');
+            renderEntries(html);
+        }
+
+        async function loadDrafts() {
+            setHint('Consolidator drafts · synthesized candidates awaiting review · approve commits to LongTerm');
+            setExtraToggle('include reviewed', async (checked) => loadDraftsInner(checked));
+            await loadDraftsInner($('extra-toggle').checked);
+        }
+        async function loadDraftsInner(includeReviewed) {
+            // Default view is pending-only (the actionable queue). When the toggle
+            // is on we drop the status filter to surface approved + rejected history.
+            const url = includeReviewed ? '/drafts?limit=50' : '/drafts?limit=50&status=pending';
+            const data = await api(url);
+            const html = (data.entries || []).map(d => draftCard(d)).join('');
+            renderEntries(html);
+        }
+
+        async function doSearch() {
+            const query = $('search-query').value.trim();
+            if (!query) { renderEntries(`<div class="empty">type a query above</div>`); return; }
+            const body = {
+                query,
+                n_results: parseInt($('search-n').value || '10', 10),
+                include_short: $('inc-short').checked,
+                include_near: $('inc-near').checked,
+                include_long: $('inc-long').checked,
+            };
+            try {
+                clearError();
+                const data = await api('/search', { method: 'POST', body: JSON.stringify(body) });
+                const html = (data.hits || []).map(h =>
+                    entryCard(h.tier, h.content, h.metadata || {}, { id: h.id, score: h.score })
+                ).join('');
+                renderEntries(html || `<div class="empty">no hits for "${escapeHtml(query)}"</div>`);
+            } catch (e) {
+                showError(e.message);
+            }
+        }
+
+        // ----------------------------------------------------------------------
+        // Toolbar helpers
+        // ----------------------------------------------------------------------
+        function setHint(text) { $('list-hint').textContent = text; }
+
+        let _extraHandler = null;
+        function setExtraToggle(label, handler) {
+            const wrap = $('extra-toggle-wrap');
+            if (!label) { wrap.style.display = 'none'; _extraHandler = null; return; }
+            wrap.style.display = '';
+            $('extra-label').textContent = label;
+            $('extra-toggle').checked = false;
+            _extraHandler = handler;
+        }
+        $('extra-toggle').addEventListener('change', (e) => {
+            if (_extraHandler) _extraHandler(e.target.checked);
+        });
+
+        // ----------------------------------------------------------------------
+        // Tab switching
+        // ----------------------------------------------------------------------
+        async function switchTab(tier) {
+            state.tab = tier;
+            document.querySelectorAll('.tab').forEach(t =>
+                t.classList.toggle('active', t.dataset.tier === tier));
+
+            const isSearch = tier === 'search';
+            $('searchbar').style.display = isSearch ? 'flex' : 'none';
+            $('list-toolbar').style.display = isSearch ? 'none' : 'flex';
+
+            clearError();
+            try {
+                if (tier === 'short') await loadShort();
+                else if (tier === 'near') await loadNear();
+                else if (tier === 'long') await loadLong();
+                else if (tier === 'briefs') await loadBriefs();
+                else if (tier === 'drafts') await loadDrafts();
+                else if (tier === 'search') renderEntries(`<div class="empty">enter a query and hit search</div>`);
+            } catch (e) {
+                showError(e.message);
+                renderEntries('');
+            }
+        }
+
+        document.querySelectorAll('.tab').forEach(t =>
+            t.addEventListener('click', () => switchTab(t.dataset.tier)));
+
+        // ----------------------------------------------------------------------
+        // Connection + refresh
+        // ----------------------------------------------------------------------
+        async function refresh() {
+            // Blank input = use the smart default (same-origin when served, localhost
+            // when file://). Only override if the user typed something explicit.
+            const typed = $('base-url').value.trim();
+            if (typed) {
+                state.baseUrl = typed;
+            } else {
+                state.baseUrl = (location.protocol === 'http:' || location.protocol === 'https:')
+                    ? '' : 'http://localhost:7420';
+            }
+            state.token = $('token').value.trim();
+            clearError();
+            try {
+                const root = await api('/');
+                renderCounts(root.tiers);
+                // Auth succeeded - unlock the UI and persist token for this session.
+                sessionStorage.setItem('seren_token', state.token);
+                unlock();
+                // Embedder-mismatch gate: if the store is in safe-mode, raise the
+                // migration modal and DON'T proceed to load tiers (the modal owns the
+                // screen until the user accepts/denies). checkMigrationGate is defined
+                // by the migration-modal script block appended below.
+                if (window.checkMigrationGate && await window.checkMigrationGate()) {
+                    return;
+                }
+            } catch (e) {
+                showError(e.message);
+                renderCounts(null);
+                // Auth failed or service unreachable - keep UI locked, clear stale token.
+                sessionStorage.removeItem('seren_token');
+                lock();
+                return;
+            }
+            await switchTab(state.tab);
+        }
+
+        $('refresh').addEventListener('click', refresh);
+        $('do-search').addEventListener('click', doSearch);
+        $('search-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+
+        // Restore token input from sessionStorage (survives refresh, clears on tab close).
+        if (state.token) $('token').value = state.token;
+
+        // Boot
+        refresh();
+
+        // ════════════════════════════════════════════════════════════════════════
+        //  Migration modal controller. Reuses $, api, headers, escapeHtml, state.
+        //  Polls /migrate/status; when safe_mode is true, raises the three-screen
+        //  flow: warning -> (deny: revert+restart) | (accept: migrate w/ bar -> done).
+        // ════════════════════════════════════════════════════════════════════════
+        (function () {
+            let pollTimer = null;
+
+            function ensureOverlay() {
+                let o = $('mig-overlay');
+                if (o) return o;
+                o = document.createElement('div');
+                o.id = 'mig-overlay';
+                o.className = 'mig-overlay';
+                o.innerHTML = `<div class="mig-card" id="mig-card"></div>`;
+                document.body.appendChild(o);
+                return o;
+            }
+
+            function show() { ensureOverlay().classList.add('show'); }
+            function hide() {
+                const o = $('mig-overlay');
+                if (o) o.classList.remove('show');
+            }
+
+            function card() { return $('mig-card'); }
+
+            // ---- Screen 1: warning ----
+            function screenWarning(mm) {
+                const from = (mm && mm.stamped_model) || 'all-MiniLM-L6-v2 (default)';
+                const to = (mm && mm.configured_model) || 'all-MiniLM-L6-v2 (default)';
+                card().innerHTML = `
+            <h2><span class="warn-ico">&#9888;</span> Major Configuration change!</h2>
+            <p><b>The embedder model has changed.</b> The memory store was built
+            with one model; your config now asks for another. They produce
+            incompatible vector spaces, so the data must be migrated before
+            recall will work correctly.</p>
+            <div class="models">
+                <div class="row"><span class="k">From</span><span class="v from">${escapeHtml(from)}</span></div>
+                <div class="row"><span class="k">To</span><span class="v to">${escapeHtml(to)}</span></div>
             </div>
-        </div>`;
-}
+            <p>This will <b>back up</b> the current store first (kept as a
+            rollback), then re-embed every entry in place. It may take a while.
+            Choose <b>Accept</b> to migrate, or <b>Deny</b> to revert the config
+            to the previous model.</p>
+            <div class="mig-actions">
+                <button class="deny" id="mig-deny">Deny</button>
+                <button class="accept" id="mig-accept">Accept</button>
+            </div>`;
+                $('mig-deny').onclick = onDeny;
+                $('mig-accept').onclick = onAccept;
+            }
 
-async function approveDraft(draftId) {
-    try {
-        const resp = await fetch(`${state.baseUrl}/drafts/${draftId}/approve`, {
-            method: 'POST',
-            headers: headers(),
-            body: JSON.stringify({})
-        });
-        if (!resp.ok) throw new Error(`approve failed: ${resp.status} ${await resp.text()}`);
-        await loadDrafts();
-    } catch (e) {
-        showError(e.message);
-    }
-}
+            // ---- Deny screen ----
+            async function onDeny() {
+                card().innerHTML = `<h2>Reverting configuration&#8230;</h2>
+            <p>Setting the embedder back to the previous model.</p>`;
+                try {
+                    const r = await api('/migrate/deny', { method: 'POST', body: '{}' });
+                    card().innerHTML = `
+                <h2>Config reverted</h2>
+                <p>${escapeHtml(r.detail || 'The embedder model was reverted.')}</p>
+                ${r.config_rewritten === false ? `<div class="mig-cmd">Set storage.embedding_model to ${escapeHtml(JSON.stringify(r.reverted_to))} yourself, then restart.</div>` : ''}
+                <div class="mig-actions">
+                    <button class="deny" id="mig-back">Back</button>
+                    <button class="primary" id="mig-okay">Okay</button>
+                </div>`;
+                    $('mig-back').onclick = () => screenWarning(window.__migMismatch);
+                    $('mig-okay').onclick = () => offerRestart('Config reverted. Restart to resume normally.');
+                } catch (e) {
+                    screenError(e.message, () => screenWarning(window.__migMismatch));
+                }
+            }
 
-async function rejectDraft(draftId) {
-    const reason = window.prompt('Reason for rejection? (required)');
-    if (!reason || !reason.trim()) return;
-    try {
-        const resp = await fetch(`${state.baseUrl}/drafts/${draftId}/reject`, {
-            method: 'POST',
-            headers: headers(),
-            body: JSON.stringify({ reason: reason.trim() })
-        });
-        if (!resp.ok) throw new Error(`reject failed: ${resp.status} ${await resp.text()}`);
-        await loadDrafts();
-    } catch (e) {
-        showError(e.message);
-    }
-}
+            // ---- Accept screen (migrate + bar) ----
+            async function onAccept() {
+                card().innerHTML = `
+            <h2>Migrating database&#8230;</h2>
+            <div class="models">
+                <div class="row"><span class="k">From</span><span class="v from" id="mig-from"></span></div>
+                <div class="row"><span class="k">To</span><span class="v to" id="mig-to"></span></div>
+            </div>
+            <div class="mig-bar-wrap"><div class="mig-bar" id="mig-bar"></div></div>
+            <div class="mig-pct" id="mig-pct">starting&#8230;</div>`;
+                try {
+                    await api('/migrate/accept', { method: 'POST', body: '{}' });
+                    pollMigration();
+                } catch (e) {
+                    screenError(e.message, () => screenWarning(window.__migMismatch));
+                }
+            }
 
-function renderEntries(html) {
-    $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
-}
+            function pollMigration() {
+                const tick = async () => {
+                    try {
+                        const s = await api('/migrate/status');
+                        const m = s.migration || {};
+                        if ($('mig-from')) $('mig-from').textContent = m.from_model || '';
+                        if ($('mig-to')) $('mig-to').textContent = m.to_model || '';
+                        const pct = m.percent ?? 0;
+                        if ($('mig-bar')) $('mig-bar').style.width = pct + '%';
+                        if ($('mig-pct')) $('mig-pct').textContent =
+                            m.state === 'running' ? `${pct}% (${m.done}/${m.total})` : m.state;
 
-// ----------------------------------------------------------------------
-// Loaders per tab
-// ----------------------------------------------------------------------
-async function loadShort() {
-    setHint('Working memory · ~8 day lifetime · free read/write');
-    setExtraToggle(null);
-    const data = await api('/short?limit=200');
-    const html = (data.entries || []).map(e =>
-        entryCard('short', e.content, e.metadata || {}, { id: e.id })
-    ).join('');
-    renderEntries(html);
-}
+                        if (m.state === 'done') { screenDone(m); return; }
+                        if (m.state === 'error') {
+                            screenError(m.error || 'migration failed (store restored from backup)',
+                                () => screenWarning(window.__migMismatch));
+                            return;
+                        }
+                        setTimeout(tick, 600);
+                    } catch (e) {
+                        screenError(e.message, () => screenWarning(window.__migMismatch));
+                    }
+                };
+                tick();
+            }
 
-async function loadNear() {
-    setHint('Open loops · future-tense intents · lives until fulfilled or expired');
-    setExtraToggle('include completed', async (checked) => loadNearInner(checked));
-    await loadNearInner($('extra-toggle').checked);
-}
-async function loadNearInner(includeCompleted) {
-    const data = await api(`/near?include_completed=${includeCompleted ? 'true' : 'false'}`);
-    const html = (data.entries || []).map(e =>
-        entryCard('near', e.content, e.metadata || {}, { id: e.id })
-    ).join('');
-    renderEntries(html);
-}
+            // ---- Done screen: IT'S OVER! + restart ----
+            function screenDone(m) {
+                const stash = m.stash_dir ? `<p class="hint">Backup kept at: <code class="id">${escapeHtml(m.stash_dir)}</code></p>` : '';
+                card().innerHTML = `
+            <h2><span class="mig-done-ico">&#10003;</span> It&#39;s over!</h2>
+            <p>Migration complete &#8212; ${escapeHtml(String(m.done ?? ''))} entries re-embedded into
+            the new space. Restart SerenMemory to load the migrated store.</p>
+            ${stash}
+            <div class="mig-actions">
+                <button class="primary" id="mig-restart">Restart service</button>
+            </div>`;
+                $('mig-restart').onclick = doRestart;
+            }
 
-async function loadLong() {
-    setHint('Consolidated knowledge · gated (consolidator writes only) · no scalpel');
-    setExtraToggle('include superseded', async (checked) => loadLongInner(checked));
-    await loadLongInner($('extra-toggle').checked);
-}
-async function loadLongInner(includeSuperseded) {
-    const data = await api(`/long?include_superseded=${includeSuperseded ? 'true' : 'false'}`);
-    const html = (data.entries || []).map(e =>
-        entryCard('long', e.content, e.metadata || {}, { id: e.id })
-    ).join('');
-    renderEntries(html);
-}
+            function offerRestart(msg) {
+                card().innerHTML = `
+            <h2>Ready to restart</h2>
+            <p>${escapeHtml(msg)}</p>
+            <div class="mig-actions">
+                <button class="primary" id="mig-restart">Restart service</button>
+            </div>`;
+                $('mig-restart').onclick = doRestart;
+            }
 
-async function loadBriefs() {
-    setHint('Daily briefs · steering payload for the consolidator · newest first');
-    setExtraToggle(null);
-    const data = await api('/brief?limit=50');
-    const html = (data.entries || []).map(b => briefCard(b)).join('');
-    renderEntries(html);
-}
+            async function doRestart() {
+                card().innerHTML = `<h2>Restarting&#8230;</h2><p>Asking the service to restart.</p>`;
+                try {
+                    const r = await api('/migrate/restart', { method: 'POST', body: '{}' });
+                    if (r.action === 'restarting') {
+                        card().innerHTML = `<h2>Restarting&#8230;</h2>
+                    <p>The service is restarting. This page will reconnect in a few seconds.</p>`;
+                        // Give the manager time to bounce us, then re-probe.
+                        setTimeout(() => { window.location.reload(); }, 4000);
+                    } else {
+                        // not supervised - show manual instructions, don't pretend
+                        card().innerHTML = `
+                    <h2>Manual restart needed</h2>
+                    <p>${escapeHtml(r.detail || 'Restart SerenMemory to load the migrated store.')}</p>
+                    ${r.hint ? `<div class="mig-cmd">${escapeHtml(r.hint)}</div>` : ''}
+                    <div class="mig-actions">
+                        <button class="primary" id="mig-reload">I&#39;ve restarted &#8212; reload</button>
+                    </div>`;
+                        $('mig-reload').onclick = () => window.location.reload();
+                    }
+                } catch (e) {
+                    // If the connection drops mid-call, that often MEANS it restarted.
+                    card().innerHTML = `<h2>Restarting&#8230;</h2>
+                <p>Connection closed (the service may be restarting). Reload to reconnect.</p>
+                <div class="mig-actions">
+                    <button class="primary" id="mig-reload">Reload</button>
+                </div>`;
+                    $('mig-reload').onclick = () => window.location.reload();
+                }
+            }
 
-async function loadDrafts() {
-    setHint('Consolidator drafts · synthesized candidates awaiting review · approve commits to LongTerm');
-    setExtraToggle('include reviewed', async (checked) => loadDraftsInner(checked));
-    await loadDraftsInner($('extra-toggle').checked);
-}
-async function loadDraftsInner(includeReviewed) {
-    // Default view is pending-only (the actionable queue). When the toggle
-    // is on we drop the status filter to surface approved + rejected history.
-    const url = includeReviewed ? '/drafts?limit=50' : '/drafts?limit=50&status=pending';
-    const data = await api(url);
-    const html = (data.entries || []).map(d => draftCard(d)).join('');
-    renderEntries(html);
-}
+            function screenError(msg, onBack) {
+                card().innerHTML = `
+            <h2>Something went wrong</h2>
+            <div class="mig-err">${escapeHtml(msg)}</div>
+            <div class="mig-actions">
+                <button class="deny" id="mig-err-back">Back</button>
+            </div>`;
+                $('mig-err-back').onclick = onBack || hide;
+            }
 
-async function doSearch() {
-    const query = $('search-query').value.trim();
-    if (!query) { renderEntries(`<div class="empty">type a query above</div>`); return; }
-    const body = {
-        query,
-        n_results: parseInt($('search-n').value || '10', 10),
-        include_short: $('inc-short').checked,
-        include_near: $('inc-near').checked,
-        include_long: $('inc-long').checked,
-    };
-    try {
-        clearError();
-        const data = await api('/search', { method: 'POST', body: JSON.stringify(body) });
-        const html = (data.hits || []).map(h =>
-            entryCard(h.tier, h.content, h.metadata || {}, { id: h.id, score: h.score })
-        ).join('');
-        renderEntries(html || `<div class="empty">no hits for "${escapeHtml(query)}"</div>`);
-    } catch (e) {
-        showError(e.message);
-    }
-}
-
-// ----------------------------------------------------------------------
-// Toolbar helpers
-// ----------------------------------------------------------------------
-function setHint(text) { $('list-hint').textContent = text; }
-
-let _extraHandler = null;
-function setExtraToggle(label, handler) {
-    const wrap = $('extra-toggle-wrap');
-    if (!label) { wrap.style.display = 'none'; _extraHandler = null; return; }
-    wrap.style.display = '';
-    $('extra-label').textContent = label;
-    $('extra-toggle').checked = false;
-    _extraHandler = handler;
-}
-$('extra-toggle').addEventListener('change', (e) => {
-    if (_extraHandler) _extraHandler(e.target.checked);
-});
-
-// ----------------------------------------------------------------------
-// Tab switching
-// ----------------------------------------------------------------------
-async function switchTab(tier) {
-    state.tab = tier;
-    document.querySelectorAll('.tab').forEach(t =>
-        t.classList.toggle('active', t.dataset.tier === tier));
-
-    const isSearch = tier === 'search';
-    $('searchbar').style.display = isSearch ? 'flex' : 'none';
-    $('list-toolbar').style.display = isSearch ? 'none' : 'flex';
-
-    clearError();
-    try {
-        if (tier === 'short') await loadShort();
-        else if (tier === 'near') await loadNear();
-        else if (tier === 'long') await loadLong();
-        else if (tier === 'briefs') await loadBriefs();
-        else if (tier === 'drafts') await loadDrafts();
-        else if (tier === 'search') renderEntries(`<div class="empty">enter a query and hit search</div>`);
-    } catch (e) {
-        showError(e.message);
-        renderEntries('');
-    }
-}
-
-document.querySelectorAll('.tab').forEach(t =>
-    t.addEventListener('click', () => switchTab(t.dataset.tier)));
-
-// ----------------------------------------------------------------------
-// Connection + refresh
-// ----------------------------------------------------------------------
-async function refresh() {
-    // Blank input = use the smart default (same-origin when served, localhost
-    // when file://). Only override if the user typed something explicit.
-    const typed = $('base-url').value.trim();
-    if (typed) {
-        state.baseUrl = typed;
-    } else {
-        state.baseUrl = (location.protocol === 'http:' || location.protocol === 'https:')
-            ? '' : 'http://localhost:7420';
-    }
-    state.token = $('token').value.trim();
-    clearError();
-    try {
-        const root = await api('/');
-        renderCounts(root.tiers);
-        // Auth succeeded - unlock the UI and persist token for this session.
-        sessionStorage.setItem('seren_token', state.token);
-        unlock();
-    } catch (e) {
-        showError(e.message);
-        renderCounts(null);
-        // Auth failed or service unreachable - keep UI locked, clear stale token.
-        sessionStorage.removeItem('seren_token');
-        lock();
-        return;
-    }
-    await switchTab(state.tab);
-}
-
-$('refresh').addEventListener('click', refresh);
-$('do-search').addEventListener('click', doSearch);
-$('search-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
-
-// Restore token input from sessionStorage (survives refresh, clears on tab close).
-if (state.token) $('token').value = state.token;
-
-// Boot
-refresh();
-</script>
+            // ---- Boot hook: called from refresh() after a successful connect ----
+            // Returns true if safe-mode is active (caller should NOT proceed to load
+            // tiers - the modal owns the screen until resolved).
+            window.checkMigrationGate = async function () {
+                try {
+                    const s = await api('/migrate/status');
+                    if (s && s.safe_mode) {
+                        window.__migMismatch = s.mismatch || {};
+                        screenWarning(window.__migMismatch);
+                        show();
+                        return true;
+                    }
+                    hide();
+                    return false;
+                } catch (e) {
+                    // /migrate/status missing (older build) or unreachable - don't block
+                    // the normal UI; just behave as if not in safe-mode.
+                    hide();
+                    return false;
+                }
+            };
+        })();
+    </script>
 </body>
 </html>
