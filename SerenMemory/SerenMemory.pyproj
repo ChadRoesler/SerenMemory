@@ -26,6 +26,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="seren_memory\embedder.py" />
     <Compile Include="seren_memory\mcp\server.py" />
     <Compile Include="seren_memory\mcp\tools.py" />
     <Compile Include="seren_memory\mcp\__init__.py" />
@@ -47,6 +48,7 @@
     <Compile Include="tests\test_auth.py" />
     <Compile Include="tests\test_brief.py" />
     <Compile Include="tests\test_drafts.py" />
+    <Compile Include="tests\test_embedder.py" />
     <Compile Include="tests\test_mcp_endpoint.py" />
     <Compile Include="tests\test_mcp_fallback.py" />
     <Compile Include="tests\test_mcp_mount.py" />
@@ -57,6 +59,7 @@
     <Compile Include="tests\test_tls.py" />
     <Compile Include="tests\test_validation.py" />
     <Compile Include="tests\__init__.py" />
+    <Compile Include="seren_memory\_supervised.py" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="seren_memory\" />
