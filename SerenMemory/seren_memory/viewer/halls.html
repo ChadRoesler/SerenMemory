@@ -51,8 +51,13 @@
             height: 100%;
         }
 
+        html {
+            background: radial-gradient(1200px 600px at 70% -10%, #2a1d2e 0%, var(--bg) 55%) no-repeat fixed;
+            background-color: var(--bg);
+        }
+
         body {
-            background: radial-gradient(1200px 600px at 70% -10%, #2a1d2e 0%, var(--bg) 55%);
+            background: transparent;
             color: var(--ink);
             font-family: var(--sans);
             font-size: 14px;
@@ -438,6 +443,86 @@
             color: var(--muted);
         }
 
+        /* -- overview ----------------------------------------------------- */
+        .stat-row {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .stat {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 16px 20px;
+            min-width: 120px;
+        }
+
+            .stat .big {
+                font-size: 28px;
+                font-weight: 700;
+            }
+
+            .stat .lbl {
+                color: var(--faint);
+                font-size: 12px;
+                font-family: var(--mono);
+                margin-top: 2px;
+            }
+
+            .stat.tier-short .big { color: var(--short); }
+            .stat.tier-near  .big { color: var(--near); }
+            .stat.tier-long  .big { color: var(--long); }
+            .stat.tier-brief .big { color: var(--brief); }
+            .stat.tier-draft .big { color: var(--draft); }
+
+        .overview-meta {
+            margin-top: 20px;
+            padding: 14px 16px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            font-size: 13px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+            .overview-meta .row {
+                display: flex;
+                gap: 10px;
+                align-items: baseline;
+            }
+
+            .overview-meta .k {
+                color: var(--faint);
+                font-family: var(--mono);
+                font-size: 11px;
+                min-width: 120px;
+            }
+
+            .overview-meta .v {
+                color: var(--ink);
+                font-family: var(--mono);
+                font-size: 12px;
+                word-break: break-all;
+            }
+
+        /* embedder pill in header */
+        .embedder-pill {
+            font-family: var(--mono);
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--accent-dim);
+            color: var(--accent);
+            white-space: nowrap;
+            max-width: 240px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         /* -- auth gate ---------------------------------------------------- */
         .locked #tabs,
         .locked main {
@@ -689,11 +774,11 @@
 <body class="locked">
     <header>
         <div class="brand">
-            <h1>Seren<b>Memory</b> · Halls of Memory</h1>
-            <span class="sub" id="subtitle">the right brain · episodic, consolidated, gated</span>
+            <h1>Seren<b>Memory</b> · Halls of Right Brain</h1>
+            <span class="sub" id="subtitle">episodic, consolidated, gated</span>
         </div>
         <div class="grow"></div>
-        <div class="counts" id="counts"></div>
+        <span class="embedder-pill" id="embedder-pill" title="embedding model"></span>
         <button class="iconbtn" id="connectBtn" title="Connection / bearer token">🔑 connect</button>
         <button class="iconbtn" id="refresh" title="Reload">⟳</button>
     </header>
@@ -707,6 +792,7 @@
         <div class="tab" data-tier="briefs"><span class="dot"></span>Briefs</div>
         <div class="tab" data-tier="drafts"><span class="dot"></span>Drafts</div>
         <div class="tab" data-tier="search"><span class="dot"></span>Search</div>
+        <div class="tab" data-tier="overview"><span class="dot"></span>Overview</div>
     </nav>
 
     <main>
@@ -730,6 +816,7 @@
         </div>
 
         <div class="entries" id="entries"></div>
+        <div id="overview-section" style="display:none;"></div>
     </main>
 
     <div class="modal-bg" id="connBg">
@@ -821,15 +908,37 @@
         // ----------------------------------------------------------------------
         // Rendering
         // ----------------------------------------------------------------------
-        function renderCounts(counts) {
-            if (!counts) { $('counts').innerHTML = ''; return; }
-            const pill = (label, n, color) =>
-                `<span class="count-pill" style="border-color:${color}"><b>${n}</b> ${label}</span>`;
-            $('counts').innerHTML =
-                pill('short', counts.short ?? '?', 'var(--short)') +
-                pill('near', counts.near ?? '?', 'var(--near)') +
-                pill('long', counts.long ?? '?', 'var(--long)') +
-                (counts.pruned != null ? pill('pruned', counts.pruned, 'var(--faint)') : '');
+        function renderEmbedder(model) {
+            const pill = $('embedder-pill');
+            if (!pill) return;
+            pill.textContent = model || '';
+            pill.title = model || '';
+            pill.style.display = model ? '' : 'none';
+        }
+
+        function loadOverview(root) {
+            const tiers = root.tiers || {};
+            const stat = (label, n, cls) =>
+                `<div class="stat ${cls}"><div class="big">${n ?? '?'}</div><div class="lbl">${label}</div></div>`;
+            const statsHtml = [
+                stat('short-term', tiers.short, 'tier-short'),
+                stat('near-term',  tiers.near,  'tier-near'),
+                stat('long-term',  tiers.long,  'tier-long'),
+                stat('briefs',     tiers.briefs ?? '?', 'tier-brief'),
+                stat('drafts',     tiers.drafts ?? '?', 'tier-draft'),
+                tiers.pruned != null ? stat('pruned', tiers.pruned, '') : '',
+            ].join('');
+
+            const con = root.consolidator || {};
+            const metaRows = [
+                ['version',     root.version   || '?'],
+                ['embedder',    root.embedding_model || '?'],
+                ['consolidator',con.enabled ? `enabled · ${con.mode || '?'} · every ${con.interval_seconds ?? '?'}s` : 'disabled'],
+            ].map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${escapeHtml(String(v))}</span></div>`).join('');
+
+            $('overview-section').innerHTML = `
+                <div class="stat-row">${statsHtml}</div>
+                <div class="overview-meta">${metaRows}</div>`;
         }
 
         function entryCard(tier, content, meta, opts = {}) {
@@ -1042,17 +1151,21 @@
         async function switchTab(tier) {
             state.tab = tier;
             document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tier === tier));
-            const isSearch = tier === 'search';
-            $('searchbar').style.display = isSearch ? 'flex' : 'none';
-            $('list-toolbar').style.display = isSearch ? 'none' : 'flex';
+            const isSearch   = tier === 'search';
+            const isOverview = tier === 'overview';
+            $('searchbar').style.display    = isSearch   ? 'flex' : 'none';
+            $('list-toolbar').style.display = (isSearch || isOverview) ? 'none' : 'flex';
+            $('entries').style.display          = isOverview ? 'none' : 'flex';
+            $('overview-section').style.display = isOverview ? 'block' : 'none';
             clearError();
             try {
-                if (tier === 'short') await loadShort();
-                else if (tier === 'near') await loadNear();
-                else if (tier === 'long') await loadLong();
-                else if (tier === 'briefs') await loadBriefs();
-                else if (tier === 'drafts') await loadDrafts();
-                else if (tier === 'search') renderEntries(`<div class="empty">enter a query and hit search</div>`);
+                if (tier === 'short')    await loadShort();
+                else if (tier === 'near')     await loadNear();
+                else if (tier === 'long')     await loadLong();
+                else if (tier === 'briefs')   await loadBriefs();
+                else if (tier === 'drafts')   await loadDrafts();
+                else if (tier === 'search')   renderEntries(`<div class="empty">enter a query and hit search</div>`);
+                else if (tier === 'overview') { const r = await api('/'); loadOverview(r); }
             } catch (e) { showError(e.message); renderEntries(''); }
         }
 
@@ -1077,15 +1190,18 @@
             clearError();
             try {
                 const root = await api('/');
-                renderCounts(root.tiers);
+                renderEmbedder(root.embedding_model);
+                $('subtitle').textContent = `v${root.version ?? '?'} · episodic, consolidated, gated`;
                 sessionStorage.setItem('seren_token', state.token);
                 unlock();
                 // Embedder-mismatch gate: safe-mode raises the migration modal and
                 // owns the screen until accepted/denied.
                 if (window.checkMigrationGate && await window.checkMigrationGate()) { return; }
+                // Pre-populate overview so it's ready when the user clicks it.
+                loadOverview(root);
             } catch (e) {
                 showError(e.message);
-                renderCounts(null);
+                renderEmbedder(null);
                 sessionStorage.removeItem('seren_token');
                 lock();
                 return;

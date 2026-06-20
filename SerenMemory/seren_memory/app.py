@@ -250,6 +250,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             "service": "SerenMemory",
             "version": APP_VERSION,
             "tiers": store.counts(),
+            "embedding_model": cfg.storage.embedding_model or "all-MiniLM-L6-v2 (default)",
             "consolidator": {
                 "enabled": cfg.consolidator.enabled,
                 "mode": cfg.consolidator.mode,
