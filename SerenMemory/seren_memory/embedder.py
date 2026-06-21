@@ -252,11 +252,17 @@ def migrate_store(persist_dir: Path,
             path=str(live), settings=Settings(anonymized_telemetry=False))
 
         # 2. READ ALL into memory first (shortest missing-vectors window).
+        #    We open each collection WITHOUT specifying old_ef here because
+        #    .get(include=["documents","metadatas"]) is pure SQL and never
+        #    touches the embedding function.  Passing old_ef to get_collection
+        #    can raise an EF-mismatch exception in newer ChromaDB (Rust backend)
+        #    when the stored EF config doesn't match the object we pass, which
+        #    causes the collection to be silently skipped and migrated as empty.
         in_mem: dict[str, tuple] = {}
         total = 0
         for cname in names:
             try:
-                col = client.get_collection(cname, embedding_function=old_ef)
+                col = client.get_collection(cname)
             except Exception:  # noqa: BLE001 - collection may not exist
                 continue
             got = col.get(include=["documents", "metadatas"])
@@ -266,6 +272,17 @@ def migrate_store(persist_dir: Path,
                              got.get("metadatas", []) or [])
             total += len(ids)
         progress.total = total
+
+        # Sanity: if chroma has any of our collections but we read zero entries,
+        # something went wrong in the read phase.  Abort so the backup restore
+        # fires rather than silently wiping all data.
+        existing_names = {c.name for c in client.list_collections()}
+        our_names = set(names) & existing_names
+        if our_names and total == 0:
+            raise RuntimeError(
+                "read phase returned 0 entries across all collections "
+                f"({sorted(our_names)}); aborting to preserve backup"
+            )
 
         # 3. REBUILD each via API: delete -> recreate(new_ef) -> re-add.
         ef_kwargs = {"embedding_function": new_ef} if new_ef is not None else {}
