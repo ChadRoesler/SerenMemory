@@ -245,6 +245,14 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     # -- Info routes --
     @app.get("/")
     async def root(request: Request):
+        if _safe_mode["active"]:
+            mm = _safe_mode["mismatch"] or {}
+            return JSONResponse({
+                "service": "SerenMemory",
+                "version": APP_VERSION,
+                "safe_mode": True,
+                "mismatch": mm,
+            }, status_code=503)
         store = request.app.state.store
         return {
             "service": "SerenMemory",

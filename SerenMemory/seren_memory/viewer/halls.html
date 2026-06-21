@@ -1188,17 +1188,23 @@
             state.baseUrl = typed ? typed : ((location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:7420');
             state.token = $('token').value.trim();
             clearError();
+
+            // Fetch root — succeeds normally, or returns 503+{safe_mode:true}
+            // when the backend is in embedder-mismatch safe-mode.
+            let root = null;
             try {
-                const root = await api('/');
-                renderEmbedder(root.embedding_model);
-                $('subtitle').textContent = `v${root.version ?? '?'} · episodic, consolidated, gated`;
-                sessionStorage.setItem('seren_token', state.token);
-                unlock();
-                // Embedder-mismatch gate: safe-mode raises the migration modal and
-                // owns the screen until accepted/denied.
-                if (window.checkMigrationGate && await window.checkMigrationGate()) { return; }
-                // Pre-populate overview so it's ready when the user clicks it.
-                loadOverview(root);
+                const url = state.baseUrl.replace(/\/$/, '') + '/';
+                const resp = await fetch(url, { headers: headers() });
+                root = await resp.json().catch(() => ({}));
+                if (root.safe_mode) {
+                    // Safe-mode: service is up but store is gated. Surface the
+                    // migration modal immediately — no point unlocking the tabs.
+                    sessionStorage.setItem('seren_token', state.token);
+                    unlock();
+                    if (window.checkMigrationGate && await window.checkMigrationGate()) { return; }
+                    // checkMigrationGate hid itself (safe_mode already cleared?) — fall through.
+                }
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             } catch (e) {
                 showError(e.message);
                 renderEmbedder(null);
@@ -1206,6 +1212,15 @@
                 lock();
                 return;
             }
+
+            renderEmbedder(root.embedding_model);
+            $('subtitle').textContent = `v${root.version ?? '?'} · episodic, consolidated, gated`;
+            sessionStorage.setItem('seren_token', state.token);
+            unlock();
+            // Double-check gate (covers the case where safe_mode cleared between
+            // the / call and here, but /migrate/status still says it's active).
+            if (window.checkMigrationGate && await window.checkMigrationGate()) { return; }
+            loadOverview(root);
             await switchTab(state.tab);
         }
 
@@ -1368,7 +1383,13 @@
             window.checkMigrationGate = async function () {
                 try {
                     const s = await api('/migrate/status');
-                    if (s && s.safe_mode) { window.__migMismatch = s.mismatch || {}; screenWarning(window.__migMismatch); show(); return true; }
+                    if (s && s.safe_mode) {
+                        window.__migMismatch = s.mismatch || {};
+                        ensureOverlay();   // guarantees mig-card is in the DOM before screenWarning writes to it
+                        show();
+                        screenWarning(window.__migMismatch);
+                        return true;
+                    }
                     hide();
                     return false;
                 } catch (e) { hide(); return false; }
