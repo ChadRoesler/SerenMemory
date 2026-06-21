@@ -23,6 +23,7 @@ METADATA FLATTENING:
 from __future__ import annotations
 
 import json
+import math
 import time
 from typing import Any, Optional
 from pathlib import Path
@@ -702,29 +703,86 @@ class MemoryStore:
     # ------------------------------------------------------------------
     def query(self, collection_name: str, query_text: str, n: int) -> list[dict[str, Any]]:
         """Similarity search against one collection. Returns hits with
-        distance. collection_name in {short, near, long}."""
+        distance. collection_name in {short, near, long}.
+
+        ChromaDB's HNSW index is written asynchronously — count() reads from
+        SQLite (always current) but the .bin segment files may not exist yet
+        for entries added in the current session. When that happens we fall
+        back to a linear brute-force scan: fetch all docs via .get() (SQLite,
+        always available) then re-embed the query and rank by cosine distance.
+        For a personal memory store the counts are small enough this is fine.
+        """
         col = {"short": self.short, "near": self.near, "long": self.long}.get(collection_name)
         if col is None:
             raise ValueError(f"unknown collection '{collection_name}'")
         if col.count() == 0:
             return []
-        res = col.query(
-            query_texts=[query_text],
-            n_results=min(n, col.count()),
-            include=["documents", "metadatas", "distances"],
-        )
+        try:
+            res = col.query(
+                query_texts=[query_text],
+                n_results=min(n, col.count()),
+                include=["documents", "metadatas", "distances"],
+            )
+            hits: list[dict[str, Any]] = []
+            ids = res.get("ids", [[]])[0]
+            docs = res.get("documents", [[]])[0]
+            metas = res.get("metadatas", [[]])[0]
+            dists = res.get("distances", [[]])[0]
+            for i in range(len(ids)):
+                meta = {k: _maybe_json(v) for k, v in (metas[i] or {}).items()}
+                hits.append({
+                    "id": ids[i],
+                    "content": docs[i],
+                    "metadata": meta,
+                    "distance": dists[i],
+                })
+            return hits
+        except Exception:  # noqa: BLE001
+            # HNSW segment not flushed to disk yet — fall back to brute-force.
+            return self._query_brute(col, query_text, n)
+
+    def _query_brute(self, col: Any, query_text: str, n: int) -> list[dict[str, Any]]:
+        """Linear cosine-similarity fallback used when the HNSW index isn't
+        available (entries written but not yet persisted to disk). Re-embeds
+        the query using the collection's own embedding function so the vector
+        space is guaranteed to match."""
+        raw = col.get(include=["documents", "metadatas", "embeddings"])
+        ids = raw.get("ids") or []
+        docs = raw.get("documents") or []
+        metas = raw.get("metadatas") or []
+        embeddings = raw.get("embeddings") or []
+        if not ids or not embeddings:
+            return []
+
+        # Re-embed the query through the same EF the collection uses.
+        try:
+            q_vecs = col._embedding_function([query_text])
+            q_vec = q_vecs[0]
+        except Exception:  # noqa: BLE001
+            return []
+
+        def _cosine_dist(a: list[float], b: list[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            if na == 0.0 or nb == 0.0:
+                return 1.0
+            return 1.0 - dot / (na * nb)
+
+        scored: list[tuple[float, int]] = []
+        for i, emb in enumerate(embeddings):
+            if emb is not None:
+                scored.append((_cosine_dist(q_vec, emb), i))
+        scored.sort(key=lambda t: t[0])
+
         hits: list[dict[str, Any]] = []
-        ids = res.get("ids", [[]])[0]
-        docs = res.get("documents", [[]])[0]
-        metas = res.get("metadatas", [[]])[0]
-        dists = res.get("distances", [[]])[0]
-        for i in range(len(ids)):
+        for dist, i in scored[:n]:
             meta = {k: _maybe_json(v) for k, v in (metas[i] or {}).items()}
             hits.append({
                 "id": ids[i],
                 "content": docs[i],
                 "metadata": meta,
-                "distance": dists[i],
+                "distance": dist,
             })
         return hits
 

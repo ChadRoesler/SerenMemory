@@ -59,7 +59,7 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
         searched.append(tier)
         try:
             raw = store.query(tier, req.query, fetch_n)
-        except ValueError:
+        except Exception:  # noqa: BLE001
             continue
 
         for hit in raw:
