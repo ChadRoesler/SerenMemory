@@ -10,17 +10,20 @@
     <File Path=".github/workflows/release.yml" />
   </Folder>
   <Folder Name="/SerenMemoryVSCode/">
+    <File Path="SerenMemoryVSCode/.vscodeignore" />
+    <File Path="SerenMemoryVSCode/LICENSE" />
     <File Path="SerenMemoryVSCode/package-lock.json" />
     <File Path="SerenMemoryVSCode/package.json" />
     <File Path="SerenMemoryVSCode/publish.ps1" />
+    <File Path="SerenMemoryVSCode/README.md" />
     <File Path="SerenMemoryVSCode/tsconfig.json" />
+    <File Path="SerenMemoryVSCode/vitest.config.ts" />
   </Folder>
   <Folder Name="/SerenMemoryVSCode/resources/">
     <File Path="SerenMemoryVSCode/resources/SerenIcon.png" />
   </Folder>
    <Folder Name="/SerenMemoryVSCode/seren_memory-vscode/">
     <File Path="SerenMemoryVSCode/seren_memory-vscode/esbuild.js" />
-     <File Path="LICENSE" />
     <File Path="SerenMemoryVSCode/seren_memory-vscode/.vscodeignore" />
    </Folder>
   <Folder Name="/SerenMemoryVSCode/seren_memory-vscode/src/">
@@ -28,6 +31,12 @@
     <File Path="SerenMemoryVSCode/seren_memory-vscode/src/config.ts" />
     <File Path="SerenMemoryVSCode/seren_memory-vscode/src/extension.ts" />
     <File Path="SerenMemoryVSCode/seren_memory-vscode/src/tools.ts" />
+  </Folder>
+  <Folder Name="/SerenMemoryVSCode/test/">
+    <File Path="SerenMemoryVSCode/test/client.test.ts" />
+  </Folder>
+  <Folder Name="/SerenMemoryVSCode/test/mocks/">
+    <File Path="SerenMemoryVSCode/test/mocks/vscode.ts" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".gitignore" />
