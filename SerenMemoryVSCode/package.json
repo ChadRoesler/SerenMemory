@@ -479,7 +479,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "^1.125.0",
     "@types/node": "^20.0.0",
     "esbuild": "^0.21.0",
     "typescript": "^5.4.0",
