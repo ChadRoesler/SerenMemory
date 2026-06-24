@@ -1,0 +1,564 @@
+:root {
+    --bg: #14141f;
+    --bg-2: #1a1a2e;
+    --panel: #1f2036;
+    --panel-2: #262844;
+    --line: #33365a;
+    --muted: #9aa0c8;
+    --faint: #6c7199;
+    /* --accent (coral) comes from the shell (render_from_dir accent=#ff6e8a),
+       so it's NOT redefined here - the baseplate owns it. Body text is --text
+       and the base font is --font (both shell tokens), used directly below. */
+    --accent-dim: #803a4a;
+    --gold: #f2c14e;   /* exact / high-score */
+    --slate: #8a93a6;  /* secondary match */
+    --danger: #ff8a8a; /* reject / error */
+    /* per-Hall identity - each chamber reads at a glance */
+    --short: #b7ff4c;  /* electric green - working memory, alive */
+    --near: #ffd23f;   /* amber - open loops, pending */
+    --long: #6ff3d6;   /* mint - durable, gated */
+    --brief: #c7a6ff;  /* lavender - steering, not memory */
+    --draft: #ffab91;  /* peach - synthesis in-flight, awaiting review */
+}
+
+/* Leaf flavor on top of the shell base. The shell owns the header, tabbar,
+   token modal, .view show/hide, and the design tokens; everything below is
+   Memory-specific: the per-Hall tier palette, entry cards, the draft review
+   surface, and the embedder safe-mode migration modal. */
+
+html {
+    background: radial-gradient(1200px 600px at 70% -10%, #2a1d2e 0%, var(--bg) 55%) no-repeat fixed;
+    background-color: var(--bg);
+}
+
+body {
+    font-size: 14px;
+}
+
+a {
+    text-decoration: none;
+}
+
+/* content lives in this padded wrapper (it's not a shell .view, so it doesn't
+   get the .view padding; #views still caps the width at 1100). */
+.halls {
+    padding: 20px 24px 60px;
+}
+
+/* -- tab dots (per Hall) ------------------------------------------------- */
+.tab .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 7px;
+    vertical-align: middle;
+}
+
+.tab[data-tab="short"] .dot { background: var(--short); }
+.tab[data-tab="near"] .dot { background: var(--near); }
+.tab[data-tab="long"] .dot { background: var(--long); }
+.tab[data-tab="briefs"] .dot { background: var(--brief); }
+.tab[data-tab="drafts"] .dot { background: var(--draft); }
+.tab[data-tab="search"] .dot { background: var(--accent); }
+.tab[data-tab="overview"] .dot { background: var(--muted); }
+
+/* -- search bar / toolbar ----------------------------------------------- */
+.searchbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
+input, select {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 9px 11px;
+    font-size: 13px;
+    font-family: var(--font);
+}
+
+    input:focus, select:focus {
+        outline: none;
+        border-color: var(--accent-dim);
+    }
+
+    input::placeholder {
+        color: var(--faint);
+    }
+
+    .searchbar input[type=text] {
+        flex: 1;
+        min-width: 220px;
+        font-family: var(--mono);
+    }
+
+    .searchbar label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--muted);
+        font-size: 12px;
+    }
+
+.btn {
+    background: var(--accent);
+    color: #2c0a12;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--font);
+}
+
+    .btn:hover {
+        filter: brightness(1.08);
+    }
+
+.toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+    .toolbar .spacer {
+        flex: 1;
+    }
+
+.hint {
+    color: var(--faint);
+    font-size: 12px;
+    font-family: var(--mono);
+}
+
+.hint input {
+    margin-right: 5px;
+}
+
+/* -- entries (cards) ----------------------------------------------------- */
+.entries {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.entry {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 13px 15px;
+    border-left-width: 3px;
+}
+
+    .entry.short { border-left-color: var(--short); }
+    .entry.near { border-left-color: var(--near); }
+    .entry.long { border-left-color: var(--long); }
+    .entry.brief { border-left-color: var(--brief); }
+    .entry.draft { border-left-color: var(--draft); }
+
+    .entry .content {
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .entry .meta {
+        margin-top: 9px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        font-size: 11px;
+        color: var(--faint);
+        font-family: var(--mono);
+    }
+
+        .entry .meta .k {
+            color: var(--muted);
+        }
+
+/* badges */
+.badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+}
+
+    .badge.tier-short { color: var(--short); border-color: var(--short); }
+    .badge.tier-near { color: var(--near); border-color: var(--near); }
+    .badge.tier-long { color: var(--long); border-color: var(--long); }
+    .badge.tier-brief { color: var(--brief); border-color: var(--brief); }
+    .badge.tier-draft { color: var(--draft); border-color: var(--draft); }
+    .badge.status-pending { color: var(--draft); border-color: var(--draft); }
+    .badge.status-approved { color: var(--short); border-color: var(--short); }
+    .badge.status-rejected { color: var(--danger); border-color: var(--danger); }
+    .badge.score { color: var(--gold); border-color: #6b5a2c; }
+    .badge.pinned { color: var(--accent); border-color: var(--accent-dim); }
+    .badge.completed { color: var(--faint); }
+    .badge.superseded { color: var(--danger); border-color: var(--danger); }
+
+/* chips (steering / evidence) */
+.chip {
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    font-size: 11px;
+    margin: 1px 3px 1px 0;
+    display: inline-block;
+    font-family: var(--mono);
+    color: var(--muted);
+}
+
+    .chip.evidence { color: var(--muted); border-color: var(--line); }
+    .chip.promote { color: var(--short); border-color: var(--short); }
+    .chip.noise { color: var(--danger); border-color: var(--danger); }
+    .chip.intent { color: var(--near); border-color: var(--near); }
+
+.entry .chip-row {
+    margin-top: 7px;
+}
+
+    .entry .chip-row .k {
+        color: var(--accent);
+        font-size: 11px;
+        margin-right: 4px;
+        font-family: var(--mono);
+    }
+
+/* draft actions */
+.entry .actions {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+}
+
+    .entry .actions button.approve {
+        background: transparent;
+        color: var(--short);
+        border: 1px solid var(--short);
+        padding: 5px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 12px;
+        font-family: var(--font);
+    }
+
+        .entry .actions button.approve:hover {
+            background: var(--short);
+            color: var(--bg);
+        }
+
+    .entry .actions button.reject {
+        background: transparent;
+        color: var(--danger);
+        border: 1px solid var(--danger);
+        padding: 5px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 12px;
+        font-family: var(--font);
+    }
+
+        .entry .actions button.reject:hover {
+            background: var(--danger);
+            color: var(--bg);
+        }
+
+    .entry .review-note {
+        margin-top: 9px;
+        font-size: 12px;
+        color: var(--muted);
+        font-style: italic;
+        border-left: 2px solid var(--line);
+        padding-left: 10px;
+    }
+
+code.id {
+    color: var(--faint);
+    font-size: 10px;
+    font-family: var(--mono);
+}
+
+/* -- utility ------------------------------------------------------------- */
+.empty {
+    color: var(--faint);
+    padding: 30px 0;
+    text-align: center;
+    font-style: italic;
+}
+
+.err {
+    color: var(--danger);
+    background: rgba(255,80,80,.08);
+    border: 1px solid #5a2c2c;
+    border-radius: 8px;
+    padding: 10px 13px;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+/* -- overview ------------------------------------------------------------ */
+.stat-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.stat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 20px;
+    min-width: 120px;
+}
+
+    .stat .big {
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    .stat .lbl {
+        color: var(--faint);
+        font-size: 12px;
+        font-family: var(--mono);
+        margin-top: 2px;
+    }
+
+    .stat.tier-short .big { color: var(--short); }
+    .stat.tier-near  .big { color: var(--near); }
+    .stat.tier-long  .big { color: var(--long); }
+    .stat.tier-brief .big { color: var(--brief); }
+    .stat.tier-draft .big { color: var(--draft); }
+
+.overview-meta {
+    margin-top: 20px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+    .overview-meta .row {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+    }
+
+    .overview-meta .k {
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 11px;
+        min-width: 120px;
+    }
+
+    .overview-meta .v {
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 12px;
+        word-break: break-all;
+    }
+
+/* -- migration modal (embedder safe-mode gate) --------------------------
+   The peach --draft is the warning accent: same "in-flight, needs a human"
+   meaning as a pending draft. The coral --accent drives the primary action.
+   The overlay element is injected by scripts.js (not in body.html). --------- */
+.mig-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8,8,16,.72);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+}
+
+    .mig-overlay.show {
+        display: flex;
+    }
+
+.mig-card {
+    background: var(--bg-2);
+    border: 1px solid var(--draft);
+    border-radius: 14px;
+    max-width: 540px;
+    width: 100%;
+    padding: 24px;
+    box-shadow: 0 0 0 1px rgba(255,171,145,0.15), 0 18px 60px rgba(0,0,0,0.55);
+}
+
+    .mig-card h2 {
+        margin: 0 0 4px;
+        font-size: 16px;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        letter-spacing: 0.3px;
+    }
+
+    .mig-card .warn-ico {
+        color: var(--draft);
+        font-size: 20px;
+        line-height: 1;
+    }
+
+    .mig-card p {
+        color: var(--muted);
+        margin: 10px 0;
+        font-size: 12.5px;
+    }
+
+    .mig-card .models {
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 12px 0;
+        font-size: 12px;
+        font-family: var(--mono);
+    }
+
+        .mig-card .models .row {
+            display: flex;
+            gap: 8px;
+            padding: 2px 0;
+        }
+
+        .mig-card .models .k {
+            color: var(--faint);
+            width: 48px;
+        }
+
+        .mig-card .models .v {
+            color: var(--text);
+            word-break: break-word;
+        }
+
+            .mig-card .models .v.from {
+                color: var(--muted);
+            }
+
+            .mig-card .models .v.to {
+                color: var(--draft);
+            }
+
+.mig-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+    justify-content: flex-end;
+}
+
+    .mig-actions button {
+        padding: 8px 18px;
+        border-radius: 8px;
+        font-size: 12.5px;
+        cursor: pointer;
+        font-family: var(--font);
+    }
+
+    .mig-actions .deny {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--line);
+    }
+
+        .mig-actions .deny:hover {
+            background: var(--panel-2);
+            color: var(--text);
+        }
+
+    .mig-actions .accept {
+        background: transparent;
+        color: var(--draft);
+        border: 1px solid var(--draft);
+    }
+
+        .mig-actions .accept:hover {
+            background: var(--draft);
+            color: var(--bg);
+        }
+
+    .mig-actions .primary {
+        background: var(--accent);
+        color: #2c0a12;
+        border: 1px solid var(--accent);
+        font-weight: 600;
+    }
+
+        .mig-actions .primary:hover {
+            filter: brightness(1.08);
+        }
+
+.mig-bar-wrap {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    height: 16px;
+    overflow: hidden;
+    margin: 14px 0 6px;
+}
+
+.mig-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--draft), var(--accent));
+    transition: width 0.4s ease;
+}
+
+.mig-pct {
+    font-size: 11px;
+    color: var(--faint);
+    text-align: right;
+    font-family: var(--mono);
+}
+
+.mig-done-ico {
+    color: var(--short);
+    font-size: 22px;
+}
+
+.mig-err {
+    background: rgba(255,80,80,.08);
+    border: 1px solid #5a2c2c;
+    color: var(--danger);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    margin-top: 12px;
+}
+
+.mig-cmd {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 10px;
+    font-size: 11.5px;
+    color: var(--accent);
+    word-break: break-all;
+    font-family: var(--mono);
+}

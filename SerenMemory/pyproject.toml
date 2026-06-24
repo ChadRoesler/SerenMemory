@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "seren-memory"
 dynamic = ["version"]
-description = "Three-tier LLM memory with consolidation. The Halls of Memory."
+description = "Three-tier LLM memory with consolidation for Seren. The right brain - episodic, time-tiered, dreaming the durable out of the fleeting. The Halls of Memory."
 readme = "README.md"
 # Upper bound is the chromadb wall, not ours: SerenMemory itself is fine on
 # 3.13+, but chromadb's transitive deps don't build there yet (an lz4 wheel
@@ -33,6 +33,12 @@ dependencies = [
     # with a bare ImportError. Python<3.13 cap above already keeps torch's
     # 3.13 gap out of scope.
     "sentence-transformers>=3.0",
+    # The shared Seren core: token resolution, the version helper, and the
+    # viewer baseplate. Memory keeps its OWN combined auth middleware (the
+    # embedder safe-mode gate lives there + the {"error":...} 401 body is its
+    # contract), so it shares those, not the middleware. Pinned <1 - a MAJOR (an
+    # un-defaultable security change) is the only thing that ever forces a bump here.
+    "seren-meninges>=0.0.1,<1",
 ]
 
 [project.optional-dependencies]
@@ -69,11 +75,13 @@ seren-memory = "seren_memory.__main__:main"
 where = ["."]
 include = ["seren_memory*"]
 
-# Ship the viewer HTML inside the wheel. Without this, pip strips non-.py
-# files and GET /viewer 404s on an installed copy (works in dev checkout,
-# silently breaks once installed - the classic package-data gotcha).
+# Ship the viewer fragment files inside the wheel: the leaf bricks in
+# viewer/ui/ that render_from_dir snaps onto the SerenMeninges baseplate.
+# Without this, pip strips non-.py files and GET /viewer renders an empty
+# shell on an installed copy (works in dev checkout, silently breaks once
+# installed - the classic package-data gotcha).
 [tool.setuptools.package-data]
-seren_memory = ["viewer/*.html"]
+seren_memory = ["viewer/ui/*.html", "viewer/ui/*.css", "viewer/ui/*.js"]
 
 [tool.setuptools_scm]
 # .git is one level above pyproject.toml (repo root, not the SerenMemory subdir)
