@@ -26,8 +26,23 @@ class ServerConfig(BaseModel):
     port: int = 7420  # distinct from Seren's other ports; "memory" has no
                       # cute base-36 derivation, just a free port that's easy
                       # to remember and unlikely to collide.
-    # Optional bearer token. Empty = no auth (dev / trusted LAN).
-    bearer_token: str = ""
+    # Token POINTERS - config holds a pointer to the secret, not (ideally) the
+    # secret itself. Precedence inline > keyring > env (see resolve_bearer);
+    # empty across all three = no auth (dev / trusted LAN).
+    bearer_token: str = ""           # inline literal (escape hatch / tests)
+    bearer_token_env: str = ""       # NAME of an env var holding the token
+    bearer_token_keyring: str = ""   # "service/username" into the OS keychain
+
+    def resolve_bearer(self) -> str:
+        """The token this service requires of callers ("" == open), resolved
+        through SerenMeninges so every Seren service does it identically:
+        inline literal, OS keychain, or an env var - first present wins."""
+        from seren_meninges import resolve_token
+        return resolve_token(
+            inline=self.bearer_token or None,
+            keyring_ref=self.bearer_token_keyring or None,
+            env_var=self.bearer_token_env or None,
+        )
 
 
 class StorageConfig(BaseModel):
@@ -147,6 +162,10 @@ def _apply_env_overrides(cfg: MemoryConfig) -> MemoryConfig:
         cfg.server.host = v
     if v := env.get("SEREN_MEMORY_BEARER_TOKEN"):
         cfg.server.bearer_token = v
+    if v := env.get("SEREN_MEMORY_BEARER_TOKEN_ENV"):
+        cfg.server.bearer_token_env = v
+    if v := env.get("SEREN_MEMORY_BEARER_TOKEN_KEYRING"):
+        cfg.server.bearer_token_keyring = v
     if v := env.get("SEREN_MEMORY_PERSIST_DIR"):
         cfg.storage.persist_dir = v
     if v := env.get("SEREN_MEMORY_MODEL_URL"):

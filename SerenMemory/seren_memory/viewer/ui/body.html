@@ -1,0 +1,29 @@
+<!-- Memory is a single-canvas UI, not panel-per-tab: one #entries list that
+     swaps content as switchTab() loads each Hall, plus the search bar (Search
+     tab) and #overview-section (Overview tab). Wrapped in .halls for the page
+     padding the shell's .view would normally give (this content isn't a .view).
+     The connection modal is gone - the shell's 🔑 token modal + same-origin
+     api() replace it. The migration overlay is injected by scripts.js. -->
+<div class="halls">
+    <div id="error-slot"></div>
+
+    <div class="searchbar" id="searchbar" style="display:none;">
+        <input type="text" id="search-query" placeholder="semantic query across all tiers…" />
+        <label><input type="checkbox" id="inc-short" checked /> short</label>
+        <label><input type="checkbox" id="inc-near" checked /> near</label>
+        <label><input type="checkbox" id="inc-long" checked /> long</label>
+        <label>n=<input type="number" id="search-n" value="10" min="1" max="50" style="width:62px;" /></label>
+        <button class="btn" id="do-search">search</button>
+    </div>
+
+    <div class="toolbar" id="list-toolbar">
+        <span class="hint" id="list-hint"></span>
+        <div class="spacer"></div>
+        <label class="hint" id="extra-toggle-wrap" style="display:none;">
+            <input type="checkbox" id="extra-toggle" /> <span id="extra-label"></span>
+        </label>
+    </div>
+
+    <div class="entries" id="entries"></div>
+    <div id="overview-section" style="display:none;"></div>
+</div>

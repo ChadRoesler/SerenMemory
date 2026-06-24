@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager, AsyncExitStack
 from typing import Optional
 
 from fastapi import FastAPI, Body, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
 from .config import MemoryConfig, load_config
 from .collections import MemoryStore
@@ -51,20 +51,15 @@ from .routes import near as near_routes
 from .routes import long as long_routes
 from .routes import search as search_routes
 
+from seren_meninges import get_version
+from seren_meninges.viewer import render_from_dir
 
-# Single source of truth for the version we report. Prefer the actually-
-# installed wheel's metadata (the setuptools-scm value baked at build time);
-# fall back to the package __version__ for an editable/dev checkout where the
-# dist metadata may be absent or stale. This kills the old drift where app.py
-# hardcoded a literal that the release process never touched.
-try:
-    from importlib.metadata import version as _pkg_version, PackageNotFoundError
-    try:
-        APP_VERSION = _pkg_version("seren-memory")
-    except PackageNotFoundError:
-        from . import __version__ as APP_VERSION
-except Exception:  # noqa: BLE001 - never let version lookup break startup
-    APP_VERSION = "0+unknown"
+# Reported version via the shared helper: the installed wheel's setuptools-scm
+# metadata, falling back to the package __version__ for an editable/dev checkout
+# where dist metadata may be absent. get_version never raises - a bad lookup
+# yields the fallback, not a startup crash.
+from . import __version__ as _fallback_version
+APP_VERSION = get_version("seren-memory", fallback=_fallback_version)
 
 
 def create_app(config: MemoryConfig | None = None, embedding_function=None,
@@ -72,6 +67,10 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                embedder_mismatch: dict | None = None,
                config_path: str | None = None) -> FastAPI:
     cfg = config or load_config()
+    # Resolve the inbound bearer ONCE at startup (resolve_bearer may hit the OS
+    # keyring; per-request would be slow). Shared resolver, same as the rest of
+    # the family; the combined middleware below reads this cached value.
+    bearer = cfg.server.resolve_bearer()
     # Safe-mode: set when the startup guard found the store was built with a
     # different embedder than the config asks for. While set, memory read/write
     # routes are blocked (they'd touch an incompatible vector space); only the
@@ -199,7 +198,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
 
     app = FastAPI(
         title="SerenMemory",
-        description="Three-tier LLM memory with consolidation. The Halls of Memory.",
+        description="Three-tier LLM memory with consolidation for Seren. The right brain - episodic, time-tiered, dreaming the durable out of the fleeting. The Halls of Memory.",
         version=APP_VERSION,
         lifespan=lifespan,
     )
@@ -224,7 +223,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                      "reason": "embedder_mismatch",
                      "detail": "store embedder changed; migrate or revert via /viewer"},
                     status_code=503)
-        token = cfg.server.bearer_token
+        token = bearer
         if token:
             # /viewer serves the HTML shell - it must be public so the page
             # loads even when a token is set. The viewer's own JS fetch calls
@@ -279,22 +278,20 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     # are same-origin, so the browser doesn't block them.
     @app.get("/viewer")
     async def viewer():
-        # halls.html ships INSIDE the package (seren_memory/viewer/halls.html)
-        # so it travels with the wheel - Path(__file__).parent is the package
-        # dir whether running from a dev checkout or an installed site-packages.
+        # The Halls - coral UI, per-tier palette, the draft-review surface and
+        # the embedder safe-mode migration modal. Snaps the leaf fragment files
+        # in viewer/ui/ onto the shared SerenMeninges baseplate. Public route
+        # (the HTML needs no auth); its API calls carry the token. /viewer stays
+        # reachable in safe-mode so the migration modal can drive the fix.
         from pathlib import Path
-        pkg_dir = Path(__file__).resolve().parent
-        candidates = [
-            pkg_dir / "viewer" / "halls.html",          # in-package (installed + dev)
-            pkg_dir.parent / "viewer" / "halls.html",    # repo-root (older dev layout)
-        ]
-        html_path = next((p for p in candidates if p.is_file()), None)
-        if html_path is None:
-            return JSONResponse(
-                {"error": "viewer not found",
-                 "hint": "halls.html missing from the package; reinstall or grab it from the repo"},
-                status_code=404)
-        return FileResponse(html_path, media_type="text/html")
+        html = render_from_dir(
+            Path(__file__).resolve().parent / "viewer" / "ui",
+            title="SerenMemory",
+            brand="Seren<b>Memory</b> · Halls of Memory",
+            subtitle=f"v{APP_VERSION} · episodic, consolidated, gated",
+            accent="#ff6e8a",
+        )
+        return HTMLResponse(html)
 
     # -- Consolidator operational status --
     @app.get("/consolidator/status")

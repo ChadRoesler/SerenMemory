@@ -62,6 +62,12 @@ MIGRATED_COLLECTIONS = (
 )
 
 
+# chroma's built-in default embedder. An empty/unset config (None / "") selects
+# it, AND it can also be named explicitly - so "", None, and this literal all
+# denote the SAME embedder and must never read as a mismatch against each other.
+DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
+
+
 # ── embedding-function resolution ───────────────────────────────────────────
 
 def resolve_embedding_function(model_name: Optional[str], device: str = "cpu") -> Any:
@@ -81,7 +87,7 @@ def resolve_embedding_function(model_name: Optional[str], device: str = "cpu") -
 
 def model_label(model_name: Optional[str]) -> str:
     """Human-readable label for a model (for logs + the migration modal)."""
-    return model_name if model_name else "all-MiniLM-L6-v2 (chroma default)"
+    return model_name if model_name else f"{DEFAULT_MODEL_NAME} (chroma default)"
 
 
 # ── the stamp (sidecar JSON in the persist_dir) ─────────────────────────────
@@ -117,20 +123,42 @@ def write_stamp(persist_dir: Path, model_name: Optional[str]) -> None:
 
 # ── the guard ───────────────────────────────────────────────────────────────
 
+def _canonical_model(model_name: Optional[str]) -> str:
+    """Collapse the ways of naming ONE embedder to a single comparison key.
+
+    Empty/None means "use chroma's default"; the literal default name means the
+    same embedder. Both canonicalize to "" so an empty config and an explicit
+    'all-MiniLM-L6-v2' stamp (or the reverse) compare EQUAL and never trip the
+    guard. A genuinely different model returns its own name and still trips it.
+
+    (Footnote, filed: "" resolves to chroma's ONNX-quantized MiniLM EF while the
+    explicit name builds the sentence-transformers MiniLM EF - same model, same
+    384 dims, vectors near-identical bar quantization. Treating them as one is
+    correct for THIS guard, whose job is catching INCOMPATIBLE spaces, not
+    distinguishing two builds of the same compatible one.)
+    """
+    m = (model_name or "").strip()
+    return "" if m == DEFAULT_MODEL_NAME else m
+
+
 def check_store_state(stamp: Optional[dict], configured_model: Optional[str],
                       has_data: bool) -> str:
     """Return 'fresh' | 'match' | 'mismatch'.
 
     fresh    - no stamp, or stamped but empty: caller stamps + proceeds.
-    match    - stamp's model == configured model: proceed normally.
+    match    - stamp's model == configured model (after canonicalizing the
+               default): proceed normally.
     mismatch - stamped, configured differs, AND data exists: the dangerous
                case. Caller boots safe-mode + surfaces the migration modal.
+
+    Comparison goes through _canonical_model so "" / None / the explicit default
+    name are all the SAME embedder - an empty config against a store stamped
+    'all-MiniLM-L6-v2' (or vice-versa) is a match, not a false migration prompt.
     """
-    cfg_norm = configured_model or ""
     if stamp is None:
         return "fresh"
     stamped = stamp.get("embedding_model", "")
-    if stamped == cfg_norm:
+    if _canonical_model(stamped) == _canonical_model(configured_model):
         return "match"
     if not has_data:
         return "fresh"

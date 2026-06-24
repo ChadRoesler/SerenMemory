@@ -137,6 +137,25 @@ def test_guard_default_match():
     assert check_store_state({"embedding_model": ""}, None, has_data=True) == "match"
 
 
+def test_guard_explicit_default_name_equals_empty():
+    # The screenshot bug: a store stamped with the EXPLICIT default name vs an
+    # empty/None config (or the reverse) is the SAME embedder - a match, not a
+    # false migration prompt. "", None, and "all-MiniLM-L6-v2" all canonicalize.
+    assert check_store_state(
+        {"embedding_model": "all-MiniLM-L6-v2"}, None, has_data=True) == "match"
+    assert check_store_state(
+        {"embedding_model": "all-MiniLM-L6-v2"}, "", has_data=True) == "match"
+    assert check_store_state(
+        {"embedding_model": ""}, "all-MiniLM-L6-v2", has_data=True) == "match"
+    # whitespace around the default name still canonicalizes
+    assert check_store_state(
+        {"embedding_model": "  all-MiniLM-L6-v2  "}, None, has_data=True) == "match"
+    # but a genuinely different model still trips the guard
+    assert check_store_state(
+        {"embedding_model": "all-MiniLM-L6-v2"}, "all-mpnet-base-v2",
+        has_data=True) == "mismatch"
+
+
 def test_guard_mismatch_with_data():
     assert check_store_state({"embedding_model": "a"}, "b", has_data=True) == "mismatch"
 

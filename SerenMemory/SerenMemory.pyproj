@@ -69,6 +69,7 @@
     <Folder Include="seren_memory\routes\" />
     <Folder Include="seren_memory\consolidator\" />
     <Folder Include="seren_memory\viewer\" />
+    <Folder Include="seren_memory\viewer\ui\" />
     <Folder Include="tests\" />
     <Folder Include="tests\__pycache__\" />
   </ItemGroup>
@@ -81,7 +82,11 @@
     <Content Include="seren_memory\mcp\__pycache__\server.cpython-311.pyc" />
     <Content Include="seren_memory\mcp\__pycache__\tools.cpython-311.pyc" />
     <Content Include="seren_memory\mcp\__pycache__\__init__.cpython-311.pyc" />
-    <Content Include="seren_memory\viewer\halls.html" />
+    <Content Include="seren_memory\viewer\ui\body.html" />
+    <Content Include="seren_memory\viewer\ui\header_aside.html" />
+    <Content Include="seren_memory\viewer\ui\scripts.js" />
+    <Content Include="seren_memory\viewer\ui\styles.css" />
+    <Content Include="seren_memory\viewer\ui\tabs.html" />
     <Content Include="tests\__pycache__\test_smoke.cpython-311-pytest-9.0.3.pyc" />
     <Content Include="tests\__pycache__\__init__.cpython-311.pyc" />
   </ItemGroup>

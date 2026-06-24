@@ -1,5 +1,5 @@
 """
-SerenMemory - three-tier LLM memory with consolidation.
+SerenMemory - the right brain. Three-tier LLM memory with consolidation.
 
 The Halls of Memory: ShortTerm (working), NearTerm (open loops), LongTerm
 (consolidated). A small "consolidator" model does the dream-work of
@@ -10,16 +10,13 @@ a couple of values and you've got a memory system that matters.
 """
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
-
-# Version flows from the git tag via setuptools-scm (written to _version.py
-# at build time and recorded in the installed package's metadata). No manual
-# bump, no sed step. The fallback only fires in a bare source checkout that
-# was never installed; do `pip install -e .` to resolve it.
+# Version flows from the git tag via setuptools-scm (written to _version.py at
+# build time, read here). Fallback only fires in a bare source checkout that was
+# never built. Mirrors SerenLoci/SCC so the family exposes __version__ alike.
 try:
-    __version__: str = _pkg_version("seren-memory")
-except PackageNotFoundError:
-    __version__ = "0.0.0.dev"
+    from ._version import version as __version__
+except Exception:  # noqa: BLE001 - source checkout without a build
+    __version__ = "0.0.0+unknown"
 
 from .app import create_app  # noqa: F401,E402
 from .config import load_config, MemoryConfig  # noqa: F401,E402
