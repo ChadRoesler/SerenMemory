@@ -38,7 +38,7 @@ dependencies = [
     # embedder safe-mode gate lives there + the {"error":...} 401 body is its
     # contract), so it shares those, not the middleware. Pinned <1 - a MAJOR (an
     # un-defaultable security change) is the only thing that ever forces a bump here.
-    "seren-meninges>=0.0.1,<1",
+    "seren-meninges>=1.0.0,<2",
 ]
 
 [project.optional-dependencies]
