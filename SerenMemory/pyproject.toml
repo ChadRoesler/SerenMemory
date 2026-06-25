@@ -33,12 +33,17 @@ dependencies = [
     # with a bare ImportError. Python<3.13 cap above already keeps torch's
     # 3.13 gap out of scope.
     "sentence-transformers>=3.0",
-    # The shared Seren core: token resolution, the version helper, and the
-    # viewer baseplate. Memory keeps its OWN combined auth middleware (the
-    # embedder safe-mode gate lives there + the {"error":...} 401 body is its
-    # contract), so it shares those, not the middleware. Pinned <1 - a MAJOR (an
-    # un-defaultable security change) is the only thing that ever forces a bump here.
+    # The shared Seren core: token resolution, the version helper, the viewer
+    # baseplate, AND now the bearer-auth middleware - Memory was folded into the
+    # family's shared auth (its 401 body is now the family's {"detail":...}).
+    # The ONE Memory-specific piece that stays local is the embedder safe-mode
+    # 503 gate, its own middleware mounted outside bearer. Pinned <1 - a MAJOR
+    # (an un-defaultable security change) is the only thing that forces a bump.
     "seren-meninges>=1.0.0,<2",
+    # Shared request logging - one copy across the family (SerenSinew). Mounted
+    # outermost (before auth) so even safe-mode 503s and 401s get logged.
+    # -> memory-requests.log.
+    "seren-sinew>=1.0.0,<2",
 ]
 
 [project.optional-dependencies]

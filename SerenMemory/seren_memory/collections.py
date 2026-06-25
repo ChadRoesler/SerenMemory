@@ -79,6 +79,25 @@ def _maybe_json(v: Any) -> Any:
     return v
 
 
+# How many chars of a memory's content feed its RETRIEVAL KEY (the thing we
+# embed, NOT the content we return). A long blob embeds to a muddy centroid
+# vector that out-cosines sharp one-line facts on fact-queries; a topic-anchored
+# head embeds sharp. Tune with brain_eval.py (BrainEval/) once the cluster's
+# back — same "let the bytes pick the value" loop we used for fusion weights.
+# <=0 disables (embed full content; legacy behavior). See BrainEval/distill-short-term.md.
+_RETRIEVAL_KEY_MAX_CHARS = 512
+
+
+def _retrieval_text(content: str, topic: Optional[str],
+                    cap: int = _RETRIEVAL_KEY_MAX_CHARS) -> str:
+    """The string we EMBED for a memory — deliberately NOT the content we
+    return. documents=[full content] still holds the whole memory; only the
+    MATCH key is distilled. Topic-prefixed so the vector anchors to what the
+    memory is *about*, not just its opening words."""
+    body = content if cap <= 0 else content[:cap]
+    return f"{topic}. {body}" if topic else body
+
+
 class MemoryStore:
     """Owns the chroma client and the tier collections."""
 
@@ -175,7 +194,18 @@ class MemoryStore:
             "pinned": entry.pinned,
             **entry.extra,
         })
-        self.short.add(documents=[entry.content], metadatas=[meta], ids=[entry.id])
+        # Embed a DISTILLED key, not the full blob (see _retrieval_text): the
+        # full content still rides in documents[] so recall returns the whole
+        # memory — only the MATCH vector is sharpened. If precompute fails for
+        # any reason, degrade gracefully to chroma embedding the full content
+        # (legacy behavior) so a hiccup never loses the write.
+        try:
+            key = _retrieval_text(entry.content, entry.topic)
+            vec = self.short._embedding_function([key])[0]
+            self.short.add(documents=[entry.content], embeddings=[vec],
+                           metadatas=[meta], ids=[entry.id])
+        except Exception:  # noqa: BLE001 - a precompute hiccup must not lose the write
+            self.short.add(documents=[entry.content], metadatas=[meta], ids=[entry.id])
         return entry
 
     def get_short_all(self, limit: Optional[int] = None) -> list[dict[str, Any]]:
