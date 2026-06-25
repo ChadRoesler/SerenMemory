@@ -34,7 +34,6 @@ ENDPOINTS:
 from __future__ import annotations
 
 import asyncio
-import hmac
 import time
 from contextlib import asynccontextmanager, AsyncExitStack
 from typing import Optional
@@ -52,7 +51,9 @@ from .routes import long as long_routes
 from .routes import search as search_routes
 
 from seren_meninges import get_version
+from seren_meninges.auth import bearer_auth_middleware
 from seren_meninges.viewer import render_from_dir
+from seren_sinew.request_log import RequestLoggingMiddleware
 
 # Reported version via the shared helper: the installed wheel's setuptools-scm
 # metadata, falling back to the package __version__ for an editable/dev checkout
@@ -60,6 +61,34 @@ from seren_meninges.viewer import render_from_dir
 # yields the fallback, not a startup crash.
 from . import __version__ as _fallback_version
 APP_VERSION = get_version("seren-memory", fallback=_fallback_version)
+
+
+def safe_mode_middleware(safe_mode_state: dict, allowed_paths: tuple):
+    """Memory-only middleware: the embedder-mismatch 503 gate.
+
+    When the store's vector space doesn't match the configured model,
+    safe_mode_state["active"] is True and every path OUTSIDE allowed_paths gets a
+    503 + the marker the Halls migration modal keys off. This is the one piece
+    that can't fold into the shared bearer auth - it's Memory's own concern - so
+    it's its own middleware, mounted OUTSIDE bearer (a safe-mode 503 should win
+    over a 401: "we're migrating", not "wrong token", when the store is gated).
+    Returns a class for app.add_middleware(...), mirroring
+    seren_meninges.auth.bearer_auth_middleware.
+    """
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+
+    class _SafeMode(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            if safe_mode_state["active"] and request.url.path not in allowed_paths:
+                return JSONResponse(
+                    {"error": "safe_mode",
+                     "reason": "embedder_mismatch",
+                     "detail": "store embedder changed; migrate or revert via /viewer"},
+                    status_code=503)
+            return await call_next(request)
+
+    return _SafeMode
 
 
 def create_app(config: MemoryConfig | None = None, embedding_function=None,
@@ -203,43 +232,29 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         lifespan=lifespan,
     )
 
-    # -- Optional bearer auth --
-    # Same trusted-LAN posture as the rest of Seren: if a token is set,
-    # enforce it on everything except / and /health. If empty, no auth.
-    @app.middleware("http")
-    async def bearer_auth(request: Request, call_next):
-        # Safe-mode gate FIRST: if the embedder-mismatch guard tripped, only
-        # the UI shell, health, and migration-control endpoints are reachable.
-        # Everything that would read/write memory in the wrong vector space is
-        # blocked with 503 + a marker the viewer uses to raise the modal.
-        if _safe_mode["active"]:
-            allowed = request.url.path in (
-                "/", "/health", "/viewer",
-                "/migrate/status", "/migrate/accept", "/migrate/deny",
-                "/migrate/restart")
-            if not allowed:
-                return JSONResponse(
-                    {"error": "safe_mode",
-                     "reason": "embedder_mismatch",
-                     "detail": "store embedder changed; migrate or revert via /viewer"},
-                    status_code=503)
-        token = bearer
-        if token:
-            # /viewer serves the HTML shell - it must be public so the page
-            # loads even when a token is set. The viewer's own JS fetch calls
-            # hit the API routes (/short, /long, /drafts, etc.) which ARE
-            # protected, so the data is still gated behind the token.
-            public = request.url.path in ("/", "/health", "/viewer")
-            if not public:
-                auth = request.headers.get("authorization", "")
-                # Constant-time compare so the 401 path doesn't leak how many
-                # leading bytes of the token matched (stdlib hmac, same as the
-                # agent's auth). Encode to bytes so non-ASCII can't raise.
-                expected = f"Bearer {token}"
-                if not hmac.compare_digest(auth.encode("utf-8"),
-                                           expected.encode("utf-8")):
-                    return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return await call_next(request)
+    # -- Auth + safe-mode + logging stack --
+    # Stack, outer->inner: logging -> safe-mode -> bearer -> routes. Register
+    # inner-first (Starlette mounts LIFO): bearer, then safe-mode, then logging,
+    # so a safe-mode 503 fires before bearer can 401, and logging wraps it all.
+    #
+    # Bearer is now FOLDED into the family - the constant-time compare + public-
+    # paths policy live in SerenMeninges so all four services enforce auth
+    # identically (a fix lands everywhere). The Meninges default public set is
+    # exactly Memory's ({"/", "/health", "/viewer"}), so no override is needed.
+    # The ONE Memory-specific concern - the embedder safe-mode 503 gate - can't
+    # fold in, so it's its own middleware mounted OUTSIDE bearer (so "we're
+    # migrating" / 503 wins over "wrong token" / 401 when the store is gated).
+    _SAFE_MODE_ALLOWED = (
+        "/", "/health", "/viewer",
+        "/migrate/status", "/migrate/accept", "/migrate/deny", "/migrate/restart",
+    )
+    app.add_middleware(bearer_auth_middleware(bearer))                        # inner
+    app.add_middleware(safe_mode_middleware(_safe_mode, _SAFE_MODE_ALLOWED))  # middle
+    app.add_middleware(                                                       # outer
+        RequestLoggingMiddleware,
+        service_name="seren-memory",
+        env_prefix="SEREN_MEMORY",
+    )
 
     # -- Info routes --
     @app.get("/")

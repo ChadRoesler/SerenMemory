@@ -39,7 +39,7 @@ def test_public_routes_no_token(authed_client):
 def test_protected_route_no_token_is_401(authed_client):
     r = authed_client.get("/short")
     assert r.status_code == 401
-    assert r.json()["error"] == "unauthorized"
+    assert r.json()["detail"] == "unauthorized"
 
 
 def test_protected_route_wrong_token_is_401(authed_client):
