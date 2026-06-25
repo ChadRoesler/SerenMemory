@@ -46,11 +46,10 @@ function relAge(ms) {
 // Rendering
 // ----------------------------------------------------------------------
 function renderEmbedder(model) {
-    const pill = $('embedder-pill');
-    if (!pill) return;
-    pill.textContent = model || '';
-    pill.title = model || '';
-    pill.style.display = model ? '' : 'none';
+    const b = document.getElementById("embedderBadge");
+    if (!b) return;
+    b.textContent = "embedder: " + (model || '');
+    b.className = "head-pill" + (model === '' ? "" : model === "all-MiniLM-L6-v2" ? "" : " hot");
 }
 
 function loadOverview(root) {
