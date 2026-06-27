@@ -366,12 +366,38 @@ def migrate_store(persist_dir: Path,
     except Exception as e:  # noqa: BLE001
         # RESTORE: nuke the (possibly half-rebuilt) live dir, copy the backup
         # back. The operator ends exactly where they started.
+        #
+        # FIRST release any chroma handles we still hold. On a mid-rebuild crash
+        # the PersistentClient (and the collection we were mid-add() on) are
+        # still open against the LIVE dir; on Windows an open .bin/.sqlite makes
+        # shutil.rmtree fail with WinError 32 ("file in use"), so the restore -
+        # the whole data-safety net - can't fire. Linux unlinks open files, which
+        # is why this only bit on Windows. The success path already drops the
+        # client before its verify reopen; the failure path must do the same.
+        # Null every chroma ref we might hold (the client + any collection that
+        # transitively keeps it alive), gc, and give the OS a beat to release.
+        client = None
+        new_col = None
+        col = None
+        vc = None
+        scol = None
+        gc.collect()
+        time.sleep(0.2)
+
         restore_note = "restored from backup; live intact"
-        try:
-            if live.exists():
-                shutil.rmtree(live)
-            shutil.copytree(backup, live)
-        except Exception as restore_err:  # noqa: BLE001
+        restore_err = None
+        for _attempt in range(5):
+            try:
+                if live.exists():
+                    shutil.rmtree(live)
+                shutil.copytree(backup, live)
+                restore_err = None
+                break
+            except Exception as err:  # noqa: BLE001 - retry through Windows handle-release lag
+                restore_err = err
+                gc.collect()
+                time.sleep(0.3 * (_attempt + 1))
+        if restore_err is not None:
             progress.error = (
                 f"MIGRATION FAILED ({type(e).__name__}: {e}) AND RESTORE FAILED "
                 f"({restore_err}); the untouched backup is at {backup}")

@@ -18,6 +18,7 @@ ENDPOINTS:
     GET  /long                  - list                     (read-open)
     POST /long/{id}/forget      - flag for consolidator    (the Lacuna gate)
     POST /search                - unified ranked recall
+    POST /by_topic              - association recall (exact topic-tag match, not similarity)
     GET  /consolidator/status   - last run, recent runs, counts, config
     POST /consolidate/run       - trigger consolidation now (manual / external mode)
     POST /consolidate/wake      - restart the background loop if it died (thread mode)
