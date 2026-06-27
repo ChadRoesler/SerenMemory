@@ -79,6 +79,17 @@ def _maybe_json(v: Any) -> Any:
     return v
 
 
+def _split_topics(topic: Optional[str]) -> list[str]:
+    """Split a comma-joined topic string into normalized lowercase tags.
+    Topics are stored as ONE comma-joined metadata string ("a, b, c" - the
+    `remember` tool takes comma-separated tags); this turns that back into the
+    individual tags an exact match works on. Used by query_by_topic - the
+    read-side use of the same tags the consolidator clusters on."""
+    if not topic:
+        return []
+    return [t.strip().lower() for t in topic.split(",") if t.strip()]
+
+
 # How many chars of a memory's content feed its RETRIEVAL KEY (the thing we
 # embed, NOT the content we return). A long blob embeds to a muddy centroid
 # vector that out-cosines sharp one-line facts on fact-queries; a topic-anchored
@@ -857,6 +868,81 @@ class MemoryStore:
                 "distance": dist,
             })
         return hits
+
+    def query_by_topic(self, topics: list[str], n: int, *,
+                       include_short: bool = True, include_near: bool = True,
+                       include_long: bool = True, include_superseded: bool = False,
+                       exclude_ids: Optional[list[str]] = None) -> list[dict[str, Any]]:
+        """Retrieve entries TAGGED with any of `topics`, by exact tag match -
+        the ASSOCIATION edge, not vector similarity. The read-side use of the
+        topic tags the consolidator already clusters on: it surfaces an entry
+        that shares a topic with what you're asking about even when its WORDING
+        (e.g. a scar phrased in failure-language) put it far away in vector
+        space - exactly the entry similarity search misses.
+
+        Mechanism (deliberately NOT a vector query): chroma's metadata `where`
+        can't match a single tag out of a comma-joined topic string, so this
+        does the cheap thing the rest of this module already does - a .get()
+        (pure SQLite, no embedder) per tier, then a Python tag-intersection.
+        For a Nano-floor personal store the counts are small enough a linear
+        scan is the right tool (same call shape as get_short_all and the
+        brute-force query fallback).
+
+        Ranking is by ASSOCIATION STRENGTH, not distance: more shared tags
+        first (an entry tagged with two of your topics is a stronger edge than
+        one sharing a single tag), then recency. There is no similarity score
+        here by design - an edge earns its place by being tagged together, full
+        stop. Each hit carries matched_topics + overlap so the caller (and the
+        model) can see WHY it surfaced.
+
+        exclude_ids drops entries the caller already has, so an edge join after
+        a vector search returns only genuinely NEW context, not duplicates.
+        Tier/superseded/completed filtering mirrors /search exactly.
+        """
+        wanted = {t.strip().lower() for t in topics if t and t.strip()}
+        if not wanted:
+            return []
+        exclude = set(exclude_ids or ())
+        tiers = []
+        if include_short:
+            tiers.append(("short", self.short))
+        if include_near:
+            tiers.append(("near", self.near))
+        if include_long:
+            tiers.append(("long", self.long))
+
+        out: list[dict[str, Any]] = []
+        for tier, col in tiers:
+            for row in _zip_get(col.get(include=["documents", "metadatas"]), None):
+                if row["id"] in exclude:
+                    continue
+                meta = row["metadata"]
+                # Same tier filters as /search: skip superseded long-term
+                # (unless asked) and completed near-term (history, not active).
+                if tier == "long" and not include_superseded and meta.get("superseded_by"):
+                    continue
+                if tier == "near" and meta.get("completed"):
+                    continue
+                overlap = wanted & set(_split_topics(meta.get("topic")))
+                if not overlap:
+                    continue
+                out.append({
+                    "id": row["id"],
+                    "content": row["content"],
+                    "metadata": meta,
+                    "tier": tier,
+                    "matched_topics": sorted(overlap),
+                    "overlap": len(overlap),
+                })
+
+        # Strongest association first (most shared tags), then most recent.
+        def _recency(r: dict[str, Any]) -> float:
+            m = r["metadata"]
+            return float(m.get("ts") or m.get("created_at")
+                         or m.get("last_confirmed") or 0)
+
+        out.sort(key=lambda r: (r["overlap"], _recency(r)), reverse=True)
+        return out[:n]
 
     def counts(self) -> dict[str, int]:
         return {

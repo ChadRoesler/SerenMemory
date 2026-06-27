@@ -302,6 +302,42 @@ class SearchResponse(BaseModel):
     hits: list[SearchHit]
     searched_tiers: list[str]
 
+
+# -------------------------------------------------------------------------
+#  Topic recall - the ASSOCIATION edge. Retrieve entries TAGGED with a topic,
+#  by exact tag match, NOT vector similarity. Surfaces the entry that shares a
+#  topic with what you're asking about even when its wording put it far away in
+#  vector space (the scar phrased in failure-language). See
+#  MemoryStore.query_by_topic.
+# -------------------------------------------------------------------------
+class TopicSearchRequest(BaseModel):
+    topics: list[str] = Field(
+        ..., description="Tags to match (any-of). Exact tag match, case-insensitive.")
+    n_results: int = Field(default=5, ge=1, le=50)
+    include_short: bool = True
+    include_near: bool = True
+    include_long: bool = True
+    include_superseded: bool = False
+    # Entry ids to omit - e.g. the vector hits a caller already has, so an edge
+    # join after a /search returns only genuinely NEW context, not duplicates.
+    exclude_ids: list[str] = Field(default_factory=list)
+
+
+class TopicHit(BaseModel):
+    tier: str                      # "short" | "near" | "long"
+    content: str
+    topic: Optional[str]
+    matched_topics: list[str]      # which requested tags this entry carries
+    overlap: int                   # how many requested tags matched (association strength)
+    id: str
+    metadata: dict[str, Any]
+
+
+class TopicSearchResponse(BaseModel):
+    topics: list[str]
+    hits: list[TopicHit]
+    searched_tiers: list[str]
+
 # -------------------------------------------------------------------------
 #  Consolidator runs - operational record of each dream-cycle.
 #
