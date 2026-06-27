@@ -100,6 +100,20 @@ class MemoryToolImpl:
         anything you might want to recall later in this session or have
         the consolidator promote to long-term if it recurs.
 
+        GRANULARITY IS THE WHOLE GAME. Write ONE single-subject episode
+        per call - one fact, one decision, one moment - and multi-topic
+        TAG it via `topic` (comma-separated). Do NOT dump session-summary
+        blobs: synthesising many topics into one summary is the
+        CONSOLIDATOR's job, and that summary belongs in long-term, where
+        summary-grain lives.
+
+        Why this is a rule, not a style note: a blob's embedding is the
+        average of its topics - a mushy centroid about nothing, that
+        every query half-matches and nothing retrieves cleanly. Proven
+        live on this store - an atomic single-subject entry retrieved at
+        0.83 with a clean gap; the identical content buried in a
+        ~1500-char blob smeared to the 0.53 floor. Atomic in, blob out.
+
         For exact-phrasing-matters facts, follow up with
         preserve_memory_verbatim on the returned id.
         """
@@ -194,6 +208,27 @@ class MemoryToolImpl:
             ],
         }
 
+    def get_memory(self, memory_id: str) -> dict:
+        """Hydrate ONE memory by its id - the dereference for a pointer
+        `recall` handed back. recall returns an id alongside every hit; pass
+        it here to pull the WHOLE entry (full content + metadata + which tier
+        it lives in) when an idea needs a closer look or you want the context
+        around it, instead of re-searching and hoping it ranks again. This is
+        the right-brain twin of Loci's get_fact: exact lookup by handle, not
+        ranked similarity. Returns {ok: false} if no recall tier holds that id.
+        """
+        row = self.store.get_by_id(memory_id)
+        if row is None:
+            return {"ok": False, "error": f"no memory '{memory_id}' in short/near/long"}
+        return {
+            "ok": True,
+            "id": row["id"],
+            "tier": row["tier"],
+            "content": row["content"],
+            "topic": row["metadata"].get("topic"),
+            "metadata": row["metadata"],
+        }
+
     # -- Open loops (near-term) -------------------------------------------
     def remember_for_later(self, intent: str,
                            trigger_type: str = "always",
@@ -202,6 +237,12 @@ class MemoryToolImpl:
                            topic: Optional[str] = None) -> dict:
         """Write a future-tense intent - 'bring this up later', 'do X
         next time', 'check Y after Z'. Lives until completed or expired.
+
+        Same granularity discipline as `remember`: ONE intent per call,
+        multi-topic tagged - never a bundled to-do list. A single-subject
+        intent fires cleanly when its trigger comes round; a blob of five
+        loosely-related intents embeds to mush and surfaces for none of
+        them. One loop, one entry.
 
         trigger_type: 'time' (trigger_value = unix ts after which it's due),
         'event' (trigger_value = match string like 'mentions:balatro'), or
@@ -520,6 +561,7 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig,
     mcp.tool()(impl.remember)
     mcp.tool()(impl.recall)
     mcp.tool()(impl.what_do_you_remember)
+    mcp.tool()(impl.get_memory)
 
     # Open loops
     mcp.tool()(impl.remember_for_later)

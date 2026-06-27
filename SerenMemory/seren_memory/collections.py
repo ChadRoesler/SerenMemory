@@ -318,7 +318,22 @@ class MemoryStore:
             "source": entry.source.value,
             **entry.extra,
         })
-        self.long.add(documents=[entry.content], metadatas=[meta], ids=[entry.id])
+        # Distill the embed key, same as add_short (see _retrieval_text): embed
+        # a topic-anchored head, keep documents=[full content] for return. A
+        # long-term entry is a consolidated synthesis - already fairly tight -
+        # but embedding the WHOLE synthesis still smears its match vector vs a
+        # sharp query; the distilled key keeps it crisp and stops it out-
+        # cosining one-line Loci facts on fact-queries. Degrade gracefully to
+        # full-content embedding if precompute fails so a hiccup never loses
+        # the write. (near-term is left full: intents are already one-liners,
+        # there's nothing to distill.)
+        try:
+            key = _retrieval_text(entry.content, entry.topic)
+            vec = self.long._embedding_function([key])[0]
+            self.long.add(documents=[entry.content], embeddings=[vec],
+                          metadatas=[meta], ids=[entry.id])
+        except Exception:  # noqa: BLE001 - a precompute hiccup must not lose the write
+            self.long.add(documents=[entry.content], metadatas=[meta], ids=[entry.id])
         return entry
 
     def supersede_long(self, old_id: str, new_id: str) -> bool:
@@ -349,6 +364,33 @@ class MemoryStore:
     def get_long_all(self) -> list[dict[str, Any]]:
         res = self.long.get(include=["documents", "metadatas"])
         return _zip_get(res, None)
+
+    # ------------------------------------------------------------------
+    #  Cross-tier exact lookup - the dereference for a /search pointer
+    # ------------------------------------------------------------------
+    def get_by_id(self, entry_id: str) -> Optional[dict[str, Any]]:
+        """Hydrate ONE entry by id across the recall tiers (short/near/long).
+
+        The dereference path for a pointer handed back by /search: recall
+        returns an id alongside each hit; this returns the WHOLE entry so a
+        caller can inspect it closer or pull the context around it instead
+        of re-searching. Returns {id, content, metadata, tier} or None if no
+        recall tier holds that id. This is the right brain's twin of Loci's
+        get_fact: exact lookup by handle, not ranked similarity search.
+
+        chroma's .get(ids=[...]) returns an empty result (not an error) for a
+        missing id, so a miss in one tier just falls through to the next.
+        """
+        for tier, col in (("short", self.short),
+                          ("near", self.near),
+                          ("long", self.long)):
+            rows = _zip_get(
+                col.get(ids=[entry_id], include=["documents", "metadatas"]), None)
+            if rows:
+                row = rows[0]
+                row["tier"] = tier
+                return row
+        return None
 
     # ------------------------------------------------------------------
     #  Briefs
@@ -826,6 +868,67 @@ class MemoryStore:
             "pruned": self.pruned.count(),
             "runs": self.runs.count(),
         }
+
+    # ------------------------------------------------------------------
+    #  Maintenance - retroactive distill (re-embed onto the distilled key)
+    # ------------------------------------------------------------------
+    def reconcile_distill_keys(self, tiers: tuple[str, ...] = ("short", "long"),
+                               dry_run: bool = True,
+                               batch: int = 256) -> dict[str, Any]:
+        """Re-embed existing entries onto the DISTILLED retrieval key, in place.
+
+        The retroactive half of distill. add_short/add_long now embed a
+        topic-anchored _retrieval_text key (not the full blob), but entries
+        written before that landed still carry full-content vectors - which is
+        exactly why old blobs out-cosine one-line facts on fact-queries. This
+        recomputes each entry's vector from _retrieval_text(content, topic) and
+        writes it back with collection.update(embeddings=...), which swaps ONLY
+        the vector and leaves documents + metadata untouched.
+
+        Why this is safe where migrate_store is heavy: the embedder MODEL isn't
+        changing (same space, no delete/recreate, no dimension risk). It's
+        lossless by construction (content/metadata never touched), idempotent
+        (re-running yields the same vectors), and a precompute hiccup on a batch
+        skips that batch rather than writing a bad vector.
+
+        Only the searched-and-distilled tiers are touched: short and long. near
+        is left alone (intents are one-liners; nothing to distill).
+
+        dry_run=True (default) computes the would-be vectors and reports counts
+        WITHOUT writing - run that first, eyeball it, then dry_run=False to
+        apply. Take a persist_dir backup before applying; the op is
+        non-destructive but a backup is the cheap insurance.
+        """
+        cols = {"short": self.short, "near": self.near, "long": self.long}
+        report: dict[str, Any] = {"dry_run": dry_run, "tiers": {}}
+        for tier in tiers:
+            col = cols.get(tier)
+            if col is None:
+                report["tiers"][tier] = {"error": f"unknown/not-distilled tier '{tier}'"}
+                continue
+            got = col.get(include=["documents", "metadatas"])  # pure SQL, no EF
+            ids = got.get("ids", []) or []
+            docs = got.get("documents", []) or []
+            metas = got.get("metadatas", []) or []
+            reembedded = 0
+            errors = 0
+            for i in range(0, len(ids), batch):
+                b_ids = ids[i:i + batch]
+                b_docs = docs[i:i + batch]
+                b_metas = metas[i:i + batch]
+                keys = [_retrieval_text(d or "", (m or {}).get("topic"))
+                        for d, m in zip(b_docs, b_metas)]
+                try:
+                    vecs = col._embedding_function(keys)
+                    if not dry_run:
+                        col.update(ids=b_ids, embeddings=vecs)
+                    reembedded += len(b_ids)
+                except Exception:  # noqa: BLE001 - never write a bad vector; skip + count
+                    errors += len(b_ids)
+            report["tiers"][tier] = {"entries": len(ids),
+                                     "reembedded": reembedded,
+                                     "errors": errors}
+        return report
 
 
 def _zip_get(res: dict[str, Any], limit: Optional[int]) -> list[dict[str, Any]]:

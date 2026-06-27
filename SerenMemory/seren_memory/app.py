@@ -736,6 +736,39 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                       "restarts it with the migrated store.",
         }
 
+    # -- Pointer dereference (hydrate one memory by id) --
+    @app.get("/memory/{entry_id}")
+    async def get_memory(request: Request, entry_id: str):
+        """Hydrate a single memory by id across the recall tiers. The
+        dereference for a pointer handed back by /search: search gives you
+        the id, this returns the whole entry (content + metadata + which
+        tier it lives in) so an idea can be inspected closer or its
+        surrounding context pulled, instead of re-searching. 404 if no
+        recall tier holds that id. Read-only; gated in safe-mode like any
+        recall."""
+        store = request.app.state.store
+        row = store.get_by_id(entry_id)
+        if row is None:
+            raise HTTPException(404, f"no memory '{entry_id}' in short/near/long")
+        return {"ok": True, **row}
+
+    # -- Distill reconcile (re-embed existing entries onto the distilled key) --
+    @app.post("/reconcile/distill")
+    async def reconcile_distill(request: Request, apply: bool = False):
+        """Re-embed existing short+long entries onto the distilled retrieval key
+        (see MemoryStore.reconcile_distill_keys). The retroactive half of
+        distill: add_short/add_long embed a topic-anchored key for NEW writes;
+        this fixes entries written before that landed so old blobs stop out-
+        cosining one-line facts. Lossless (only the vector changes; documents +
+        metadata untouched), idempotent, same embedder. DRY-RUN by default -
+        POST ?apply=true to commit. Take a persist_dir backup first; the op is
+        non-destructive but backup is cheap insurance. Runs in-process (off the
+        event loop) so there's no dual-client conflict with the live service."""
+        store = request.app.state.store
+        report = await asyncio.to_thread(
+            store.reconcile_distill_keys, dry_run=not apply)
+        return {"ok": True, **report}
+
     # -- Tier routes --
     app.include_router(short_routes.router)
     app.include_router(near_routes.router)
