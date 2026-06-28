@@ -481,3 +481,4 @@ SerenMemoryVSCode/node_modules/
 SerenMemoryVSCode/seren_memory-vscode/node_modules/
 *.vsix
 TestResults/
+runtime-stores.json
