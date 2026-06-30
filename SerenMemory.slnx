@@ -39,6 +39,8 @@
     <File Path="SerenMemoryVSCode/test/mocks/vscode.ts" />
   </Folder>
   <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
     <File Path=".gitignore" />
     <File Path="LICENSE" />
     <File Path="Makefile" />
