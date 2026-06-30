@@ -267,6 +267,53 @@ Env vars (`SEREN_MEMORY_*`) override file values for Docker/systemd.
 
 ---
 
+## Implementation architecture
+
+### Three-tier storage
+
+Memory entries live in a ChromaDB collection, one per tier, under a local persist directory. Each entry stores `content`, `topic`, `timestamp`, and tier-specific metadata (evidence count for long-term, trigger conditions for near-term).
+
+- **Short-term** — free read/write. Entries age out after ~8 days unless promoted. The consolidator clusters them by topic during its window.
+- **Near-term** — open intents with trigger conditions (time-based or topic-based). Fulfilled intents are promoted to long-term as a record.
+- **Long-term** — gated writes. Only the consolidator can create entries here. Evidence count tracks how many times a fact has been confirmed across briefs; higher evidence → higher recall rank.
+
+### Consolidator cycle
+
+The consolidator (a small model, 2B–4B, pointed at by `consolidator.model_url`) runs on an ~20-hour interval or on-demand via `POST /consolidate/run`. Its cycle:
+
+1. **Cluster** — groups short-term entries by topic using embedding similarity.
+2. **Promote** — clusters that recur across multiple briefs or are explicitly hinted in `promote_hints` get drafted for long-term.
+3. **Age** — short-term entries older than the TTL are dropped; near-term intents past their trigger time are expired.
+4. **Forget** — long-term entries flagged via `POST /long/<id>/forget` are purged (PII) or demoted (disputed/stale).
+5. **Draft** — synthesized long-term entries land as `pending` drafts, reviewed via the draft tools before commit.
+
+### Recall ranking
+
+`/search` hits all three tiers in parallel, then merges by a weighted score:
+
+- ShortTerm × 1.0 (working memory, most immediately relevant)
+- NearTerm × 0.9 (active intents)
+- LongTerm × 0.8 *but* with an evidence multiplier — a fact confirmed 10 times outranks a one-off mention.
+
+The weights live in `routes/search.py` if you want to tune them.
+
+---
+
+## Tests
+
+| Test file | What it covers |
+|-----------|----------------|
+| `tests/test_routes.py` | HTTP endpoints: write short/near, search, brief, consolidate, forget-flag, draft lifecycle |
+| `tests/test_store.py` | ChromaDB read/write, tier isolation, evidence tracking, TTL aging |
+| `tests/test_consolidator.py` | Consolidation cycle: clustering, promotion, draft creation, forget-flag handling |
+| `tests/test_mcp_tools.py` | MCP tool surface for search/write/brief/consolidate/draft management |
+
+```bash
+pytest tests/
+```
+
+---
+
 ## What this is part of
 
 SerenMemory is a piece of [Seren](https://github.com/ChadRoesler) - a fully
