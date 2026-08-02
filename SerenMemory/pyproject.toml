@@ -39,7 +39,7 @@ dependencies = [
     # The ONE Memory-specific piece that stays local is the embedder safe-mode
     # 503 gate, its own middleware mounted outside bearer. Pinned <1 - a MAJOR
     # (an un-defaultable security change) is the only thing that forces a bump.
-    "seren-meninges>=2.1.0,<3",
+    "seren-meninges>=2.2.0,<3",
     # Shared request logging - one copy across the family (SerenSinew). Mounted
     # outermost (before auth) so even safe-mode 503s and 401s get logged.
     # -> memory-requests.log.
@@ -85,15 +85,13 @@ dev = [
     # test stack against the upcoming hard cutover.
     "httpx2>=2.3",
 ]
-# "is there a newer seren-lodestar" reporting on GET /. Opt-in, because a
-# service that never leaves a LAN has no reason to talk to PyPI. Pulls the
-# Meninges extra rather than httpx/packaging directly - the check lives in
-# seren_meninges.updates and only one repo should own that dep set.
-#
-# The floor matches the core dep above: updates.py landed in 2.0.0 and updates_payload in 2.1.0.
-# Resolve anything older and the lifespan import fails, leaving you with
-# status="unavailable" forever and no obvious reason why.
-updates = ["seren-meninges[updates]>=2.1.0,<3"]
+# Kept as an EMPTY alias. Update checking is CORE in seren-meninges now, and
+# meninges is already a core dependency of this service, so there is nothing
+# left for this extra to install. The name stays because it appears in the
+# Starwright installers (--updates), in docs, and in people's notes - and an
+# unknown extra only earns a "does not provide the extra" warning that trains
+# operators to ignore warnings.
+updates = []
 
 [project.scripts]
 seren-memory = "seren_memory.__main__:main"
