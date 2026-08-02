@@ -64,8 +64,102 @@ jobs:
         working-directory: SerenMemoryVSCode
         run: npm test
 
+  # ── Install shapes ──────────────────────────────────────────────────────
+  #
+  # `test` installs [dev] and runs pytest FROM INSIDE the repo. That proves the
+  # code works with every dev dependency present and ./seren_memory on sys.path.
+  # It proves nothing about what an operator gets from `pip install seren-memory`.
+  #
+  # Two real breakages got past `test` and would have been caught here:
+  #   1. An unconditional import of an OPTIONAL dependency - invisible when the
+  #      dev install pulls it in anyway, fatal on a bare install.
+  #   2. A satisfied-but-stale floor (seren-meninges>=2.0.0 happily resolving
+  #      2.0.0 after 2.1.0 shipped). Only a real resolve in a clean env shows it.
+  #
+  # So: install every SHAPE an operator can ask for, then import the app FROM
+  # OUTSIDE THE REPO so the source tree cannot mask a missing dependency.
+  #
+  # Every shape runs on every push, including the slow ones, and this job GATES
+  # the release. The maintainer eats the CI time so nobody eats a broken install.
+  install-shapes:
+    runs-on: ubuntu-latest
+    name: "Install ${{ matrix.shape.label }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        shape:
+          - { label: "bare",          spec: ".",            updates: "unavailable" }
+          - { label: "[mcp]",     spec: ".[mcp]",     updates: "unavailable" }
+          - { label: "[corp]",    spec: ".[corp]",    updates: "unavailable" }
+          - { label: "[updates]", spec: ".[updates]", updates: "wired" }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ${{ matrix.shape.spec }}
+        run: pip install "${{ matrix.shape.spec }}"
+        working-directory: SerenMemory
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
+
+      - name: Install a test client (NOT part of the shape under test)
+        # starlette's TestClient needs httpx at runtime. It is a test tool, not
+        # something seren_memory imports, so adding it cannot mask a missing runtime
+        # dependency - but leaving it out fails the smoke step for a reason that
+        # has nothing to do with the install shape.
+        run: pip install "httpx2" || pip install "httpx"
+
+      - name: Import and construct the app OUT OF TREE
+        run: |
+          cd "$(mktemp -d)"
+          python - <<'PY'
+          from seren_memory.app import create_app
+          from fastapi.testclient import TestClient
+
+          app = create_app()
+          print("app constructed OK")
+
+          with TestClient(app) as c:
+              r = c.get("/")
+          # A FRESH install has no store, so embedder safe-mode must not trigger.
+          # If it does, that is a real bug and the 503 body says which mismatch.
+          if r.status_code == 503:
+              raise AssertionError(f"fresh install came up in safe mode: {r.text[:300]}")
+          assert r.status_code == 200, f"/ returned {r.status_code}: {r.text[:300]}"
+          u = r.json().get("updates")
+
+          assert isinstance(u, dict), f"/ must always carry an updates dict, got {u!r}"
+          expected = {"status", "distribution", "installed", "latest",
+                      "update_available", "detail", "checked_at"}
+          assert set(u) == expected, f"key drift: {set(u) ^ expected}"
+          assert isinstance(u["update_available"], bool)
+
+          if "${{ matrix.shape.updates }}" == "unavailable":
+              # No [updates] extra -> say so plainly, and NEVER report a clean
+              # bill of health it has no way to verify.
+              assert u["status"] == "unavailable", f"expected unavailable, got {u['status']}"
+              assert u["update_available"] is False
+              assert u["detail"], "unavailable must carry a reason"
+          else:
+              # With the extra, anything but "unavailable" passes - the runner
+              # may not reach PyPI, and "error" is correct for a box offline.
+              assert u["status"] != "unavailable", (
+                  "[updates] installed but the checker did not wire up - usually a "
+                  "seren-meninges floor that resolved something too old"
+              )
+          print(f"updates block OK: status={u['status']}")
+          PY
+
   build-and-release:
-    needs: [test, test-vscode]
+    needs: [test, test-vscode, install-shapes]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
