@@ -117,6 +117,22 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         app.state.config = cfg
         app.state._safe_mode = _safe_mode
         app.state._migration_progress = _migration_progress
+        # "is there a newer seren-memory" checker. Always constructed - the
+        # UpdateChecker itself degrades to status="unavailable" if the
+        # [updates] extra (httpx + packaging) isn't installed, so there is
+        # no need to probe for the extra here. Leaving app.state.updates
+        # unset is what makes updates_payload() report "unavailable" even
+        # when the extra IS installed, since it treats a None checker as
+        # "never wired up" rather than "not installed".
+        from seren_meninges.updates import UpdateChecker
+        app.state.updates = UpdateChecker(
+            "seren-memory",
+            enabled=cfg.updates.enabled,
+            index_url=cfg.updates.index_url,
+            ttl_seconds=cfg.updates.check_interval_hours * 3600,
+            allow_prerelease=cfg.updates.allow_prerelease,
+            fallback_version=_fallback_version,
+        )
         if _safe_mode["active"]:
             # Mismatch: do NOT build the store (would embed under the wrong
             # model against existing data). Come up reachable-but-gated so the
