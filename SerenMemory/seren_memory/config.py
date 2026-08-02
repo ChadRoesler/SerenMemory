@@ -193,6 +193,11 @@ def _apply_env_overrides(cfg: MemoryConfig) -> MemoryConfig:
         cfg.consolidator.enabled = v.lower() in ("1", "true", "yes", "on")
     if v := env.get("SEREN_MEMORY_TRUST_SYSTEM_STORE"):
         cfg.tls.trust_system_store = v.lower() in ("1", "true", "yes", "on")
+    # Update checking is cosmetic, so it gets a deploy-time off switch that
+    # needs no config file - handy for a systemd unit or a locked-down box
+    # that must not make outbound calls.
+    if (v := os.getenv("SEREN_MEMORY_UPDATES_ENABLED")) is not None:
+        cfg.updates.enabled = v.strip().lower() in ("1", "true", "yes", "on")
     return cfg
 
 
