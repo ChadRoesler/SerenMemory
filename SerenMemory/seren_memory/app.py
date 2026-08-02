@@ -52,7 +52,6 @@ from .routes import long as long_routes
 from .routes import search as search_routes
 
 from seren_meninges import get_version
-from seren_meninges.updates import updates_payload
 from seren_meninges.auth import bearer_auth_middleware
 from seren_meninges.viewer import render_from_dir
 from seren_sinew.request_log import RequestLoggingMiddleware
