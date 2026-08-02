@@ -70,7 +70,6 @@
     <Folder Include="seren_memory\viewer\" />
     <Folder Include="seren_memory\viewer\ui\" />
     <Folder Include="tests\" />
-    <Folder Include="tests\__pycache__\" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="LICENSE" />
@@ -83,8 +82,6 @@
     <Content Include="seren_memory\viewer\ui\scripts.js" />
     <Content Include="seren_memory\viewer\ui\styles.css" />
     <Content Include="seren_memory\viewer\ui\tabs.html" />
-    <Content Include="tests\__pycache__\test_smoke.cpython-311-pytest-9.0.3.pyc" />
-    <Content Include="tests\__pycache__\__init__.cpython-311.pyc" />
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="Global|PythonCore|3.11" />
