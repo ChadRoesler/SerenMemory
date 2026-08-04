@@ -66,7 +66,7 @@ mcp = [
     # API - across the whole family at once, since they're copies.
     # Within 1.x the pin stays loose: server.py already tolerates the
     # streamable_http->sse transport-name drift across recent versions.
-    "mcp>=1.0,<2",
+    "mcp>=1.0,<3",
 ]
 corp = [
     # Corporate / intercepting-proxy support. Routes Python TLS through the OS
