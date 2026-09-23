@@ -25,7 +25,12 @@ log = logging.getLogger(__name__)
 
 
 class ServerConfig(BaseModel):
-    host: str = "0.0.0.0"
+    # Loopback, like every Seren service since seren-meninges 2.3.0. The yaml
+    # path goes through the shared `ServerConfig.from_dict` in load_config, so
+    # the fallback rule (empty or null host -> this default, explicit host ->
+    # honoured) is the family's, not a second copy of it. This default is for
+    # a MemoryConfig built in code with no yaml at all.
+    host: str = "127.0.0.1"
     port: int = 7420  # distinct from Seren's other ports; "memory" has no
                       # cute base-36 derivation, just a free port that's easy
                       # to remember and unlikely to collide.
@@ -228,6 +233,27 @@ def load_config(path: Optional[str] = None) -> MemoryConfig:
             log.warning("could not read %s: %s — using defaults + env", cfg_path, ex)
             data = {}
 
+    data["server"] = _shared_server_block(data.get("server"))
     cfg = MemoryConfig(**data)
     cfg = _apply_env_overrides(cfg)
     return cfg
+
+
+def _shared_server_block(raw: Any) -> dict[str, Any]:
+    """Normalise the yaml `server:` block through seren-meninges.
+
+    ONE RULE FOR THE WHOLE FAMILY. The host/port fallback (loopback when the
+    operator said nothing, an explicit host honoured, a null host treated as
+    unset, a non-int port logged and defaulted) lives in the shared
+    `ServerConfig.from_dict`. Memory keeps its own pydantic ServerConfig for
+    the shape the rest of this module is built on, and feeds it the shared
+    library's answer, so a fix to the rule lands here without a second copy
+    of it drifting.
+    """
+    from dataclasses import asdict
+
+    from seren_meninges.config import ServerConfig as SharedServer
+
+    shared = SharedServer.from_dict(raw if isinstance(raw, dict) else {},
+                                    default_port=7420)
+    return asdict(shared)

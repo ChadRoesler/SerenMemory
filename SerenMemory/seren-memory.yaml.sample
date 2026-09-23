@@ -16,7 +16,7 @@
 # ═══════════════════════════════════════════════════════════════════════
 
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1       # local-only. 0.0.0.0 = the LAN - set a token below first
   port: 7420
   # Leave empty for no auth (trusted LAN / dev). Set a token to require
   #   Authorization: Bearer <token>
