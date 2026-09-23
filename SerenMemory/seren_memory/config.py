@@ -40,6 +40,10 @@ class ServerConfig(BaseModel):
     bearer_token: str = ""           # inline literal (escape hatch / tests)
     bearer_token_env: str = ""       # NAME of an env var holding the token
     bearer_token_keyring: str = ""   # "service/username" into the OS keychain
+    # The operator's written consent to an open bind with no token; without it
+    # host beyond loopback + no token refuses to start at boot. See
+    # seren_meninges.exposure. Filled from the yaml through the shared block.
+    allow_open_lan: bool = False
 
     def resolve_bearer(self) -> str:
         """The token this service requires of callers ("" == open), resolved

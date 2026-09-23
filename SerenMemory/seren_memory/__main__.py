@@ -9,6 +9,7 @@ import argparse
 import sys
 
 import uvicorn
+from seren_meninges.exposure import enforce_server
 
 from typing import Optional
 
@@ -113,6 +114,9 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    # FIRST: an open bind with no token is refused here, at zero cost, with the
+    # three ways out printed - not after chroma has opened the store.
+    enforce_server(cfg.server, service="seren-memory", env_prefix="SEREN_MEMORY")
     # Must come BEFORE create_app: create_app builds the store, which can
     # trigger chromadb's embedding-model download over TLS. If we're on a
     # corp-proxied box, the trust store has to be injected first or that
@@ -124,10 +128,6 @@ def main() -> None:
     mismatch = _check_embedder_guard(cfg)
     app = create_app(cfg, embedder_mismatch=mismatch,
                      config_path=args.config)
-
-    print(f"[seren-memory] listening on {cfg.server.host}:{cfg.server.port}")
-    print(f"[seren-memory] auth: "
-          f"{'enabled' if cfg.server.bearer_token else 'DISABLED (no token)'}")
 
     uvicorn.run(
         app,

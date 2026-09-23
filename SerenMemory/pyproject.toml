@@ -39,7 +39,7 @@ dependencies = [
     # The ONE Memory-specific piece that stays local is the embedder safe-mode
     # 503 gate, its own middleware mounted outside bearer. Pinned <1 - a MAJOR
     # (an un-defaultable security change) is the only thing that forces a bump.
-    "seren-meninges>=2.3.0,<3",
+    "seren-meninges>=2.4.0,<3",
     # Shared request logging - one copy across the family (SerenSinew). Mounted
     # outermost (before auth) so even safe-mode 503s and 401s get logged.
     # -> memory-requests.log.
