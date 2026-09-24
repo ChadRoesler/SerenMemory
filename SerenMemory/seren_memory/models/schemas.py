@@ -361,6 +361,9 @@ class SearchRequest(BaseModel):
     include_superseded: bool = False
     # Satellites are the surroundings, not the answer: off unless asked.
     include_satellites: bool = False
+    # Bring a core hit's surroundings along inline: its most recent satellites
+    # and the core it superseded. The counts ride on every core hit regardless.
+    with_surroundings: bool = False
 
 
 class SearchHit(BaseModel):
@@ -371,6 +374,12 @@ class SearchHit(BaseModel):
     raw_distance: float            # cosine distance from chroma (lower = closer)
     id: str
     metadata: dict[str, Any]
+    # A core's surroundings, so a hit says there is a story behind it instead
+    # of hiding it: {"satellites": n, "latest_satellite_at": ts|None,
+    # "supersedes": id|None, "superseded_by": id|None} on every long-tier core,
+    # plus "recent": [{id, content, created_at}] (newest first, a few) and
+    # "supersedes_entry" when the search asked with_surroundings.
+    surroundings: Optional[dict[str, Any]] = None
 
 
 class SearchResponse(BaseModel):

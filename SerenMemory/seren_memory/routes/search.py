@@ -103,11 +103,49 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
 
     # Merge + rank + trim.
     all_hits.sort(key=lambda h: h.score, reverse=True)
+    top = all_hits[:req.n_results]
+    _attach_surroundings(store, top, inline=req.with_surroundings)
     return SearchResponse(
         query=req.query,
-        hits=all_hits[:req.n_results],
+        hits=top,
         searched_tiers=searched,
     )
+
+
+def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: int = 3) -> None:
+    """Give every long-tier CORE hit its surroundings: how many satellites
+    stand behind it and when the latest landed, what it superseded, what
+    superseded it. With inline=True the most recent satellites and the
+    superseded core ride along in full. Having the surroundings is one thing;
+    a hit that does not say they exist is how they stay unread."""
+    cores = [h for h in hits if h.tier == "long" and h.metadata.get("kind", "core") != "satellite"]
+    if not cores:
+        return
+    rows = store.long.get(include=["documents", "metadatas"])
+    ids = rows.get("ids") or []
+    docs = rows.get("documents") or []
+    metas = rows.get("metadatas") or []
+    by_id = {i: (docs[k] if k < len(docs) else "", metas[k] or {}) for k, i in enumerate(ids)}
+    sats: dict[str, list[tuple[float, str, str]]] = {}
+    for i, (doc, meta) in by_id.items():
+        cid = meta.get("core_id")
+        if cid:
+            sats.setdefault(str(cid), []).append((float(meta.get("created_at", 0) or 0), i, doc))
+    for h in cores:
+        mine = sorted(sats.get(h.id, []), reverse=True)
+        sup = h.metadata.get("supersedes")
+        out: dict = {
+            "satellites": len(mine),
+            "latest_satellite_at": mine[0][0] if mine else None,
+            "supersedes": sup,
+            "superseded_by": h.metadata.get("superseded_by"),
+        }
+        if inline:
+            out["recent"] = [{"id": i, "content": doc, "created_at": ts} for ts, i, doc in mine[:recent]]
+            if sup and sup in by_id:
+                out["supersedes_entry"] = {"id": sup, "content": by_id[sup][0],
+                                           "created_at": by_id[sup][1].get("created_at")}
+        h.surroundings = out
 
 
 @router.post("/by_topic")
