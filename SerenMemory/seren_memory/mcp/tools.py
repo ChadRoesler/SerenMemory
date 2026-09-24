@@ -125,7 +125,8 @@ class MemoryToolImpl:
                include_short: bool = True,
                include_near: bool = True,
                include_long: bool = True,
-               include_superseded: bool = False) -> dict:
+               include_superseded: bool = False,
+               with_surroundings: bool = False) -> dict:
         """Search memory for relevant context. The main retrieval path -
         call this before answering anything that might benefit from past
         context. Returns ranked hits across the requested tiers.
@@ -133,10 +134,18 @@ class MemoryToolImpl:
         Short-term is weighted highest (most recent context), long-term
         gets an evidence-count multiplier so well-established facts
         outrank passing mentions.
+
+        Every long-term CORE hit carries `surroundings`: how many satellite
+        episodes stand behind it, when the latest landed, and what it
+        superseded / was superseded by - so you know there is a story even
+        when you only asked for the answer. with_surroundings=true brings the
+        most recent satellites and the superseded core along in full; for
+        the whole set, get_satellites(core_id).
         """
         req = SearchRequest(
             query=query,
             n_results=n_results,
+            with_surroundings=with_surroundings,
             include_short=include_short,
             include_near=include_near,
             include_long=include_long,

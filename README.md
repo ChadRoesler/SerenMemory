@@ -191,6 +191,12 @@ history), `verbatim` - each reviewed on its own:
 Long-term is a core and its surroundings: recall returns cores; satellites
 (`kind: satellite`, `core_id`) and superseded cores come back only when asked
 (`include_satellites`, `include_superseded`).
+Every core hit from `/search` (and the `recall` tool) carries `surroundings`:
+how many satellites stand behind it, when the latest landed, what it
+superseded and what superseded it; `with_surroundings: true` brings the most
+recent satellites and the superseded core along in full. Having the
+surroundings is one thing; a hit that does not say they exist is how they
+stay unread.
 
 The in-process consolidator (`consolidator.mode: thread`) still runs the old
 one-draft-per-cluster loop and is on its way out; set `mode: external` and
