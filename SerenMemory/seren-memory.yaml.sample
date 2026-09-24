@@ -35,8 +35,10 @@ storage:
   near_collection: seren_near
   long_collection: seren_long
   brief_collection: seren_briefs
-  # Embedding model. Leave null for chroma's default (all-MiniLM-L6-v2,
-  # ~80MB, CPU-friendly, downloaded on first use).
+  # Embedding model. Leave null for chroma's default (all-MiniLM-L6-v2 as
+  # ONNX, ~80MB, CPU-friendly, no torch, downloaded on first use). Naming a
+  # model needs `pip install seren-memory[st]` (sentence-transformers, and
+  # torch with it) - the installer's --st flag.
   embedding_model: null
 
 lifetimes:

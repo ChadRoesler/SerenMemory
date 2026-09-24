@@ -147,10 +147,19 @@ class LongTermEntry(BaseModel):
     # filters out superseded entries; history queries can still find them.
     superseded_by: Optional[str] = Field(None)
 
-    # forget-flag handling. When user/Rhys flags a memory, the consolidator
-    # records WHY here rather than silently deleting. PII gets purged; "I
-    # disagree" gets demoted. Never a surgical delete from outside.
-    forget_flag: Optional[str] = Field(None, description="Reason a forget was requested.")
+    # A core and its surroundings (settled 23 Sept 2026). A CORE is what
+    # recall returns: the durable statement with the lesson in it. A
+    # SATELLITE is a supporting episode attached to a core (core_id): the
+    # evidence with its date, pulled by the docket around a hit, never
+    # ranked on its own. Superseded cores keep superseded_by pointing
+    # forward and stay recallable through history.
+    kind: str = Field(default="core", description='"core" | "satellite"')
+    core_id: Optional[str] = Field(None, description="For a satellite: the core it supports.")
+    # The forget flag: a person's voice. It means PURGE - executed with a
+    # tombstone and a cascade (MemoryStore.purge_long), by the hippocampus at
+    # its next sleep or immediately for an emergency. Demotion is not this;
+    # demotion is supersession, which arrives through a docket.
+    forget_flag: Optional[str] = Field(None, description="Reason a purge was requested.")
 
     source: Source = Field(default=Source.CONSOLIDATOR)
     id: str = Field(default_factory=_new_id)
@@ -171,6 +180,71 @@ class LongTermEntry(BaseModel):
 #  Verbatim peel-off and direct-promote bypass this gate - both already
 #  carry an explicit model review-in-advance signal.
 # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
+#  The docket - what a consolidation pass proposes (see seren_memory.docket).
+#
+#  Replaces "one draft becomes one long-term entry" with a LIST of
+#  operations on long-term, each reviewed on its own by the main model.
+#  DraftEntry below stays for the in-process consolidator and the
+#  model-as-consolidator tools; the hippocampus writes dockets.
+class DocketOpKind(str, Enum):
+    NEW_CORE = "new_core"      # a durable statement with the lesson in it
+    ATTACH = "attach"          # evidence for an existing core (a satellite); may restate the core
+    SUPERSEDE = "supersede"    # a new core that overrides an old one, which stays, demoted
+    VERBATIM = "verbatim"      # one episode kept word for word as its own core
+
+
+class OpStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+class DocketStatus(str, Enum):
+    PENDING = "pending"        # at least one operation awaits a verdict
+    REVIEWED = "reviewed"      # every operation has one
+
+
+class DocketOperation(BaseModel):
+    """One proposed change to long-term, with its own verdict."""
+    index: int = Field(default=0, description="Position in the docket; set on submit.")
+    kind: DocketOpKind
+    content: str = Field(default="", description="The core's statement, the satellite's episode, or the verbatim text.")
+    topic: Optional[str] = Field(None)
+    target_core_id: Optional[str] = Field(None, description="attach / supersede: the existing core.")
+    restated_content: Optional[str] = Field(None, description="attach: new wording for the core, if the evidence changes it.")
+    source_short_ids: list[str] = Field(default_factory=list, description="The short-terms this operation consumes (archived on approval).")
+    evidence_count: int = Field(default=1)
+    rationale: Optional[str] = Field(None, description="The small model's why - shown to the reviewer.")
+    # review
+    status: OpStatus = Field(default=OpStatus.PENDING)
+    critique: Optional[str] = Field(None, description="On deny: what to fix.")
+    note: Optional[str] = Field(None)
+    edited_content: Optional[str] = Field(None, description="On a terminal docket only: the reviewer's revision, applied instead of content.")
+    long_term_id: Optional[str] = Field(None, description="What this operation became or touched.")
+    reviewed_at: Optional[float] = Field(None)
+
+
+class Docket(BaseModel):
+    """A consolidation pass's proposals, reviewed per operation."""
+    id: str = Field(default_factory=_new_id)
+    summary: str = Field(default="", description="What this docket is about - the embedded text and the viewer's line.")
+    operations: list[DocketOperation] = Field(default_factory=list)
+    # chain: a denied operation comes back as a new docket with the same
+    # cluster_id, attempt+1; terminal=true on the last permitted attempt,
+    # which is the only time an approval may carry edited_content.
+    cluster_id: Optional[str] = Field(None)
+    attempt: int = Field(default=1)
+    terminal: bool = Field(default=False)
+    previous_docket_ids: list[str] = Field(default_factory=list)
+    brief_id_used: Optional[str] = Field(None)
+    created_at: float = Field(default_factory=_now)
+    reviewed_at: Optional[float] = Field(None)
+    status: DocketStatus = Field(default=DocketStatus.PENDING)
+    source: Source = Field(default=Source.CONSOLIDATOR)
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
 class DraftStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -285,6 +359,8 @@ class SearchRequest(BaseModel):
     # Filter out superseded long-term entries (the usual case). Set false
     # for "what did Chad USED to think" history queries.
     include_superseded: bool = False
+    # Satellites are the surroundings, not the answer: off unless asked.
+    include_satellites: bool = False
 
 
 class SearchHit(BaseModel):
@@ -318,6 +394,8 @@ class TopicSearchRequest(BaseModel):
     include_near: bool = True
     include_long: bool = True
     include_superseded: bool = False
+    # Satellites are the surroundings, not the answer: off unless asked.
+    include_satellites: bool = False
     # Entry ids to omit - e.g. the vector hits a caller already has, so an edge
     # join after a /search returns only genuinely NEW context, not duplicates.
     exclude_ids: list[str] = Field(default_factory=list)

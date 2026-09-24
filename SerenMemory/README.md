@@ -39,8 +39,9 @@ something gone, you *flag* it and the consolidator decides - a flag, not a
 scalpel. (More on that philosophy below.)
 
 **The Consolidator** - a small model (2B–4B is plenty) that wakes up every
-~20 hours and does the filing: clusters short-term entries, promotes the
-ones that recur or matter, ages out the rest, maintains the open loops,
+~20 hours and does the filing: groups short-term entries by topic tag
+(exact match; untagged entries form one bucket the model sorts), promotes
+the ones that recur or matter, ages out the rest, maintains the open loops,
 honors forget-flags. It's the part that sleeps so the memory stays clean.
 
 ---
@@ -60,9 +61,11 @@ cp seren-memory.yaml.sample seren-memory.yaml
 python -m seren_memory --config seren-memory.yaml
 ```
 
-First run downloads the default embedding model (`all-MiniLM-L6-v2`, ~80MB,
-CPU-friendly). After that it's offline-capable except for the consolidator's
-calls to your LLM.
+First run downloads the default embedding model (`all-MiniLM-L6-v2` as ONNX,
+~80MB, CPU-friendly, no torch). After that it's offline-capable except for the
+consolidator's calls to your LLM. Naming a different `storage.embedding_model`
+needs `pip install seren-memory[st]` (sentence-transformers, and torch with
+it); the installer's `--st` flag does that.
 
 ---
 
@@ -132,17 +135,27 @@ curl -X POST localhost:7420/long/<id>/forget \
   -d '{"reason": "that fact is wrong, I changed my mind"}'
 ```
 
-The consolidator acts on the flag on its next run:
-- **PII / secrets** ("contains my SSN") -> purged. This is the one case
-  where long-term content is truly deleted, because leaking PII is worse
-  than the no-delete principle.
-- **Disputed / wrong** -> demoted (evidence zeroed, ranks near-bottom) but
-  kept for history.
-- **Stale** -> may be let go over time.
+The flag means *purge this*: the consolidator removes the entry on its next
+sleep and leaves a tombstone (id, reason, time - never the content), cascading
+to drafts, the pruned tier and migration backups. It exists for the
+emergency - "I pasted you my SSH key and it got committed to memory" - and
+it is deliberate: a flag is a decision, not a hint.
 
-The flag is your voice. The action is the consolidator's judgment. If you
-need something gone *right now* for a genuine emergency (a leaked secret),
-that's a real gap - see "Emergency purge" below.
+**Demotion is a different thing and it is not deletion.** When a newer memory
+overrides an older one ("I like blue", then a month later "I like yellow"),
+the old one is kept and demoted: it ranks below, carries `superseded_by`, and
+recall can still say "last week you said blue, now it's yellow". Both are
+valid; one supersedes the other. That is the consolidator's job, triggered by
+the newer memory, never by the forget route.
+
+> Today's code decides purge-or-demote by sniffing the reason string for words
+> like "ssn" or "password". That is drift - the substring test, not demotion -
+> and is replaced with the hippocampus split (punch list: mem-purge, mem-pii,
+> mem-reinforce).
+
+The flag is your voice. The action is the consolidator's. If you need
+something gone *right now* for a genuine emergency (a leaked secret), that's
+a real gap - see "Emergency purge" below.
 
 ### Emergency purge
 
@@ -154,6 +167,37 @@ genuinely need it.
 
 ---
 
+## The hippocampus (the consolidator, split out)
+
+The sleep cycle lives in its own service, **SerenHippocampus** (port 7424).
+It holds no store: it reads short-terms from here, writes **dockets** here,
+resubmits what the reviewer denied, and purges what was flagged. Memory
+keeps the data and applies what is approved.
+
+A docket is a list of operations on long-term - `new_core`, `attach` (a
+satellite on an existing core; the core's evidence grows, its wording may be
+restated), `supersede` (the old core stays, demoted, still recallable through
+history), `verbatim` - each reviewed on its own:
+
+| route                          | who        | what                                          |
+|--------------------------------|------------|-----------------------------------------------|
+| `POST /dockets`                | hippocampus| submit a docket                               |
+| `GET /dockets?status=pending`  | reviewer   | the queue (also the `list_dockets` MCP tool)  |
+| `POST /dockets/{id}/review`    | reviewer   | `{"decisions": [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "deny", "critique": "..."}]}` |
+| `GET /long/{id}/satellites`    | anyone     | a core's surroundings                         |
+| `POST /tidy`                   | hippocampus| age out, maintain near-term, sweep, purge flagged |
+| `POST /long/{id}/purge`        | hippocampus, or the model in an emergency | execute a purge with the cascade; `GET /tombstones` |
+
+Long-term is a core and its surroundings: recall returns cores; satellites
+(`kind: satellite`, `core_id`) and superseded cores come back only when asked
+(`include_satellites`, `include_superseded`).
+
+The in-process consolidator (`consolidator.mode: thread`) still runs the old
+one-draft-per-cluster loop and is on its way out; set `mode: external` and
+run the hippocampus instead.
+
+---
+
 ## GitHub Copilot / MCP (agent mode)
 
 SerenMemory speaks the MCP HTTP transport. Point any MCP-capable client at
@@ -162,9 +206,8 @@ required for this path.
 
 ### VS Code (rip-it-and-win)
 
-Copy `mcp.sample.json` to `.vscode/mcp.json` in any workspace (or to
-`~/.vscode/mcp.json` for global access), fill in your values, and reload
-VS Code:
+Put this in `.vscode/mcp.json` in any workspace (or `~/.vscode/mcp.json`
+for global access), fill in your values, and reload VS Code:
 
 ```json
 {
@@ -182,7 +225,7 @@ VS Code:
 
 ### Visual Studio (same deal, different path)
 
-Copy `mcp.sample.json` to `.vs/mcp.json` at the solution root, same content:
+Put the same block in `.vs/mcp.json` at the solution root:
 
 ```json
 {
@@ -222,20 +265,16 @@ Then set `serenMemory.endpoint` in VS Code settings and run
 
 ## Peering in (the viewer)
 
-Mole-man approved. `viewer/halls.html` is a single-file, dark-mode web UI
-for eyeballing what's in your memory while you test. Open it in a browser -
-no install, no chroma-version exposure (it hits SerenMemory's own HTTP API,
-not chroma directly, so it never breaks on a chroma bump).
+Mole-man approved. The running service serves its own viewer at
+`http://localhost:7420/viewer` - dark-mode, single page, shipped inside the
+package (`seren_memory/viewer/ui/`), so there is nothing to open from disk and
+it can never disagree with the chroma version underneath it (it talks to
+SerenMemory's HTTP API, never to chroma). `/viewer` is public; the API calls
+it makes carry your bearer token if you set one.
 
-```bash
-# Just open the file - it defaults to http://localhost:7420
-xdg-open viewer/halls.html      # or open it however your OS does
-```
-
-Four tabs: ShortTerm, NearTerm, LongTerm, and Search. Enter your base URL +
-bearer token (if set) at the top, hit refresh. It's read-only - it can
-peer, query, and show ranked search results, but it can't mutate your
-memory. Theme-matched to the Seren dashboard.
+Tabs for each tier, search, the consolidator's runs and drafts, and the
+migration modal when the embedder changes. It is read-mostly: it can peer,
+query and show ranked recall, approve or reject drafts, and never deletes.
 
 ---
 
@@ -273,7 +312,7 @@ Env vars (`SEREN_MEMORY_*`) override file values for Docker/systemd.
 
 Memory entries live in a ChromaDB collection, one per tier, under a local persist directory. Each entry stores `content`, `topic`, `timestamp`, and tier-specific metadata (evidence count for long-term, trigger conditions for near-term).
 
-- **Short-term** — free read/write. Entries age out after ~8 days unless promoted. The consolidator clusters them by topic during its window.
+- **Short-term** — free read/write. Entries age out after ~8 days unless promoted. The consolidator groups them by exact topic tag during its window.
 - **Near-term** — open intents with trigger conditions (time-based or topic-based). Fulfilled intents are promoted to long-term as a record.
 - **Long-term** — gated writes. Only the consolidator can create entries here. Evidence count tracks how many times a fact has been confirmed across briefs; higher evidence → higher recall rank.
 
@@ -284,7 +323,7 @@ The consolidator (a small model, 2B–4B, pointed at by `consolidator.model_url`
 1. **Cluster** — groups short-term entries by topic using embedding similarity.
 2. **Promote** — clusters that recur across multiple briefs or are explicitly hinted in `promote_hints` get drafted for long-term.
 3. **Age** — short-term entries older than the TTL are dropped; near-term intents past their trigger time are expired.
-4. **Forget** — long-term entries flagged via `POST /long/<id>/forget` are purged (PII) or demoted (disputed/stale).
+4. **Forget** — long-term entries flagged via `POST /long/<id>/forget` are purged on the next sleep with a tombstone. Demotion (blue -> yellow) is supersession, a separate path the consolidator drives; the current keyword split between the two is drift, replaced with the hippocampus split.
 5. **Draft** — synthesized long-term entries land as `pending` drafts, reviewed via the draft tools before commit.
 
 ### Recall ranking
@@ -303,9 +342,12 @@ The weights live in `routes/search.py` if you want to tune them.
 
 | Test file | What it covers |
 |-----------|----------------|
-| `tests/test_routes.py` | HTTP endpoints: write short/near, search, brief, consolidate, forget-flag, draft lifecycle |
-| `tests/test_store.py` | ChromaDB read/write, tier isolation, evidence tracking, TTL aging |
-| `tests/test_consolidator.py` | Consolidation cycle: clustering, promotion, draft creation, forget-flag handling |
+| `tests/test_search.py`, `test_by_topic.py` | Unified recall and the association edge (exact topic-tag match) |
+| `tests/test_drafts.py`, `test_brief.py` | The consolidator's review queue: draft, reject, redraft, select, approve; briefs |
+| `tests/test_store_hygiene.py` | The chroma boundary: cosine everywhere, crash-safe rebuilds, distilled re-embed on migration, metadata keys that can be removed |
+| `tests/test_embedder.py` | The embedder stamp, the boot guard, migration and its restore |
+| `tests/test_mcp_*.py` | The MCP mount, tools and fallback |
+| `tests/test_auth.py`, `test_server_block.py`, `test_exposure_is_wired.py`, `test_tls.py` | The shared Meninges surface: bearer, config block, open-LAN refusal, corp TLS |
 | `tests/test_mcp_tools.py` | MCP tool surface for search/write/brief/consolidate/draft management |
 
 ```bash

@@ -19,6 +19,20 @@ METADATA FLATTENING:
     lists. Our Pydantic models have an `extra: dict` and some have list
     fields. We flatten on write (prefix nested keys, JSON-encode lists) and
     unflatten on read. The flattening rules live here so they're consistent.
+
+METADATA REMOVAL:
+    chroma's update() and upsert() both MERGE metadata (checked against
+    1.5.9): a key you leave out survives, and None is rejected, so no key
+    could ever be removed through this store. _replace_metadata does the
+    only thing that works - delete + re-add with the stored vector - and the
+    update_* seams treat a None value as "remove this key".
+
+DISTANCE SPACE:
+    Every collection is created on cosine (rebuild.COLLECTION_METADATA). A
+    collection created before 2026-09-23 got chroma's L2 default while the
+    brute-force fallback below scored cosine; the same entry scored ~2x
+    differently depending on whether the HNSW segment had flushed. On boot a
+    non-cosine collection is rebuilt onto cosine with its vectors copied.
 """
 from __future__ import annotations
 
@@ -32,7 +46,10 @@ import chromadb
 from chromadb.config import Settings
 
 from .config import MemoryConfig
+from .docket import DocketMixin
 from .models.schemas import (
+    DocketStatus,
+    OpStatus,
     LongTermEntry,
     NearTermEntry,
     ShortTermEntry,
@@ -109,8 +126,9 @@ def _retrieval_text(content: str, topic: Optional[str],
     return f"{topic}. {body}" if topic else body
 
 
-class MemoryStore:
-    """Owns the chroma client and the tier collections."""
+class MemoryStore(DocketMixin):
+    """Owns the chroma client and the tier collections. The docket
+    (submit / review / apply) is mixed in from seren_memory.docket."""
 
     def __init__(self, config: MemoryConfig, embedding_function: Any = None,
                  _allow_reset: bool = False):
@@ -148,25 +166,45 @@ class MemoryStore:
             if resolved_ef is not None:
                 ef_kwargs["embedding_function"] = resolved_ef
 
+        # A rebuild (migration or the cosine fix) a crash interrupted is
+        # finished or discarded FIRST - get_or_create below would otherwise
+        # stand an empty original beside a complete copy. See rebuild.py.
+        from .rebuild import reconcile, space_of, rebuild_collection, COLLECTION_METADATA
+        reconcile(self._client)
+
+        def _open(name: str) -> Any:
+            col = self._client.get_or_create_collection(
+                name, metadata=dict(COLLECTION_METADATA), **ef_kwargs)
+            if space_of(col) != "cosine":
+                # Created before the space was pinned: same vectors, new
+                # index. Copy, never re-embed - the model has not changed.
+                rebuild_collection(self._client, name,
+                                   ef=ef_kwargs.get("embedding_function"), reembed=False)
+                col = self._client.get_or_create_collection(
+                    name, metadata=dict(COLLECTION_METADATA), **ef_kwargs)
+            return col
+
         # get_or_create so first boot just works.
-        self.short = self._client.get_or_create_collection(s.short_collection, **ef_kwargs)
-        self.near = self._client.get_or_create_collection(s.near_collection, **ef_kwargs)
-        self.long = self._client.get_or_create_collection(s.long_collection, **ef_kwargs)
-        self.briefs = self._client.get_or_create_collection(s.brief_collection, **ef_kwargs)
+        self.short = _open(s.short_collection)
+        self.near = _open(s.near_collection)
+        self.long = _open(s.long_collection)
+        self.briefs = _open(s.brief_collection)
         # Pruned safety net - aged-out short-term entries land here for a
         # configurable window before true deletion. Insurance against a
         # bad consolidation heuristic.
-        self.pruned = self._client.get_or_create_collection("seren_pruned", **ef_kwargs)
+        self.pruned = _open("seren_pruned")
         # Consolidator run history - one record per run_once() call (success,
         # error, or noop). Gives 'last_consolidation_at' a durable answer
         # and the Halls viewer enough data for an operational panel.
-        self.runs = self._client.get_or_create_collection("seren_consolidator_runs", **ef_kwargs)
+        self.runs = _open("seren_consolidator_runs")
         # Consolidator drafts - model review queue. Cluster syntheses land
         # here awaiting model approval before committing to long-term.
         # Verbatim peel-off and direct-promote bypass this queue (they carry
         # explicit pre-approval signals). On approve: shorts archive to pruned,
         # draft becomes long-term. On reject: critique stored, redraft triggered.
-        self.drafts = self._client.get_or_create_collection(s.draft_collection, **ef_kwargs)
+        self.drafts = _open(s.draft_collection)
+        # Dockets - what the hippocampus proposes, reviewed per operation.
+        self.dockets = _open("seren_dockets")
 
         # Stamp which embedder built this store (sidecar JSON in the persist
         # dir), so the next startup's guard can detect an embedder change. Only
@@ -188,7 +226,7 @@ class MemoryStore:
         except Exception:  # noqa: BLE001
             pass
         # Drop collection refs so GC can collect the underlying objects.
-        for attr in ("short", "near", "long", "briefs", "pruned", "runs", "drafts"):
+        for attr in ("short", "near", "long", "briefs", "pruned", "runs", "drafts", "dockets"):
             try:
                 delattr(self, attr)
             except AttributeError:
@@ -236,14 +274,51 @@ class MemoryStore:
         Short-term is documented as 'free read/write' - this isn't the
         Lacuna boundary protecting long-term. Used by preserve_verbatim to
         flip the verbatim flag, and is a general-purpose seam if other
-        lightweight short-term tweaks come up later.
+        lightweight short-term tweaks come up later. A None value REMOVES
+        that key (see _apply_metadata_updates).
         """
-        existing = self.short.get(ids=[entry_id], include=["documents", "metadatas"])
+        return self._apply_metadata_updates(self.short, entry_id, updates)
+
+    def _apply_metadata_updates(self, col: Any, entry_id: str,
+                                updates: dict[str, Any]) -> bool:
+        """Merge `updates` into an entry's metadata; a None value means
+        "remove this key". Plain merges go through chroma's own update()
+        (one call, atomic); a removal has to go through _replace_metadata,
+        because chroma's update() and upsert() merge and cannot drop a key."""
+        existing = col.get(ids=[entry_id], include=["metadatas"])
         if not existing.get("ids"):
             return False
         meta = dict(existing["metadatas"][0]) if existing.get("metadatas") else {}
+        removals = [k for k, v in updates.items() if v is None]
+        for k in removals:
+            meta.pop(k, None)
         meta.update(_clean_meta(updates))
-        self.short.update(ids=[entry_id], metadatas=[meta])
+        if removals:
+            return self._replace_metadata(col, entry_id, meta)
+        col.update(ids=[entry_id], metadatas=[meta])
+        return True
+
+    def _replace_metadata(self, col: Any, entry_id: str, meta: dict[str, Any]) -> bool:
+        """Set an entry's metadata to EXACTLY `meta`. chroma has no
+        replace: update() and upsert() both merge (a key left out survives,
+        None is rejected), so the only way to drop a key is delete + re-add.
+        The stored vector rides along so nothing is re-embedded; the document
+        is untouched. Not atomic - a crash between the two calls loses the
+        entry - which is why the merge path is used whenever nothing needs
+        removing."""
+        got = col.get(ids=[entry_id], include=["documents", "metadatas", "embeddings"])
+        if not got.get("ids"):
+            return False
+        embs = got.get("embeddings")
+        vec = [float(x) for x in embs[0]] if embs is not None and len(embs) else None
+        clean = _clean_meta(meta)
+        col.delete(ids=[entry_id])
+        kw: dict[str, Any] = {"ids": [entry_id], "documents": [got["documents"][0]]}
+        if clean:
+            kw["metadatas"] = [clean]
+        if vec is not None:
+            kw["embeddings"] = [vec]
+        col.add(**kw)
         return True
 
     def promote_short_to_long(self, entry_id: str) -> Optional[str]:
@@ -297,18 +372,9 @@ class MemoryStore:
         return _zip_get(res, None)
 
     def update_near(self, entry_id: str, updates: dict[str, Any]) -> bool:
-        """Update metadata fields on a near-term entry (e.g. mark completed).
-        This is NOT a Lacuna-style surgical content edit - it's flipping a
-        status flag on an entry the caller legitimately owns. Returns True
-        if the entry existed."""
-        existing = self.near.get(ids=[entry_id], include=["documents", "metadatas"])
-        if not existing.get("ids"):
-            return False
-        meta = dict(existing["metadatas"][0]) if existing.get("metadatas") else {}
-        meta.update(_clean_meta(updates))
-        # chroma update keeps the document, swaps metadata
-        self.near.update(ids=[entry_id], metadatas=[meta])
-        return True
+        """Merge `updates` into a near-term entry's metadata. A None value
+        removes that key (see _apply_metadata_updates)."""
+        return self._apply_metadata_updates(self.near, entry_id, updates)
 
     def delete_near(self, ids: list[str]) -> None:
         if ids:
@@ -325,6 +391,8 @@ class MemoryStore:
             "created_at": entry.created_at,
             "last_confirmed": entry.last_confirmed,
             "superseded_by": entry.superseded_by,
+            "kind": entry.kind,
+            "core_id": entry.core_id,
             "forget_flag": entry.forget_flag,
             "source": entry.source.value,
             **entry.extra,
@@ -828,13 +896,20 @@ class MemoryStore:
         """Linear cosine-similarity fallback used when the HNSW index isn't
         available (entries written but not yet persisted to disk). Re-embeds
         the query using the collection's own embedding function so the vector
-        space is guaranteed to match."""
+        space is guaranteed to match. Cosine here and cosine on the
+        collection (rebuild.COLLECTION_METADATA): the two paths score on one
+        scale, which they did not while the collection defaulted to L2."""
         raw = col.get(include=["documents", "metadatas", "embeddings"])
         ids = raw.get("ids") or []
         docs = raw.get("documents") or []
         metas = raw.get("metadatas") or []
-        embeddings = raw.get("embeddings") or []
-        if not ids or not embeddings:
+        # chroma 1.x hands embeddings back as a numpy array, whose truth value
+        # is an error - `or []` here raised on every entry with a vector, so
+        # the fallback this method exists for never ran (it 500'd instead).
+        embeddings = raw.get("embeddings")
+        if embeddings is None:
+            embeddings = []
+        if not ids or len(embeddings) == 0:
             return []
 
         # Re-embed the query through the same EF the collection uses.
@@ -872,6 +947,7 @@ class MemoryStore:
     def query_by_topic(self, topics: list[str], n: int, *,
                        include_short: bool = True, include_near: bool = True,
                        include_long: bool = True, include_superseded: bool = False,
+                       include_satellites: bool = False,
                        exclude_ids: Optional[list[str]] = None) -> list[dict[str, Any]]:
         """Retrieve entries TAGGED with any of `topics`, by exact tag match -
         the ASSOCIATION edge, not vector similarity. The read-side use of the
@@ -919,6 +995,8 @@ class MemoryStore:
                 meta = row["metadata"]
                 # Same tier filters as /search: skip superseded long-term
                 # (unless asked) and completed near-term (history, not active).
+                if tier == "long" and not include_satellites and meta.get("kind") == "satellite":
+                    continue
                 if tier == "long" and not include_superseded and meta.get("superseded_by"):
                     continue
                 if tier == "near" and meta.get("completed"):
@@ -1015,6 +1093,188 @@ class MemoryStore:
                                      "reembedded": reembedded,
                                      "errors": errors}
         return report
+
+
+    # ------------------------------------------------------------------
+    #  Purge - the forget flag, executed. A person's voice, with a tombstone
+    #  and a cascade; the one true delete of long-term content.
+    # ------------------------------------------------------------------
+    def purge_long(self, entry_id: str, reason: str, *,
+                   purge_backups: bool = True) -> Optional[dict[str, Any]]:
+        """Remove a long-term entry and everything that still holds its
+        content: its satellites (a core takes its surroundings with it), the
+        source short-terms in the pruned tier and in short, drafts that became
+        it, the docket operations that produced or touched it (scrubbed, not
+        deleted - the verdicts are audit), and - by default - every migration
+        backup beside the store, because a backup that keeps the leaked key
+        is not a backup, it is the leak. A tombstone (id, kind, reason, time,
+        what the cascade removed - never the content) goes to
+        <persist_dir>/tombstones.jsonl. Returns the tombstone, or None if
+        there was no such entry."""
+        import json as _json
+        import shutil
+        row = self._long_row(entry_id)
+        if row is None:
+            return None
+        meta = row["metadata"]
+        kind = meta.get("kind", "core")
+        ids = [entry_id]
+        if kind == "core":
+            ids += [s["id"] for s in self.satellites_of(entry_id)]
+
+        # the short-terms these entries were made from
+        sources: list[str] = []
+        for i in ids:
+            r = self._long_row(i)
+            e = (r or {}).get("metadata", {})
+            src = e.get("source_short_ids")
+            if isinstance(src, str):
+                src = _maybe_json(src)
+            if isinstance(src, list):
+                sources += [str(x) for x in src]
+            if e.get("original_short_id"):
+                sources.append(str(e["original_short_id"]))
+        pruned_removed = shorts_removed = 0
+        if sources:
+            for col, counter in ((self.pruned, "pruned"), (self.short, "short")):
+                present = list((col.get(ids=sources, include=[]) or {}).get("ids") or [])
+                if present:
+                    col.delete(ids=present)
+                    if counter == "pruned":
+                        pruned_removed = len(present)
+                    else:
+                        shorts_removed = len(present)
+
+        # drafts that became one of these, or carry the same text
+        contents = set()
+        for i in ids:
+            r = self._long_row(i)
+            if r:
+                contents.add(r["content"])
+        drafts = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
+        dead = [d["id"] for d in drafts
+                if d["metadata"].get("long_term_id") in ids or d["content"] in contents]
+        if dead:
+            self.drafts.delete(ids=dead)
+
+        # dockets: scrub the operations, keep the verdicts
+        scrubbed = 0
+        for d in self.list_dockets(limit=100_000):
+            changed = False
+            for op in d.operations:
+                if op.long_term_id in ids or op.target_core_id in ids or op.content in contents:
+                    op.content = "[purged]"
+                    op.edited_content = None
+                    op.restated_content = None
+                    op.rationale = None
+                    changed = True
+            if changed:
+                d.summary = "[purged in part]"
+                self._save_docket(d)
+                scrubbed += 1
+
+        self.long.delete(ids=ids)
+
+        persist = self._config.resolved_persist_dir()
+        backups = sorted(p for p in persist.parent.glob(persist.name + "_*") if p.is_dir())
+        removed = 0
+        if purge_backups:
+            for b in backups:
+                shutil.rmtree(b, ignore_errors=True)
+                if not b.exists():
+                    removed += 1
+        tomb = {
+            "id": entry_id, "kind": kind, "reason": reason, "purged_at": time.time(),
+            "cascade": {"satellites": len(ids) - 1, "shorts": shorts_removed,
+                        "pruned": pruned_removed, "drafts": len(dead),
+                        "dockets_scrubbed": scrubbed, "backups_removed": removed,
+                        "backups_retained": len(backups) - removed},
+        }
+        with (persist / "tombstones.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(tomb) + "\n")
+        return tomb
+
+    def list_tombstones(self) -> list[dict[str, Any]]:
+        import json as _json
+        p = self._config.resolved_persist_dir() / "tombstones.jsonl"
+        if not p.is_file():
+            return []
+        out = []
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    out.append(_json.loads(line))
+                except Exception:  # noqa: BLE001
+                    continue
+        return out
+
+    def flagged_long(self) -> list[dict[str, Any]]:
+        """Long-term entries carrying a forget flag - what the hippocampus
+        purges at its next sleep."""
+        return [r for r in self.get_long_all() if r["metadata"].get("forget_flag")]
+
+    # ------------------------------------------------------------------
+    #  Tidy - the mechanical steps of a sleep, owned by the store so the
+    #  hippocampus (or the in-process consolidator) can ask for them over
+    #  the API without holding a chroma client.
+    # ------------------------------------------------------------------
+    def held_short_ids(self) -> set[str]:
+        """Short-terms a pending draft or a pending docket operation is built
+        from. They are evidence under review: aging them out would leave a
+        redraft with nothing to work from (the old consolidator did exactly
+        that in the same run it drafted)."""
+        held: set[str] = set()
+        for d in self.get_recent_drafts(limit=100_000, status=DraftStatus.PENDING.value):
+            src = d["metadata"].get("source_short_ids") or []
+            held.update(str(x) for x in (src if isinstance(src, list) else []))
+        for d in self.list_dockets(status=DocketStatus.PENDING.value, limit=100_000):
+            for op in d.operations:
+                if op.status == OpStatus.PENDING:
+                    held.update(str(x) for x in op.source_short_ids)
+        return held
+
+    def age_out_short(self, cutoff_seconds: float, keep_pruned: bool = True) -> int:
+        """Archive-then-delete short-term entries older than cutoff that are
+        not pinned and not held by a pending draft or docket. Returns how many."""
+        rows = self.get_short_all(limit=None)
+        now = time.time()
+        held = self.held_short_ids()
+        stale = [r for r in rows
+                 if not r["metadata"].get("pinned")
+                 and r["id"] not in held
+                 and (now - r["metadata"].get("ts", now)) > cutoff_seconds]
+        if not stale:
+            return 0
+        if keep_pruned:
+            self.archive_pruned(stale)
+        self.delete_short([r["id"] for r in stale])
+        return len(stale)
+
+    def maintain_near(self) -> dict[str, int]:
+        """Completed intents become a long-term record and leave near;
+        expired ones are dropped."""
+        rows = self.get_near_all()
+        now = time.time()
+        expired_ids: list[str] = []
+        completed_ids: list[str] = []
+        for r in rows:
+            meta = r["metadata"]
+            if meta.get("completed"):
+                self.add_long(LongTermEntry(
+                    content=f"Completed intent: {r['content']}",
+                    topic="completed_intents", evidence_count=1,
+                    source=Source.CONSOLIDATOR))
+                completed_ids.append(r["id"])
+                continue
+            exp = meta.get("expires_at")
+            if isinstance(exp, (int, float)) and exp > 0 and now > exp:
+                expired_ids.append(r["id"])
+        if completed_ids:
+            self.delete_near(completed_ids)
+        if expired_ids:
+            self.delete_near(expired_ids)
+        return {"expired": len(expired_ids), "completed_promoted": len(completed_ids)}
 
 
 def _zip_get(res: dict[str, Any], limit: Optional[int]) -> list[dict[str, Any]]:
