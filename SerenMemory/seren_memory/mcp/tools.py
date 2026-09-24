@@ -467,6 +467,79 @@ class MemoryToolImpl:
                     f"draft '{draft_id}' is '{status}', not requires_selection"}
         return {"ok": True, "draft_id": draft_id, **result}
 
+    # -- Dockets (the hippocampus's proposals) ----------------------------
+    def list_dockets(self, status: Optional[str] = "pending", limit: int = 20) -> dict:
+        """The review queue. A docket is what the hippocampus proposes after
+        a sleep: a list of operations on long-term (new_core, attach,
+        supersede, verbatim), each reviewed on its own. status=pending is
+        the queue; reviewed is history; None is everything.
+        """
+        rows = self.store.list_dockets(status=status, limit=limit)
+        return {"count": len(rows), "dockets": [d.model_dump() for d in rows]}
+
+    def get_docket(self, docket_id: str) -> dict:
+        """One docket with every operation, its rationale, and its verdict
+        so far. Read this before review_docket."""
+        d = self.store.get_docket(docket_id)
+        if d is None:
+            return {"ok": False, "error": f"no docket '{docket_id}'"}
+        return d.model_dump()
+
+    def review_docket(self, docket_id: str, decisions: list[dict],
+                      note: Optional[str] = None) -> dict:
+        """Approve or deny operations, one verdict each.
+
+        decisions: [{"op": 0, "verdict": "approve"},
+                    {"op": 1, "verdict": "deny", "critique": "conflates X with Y; separate them"}]
+
+        Approving APPLIES the operation now: a new core, a satellite attached
+        to a core (and the core's evidence grows), a supersession (the old
+        core stays, demoted), or a verbatim core. Denying records the
+        critique; the hippocampus redrafts that operation and resubmits.
+        Critiques should be specific - the next attempt is written from
+        them. edited_content on an approval is accepted only on a terminal
+        docket (the last permitted attempt); otherwise deny and let the loop
+        do its job.
+        """
+        from ..docket import DocketError
+        try:
+            return {"ok": True, **self.store.review_docket(docket_id, decisions, note=note)}
+        except KeyError:
+            return {"ok": False, "error": f"no docket '{docket_id}'"}
+        except DocketError as e:
+            return {"ok": False, "error": str(e)}
+
+    def purge_memory_now(self, memory_id: str, reason: str,
+                         purge_backups: bool = True) -> dict:
+        """The emergency door. Execute a purge NOW instead of at the next
+        sleep: the entry, its satellites, its source short-terms wherever
+        they sit, drafts that became it, the docket operations that touched
+        it (scrubbed), and by default every migration backup beside the
+        store. Leaves a tombstone with the id, the reason and what was
+        removed - never the content.
+
+        This is for "I pasted you my SSH key and it got committed". It is
+        not how a fact gets corrected - a corrected fact is a new memory
+        that supersedes the old one through a docket.
+        """
+        if not reason or not reason.strip():
+            return {"ok": False, "error": "a reason is required to purge"}
+        tomb = self.store.purge_long(memory_id, reason.strip(), purge_backups=purge_backups)
+        if tomb is None:
+            return {"ok": False, "error": f"no long-term entry '{memory_id}'"}
+        return {"ok": True, "tombstone": tomb}
+
+    def get_satellites(self, core_id: str) -> dict:
+        """The surroundings of a core: its supporting episodes with their
+        dates, and the core it superseded. The docket around a hit."""
+        core = self.store.get_by_id(core_id)
+        if core is None or core.get("tier") != "long":
+            return {"ok": False, "error": f"no long-term entry '{core_id}'"}
+        sats = self.store.satellites_of(core_id)
+        sup = core["metadata"].get("supersedes")
+        return {"core": core, "satellites": sats, "count": len(sats),
+                "supersedes": self.store.get_by_id(sup) if sup else None}
+
     # -- Self-consolidation (model-as-consolidator) -----------------------
     def prepare_consolidation(self, max_entries: int = 50) -> dict:
         """Return unconsolidated short-term entries + a synthesis prompt
@@ -582,6 +655,12 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig,
     mcp.tool()(impl.approve_draft)
     mcp.tool()(impl.reject_draft)
     mcp.tool()(impl.select_draft)
+    # Dockets + the surroundings + the emergency door
+    mcp.tool()(impl.list_dockets)
+    mcp.tool()(impl.get_docket)
+    mcp.tool()(impl.review_docket)
+    mcp.tool()(impl.get_satellites)
+    mcp.tool()(impl.purge_memory_now)
 
     # Self-consolidation
     mcp.tool()(impl.prepare_consolidation)

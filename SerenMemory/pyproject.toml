@@ -24,21 +24,12 @@ dependencies = [
     "pyyaml>=6.0.2",
     "httpx>=0.28.0",
     "chromadb>=0.5.0",
-    # Named embedding models (storage.embedding_model) build a chroma
-    # SentenceTransformerEmbeddingFunction, which needs this. chroma's DEFAULT
-    # embedder is bundled (ONNX MiniLM-L6) so the zero-config path doesn't
-    # touch it - but the moment an operator picks a model, or runs an embedder
-    # migration, it's required. Declaring it core (not an extra) means the
-    # embedder knob and migration 'just work' rather than exploding at runtime
-    # with a bare ImportError. Python<3.13 cap above already keeps torch's
-    # 3.13 gap out of scope.
-    "sentence-transformers>=3.0",
-    # The shared Seren core: token resolution, the version helper, the viewer
-    # baseplate, AND now the bearer-auth middleware - Memory was folded into the
-    # family's shared auth (its 401 body is now the family's {"detail":...}).
-    # The ONE Memory-specific piece that stays local is the embedder safe-mode
-    # 503 gate, its own middleware mounted outside bearer. Pinned <1 - a MAJOR
-    # (an un-defaultable security change) is the only thing that forces a bump.
+    # NOT sentence-transformers. chroma's DEFAULT embedder is bundled (ONNX
+    # MiniLM-L6, no torch), and that is what a Nano runs. A named
+    # storage.embedding_model needs the [st] extra below; resolve_embedding_
+    # function says so by name when it is missing. Until 2026-09-23 it was a
+    # core dep so the knob would "just work", which cost every default
+    # install a resident torch on an 8 GB box that never called it.
     "seren-meninges>=2.4.0,<3",
     # Shared request logging - one copy across the family (SerenSinew). Mounted
     # outermost (before auth) so even safe-mode 503s and 401s get logged.
@@ -47,6 +38,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+st = [
+    # Named embedding models (storage.embedding_model: some/model) and the
+    # embedder migration modal build a chroma SentenceTransformerEmbedding-
+    # Function, which needs this - and torch with it. Opt-in:
+    # `pip install seren-memory[st]`. The Starwright card's --st flag.
+    "sentence-transformers>=3.0",
+]
 mcp = [
     # The Python MCP SDK from Anthropic. FastMCP (the high-level server
     # API) was merged into the main SDK; this single dep gives us both.

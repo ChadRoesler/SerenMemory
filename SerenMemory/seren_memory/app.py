@@ -16,7 +16,8 @@ ENDPOINTS:
     POST /near/{id}/complete    - mark intent done
     DELETE /near/{id}           - abandon intent           (free)
     GET  /long                  - list                     (read-open)
-    POST /long/{id}/forget      - flag for consolidator    (the Lacuna gate)
+    POST /long/{id}/forget      - retire flag; the consolidator purges it on
+                                  its next sleep (no user delete, by design)
     POST /search                - unified ranked recall
     POST /by_topic              - association recall (exact topic-tag match, not similarity)
     GET  /consolidator/status   - last run, recent runs, counts, config
@@ -27,6 +28,10 @@ ENDPOINTS:
     POST /short/{id}/preserve   - mark for verbatim promotion (next cycle)
     POST /short/{id}/promote    - immediate verbatim promotion (skip cycle)
     GET  /drafts                - list consolidator drafts (model review queue)
+    POST /dockets, GET /dockets, POST /dockets/{id}/review
+                                - the hippocampus's proposals, reviewed per operation
+    POST /long/{id}/purge       - execute a purge with the cascade; GET /tombstones
+    POST /tidy                  - the mechanical steps of a sleep, for the hippocampus
     GET  /drafts/{id}/chain     - all attempts for a cluster (for comparison)
     POST /drafts/{id}/approve   - commit draft to long-term, archive shorts
     POST /drafts/{id}/reject    - send critique; triggers redraft or requires_selection
@@ -50,6 +55,8 @@ from .routes import short as short_routes
 from .routes import near as near_routes
 from .routes import long as long_routes
 from .routes import search as search_routes
+from .routes import dockets as docket_routes
+from .routes import tidy as tidy_routes
 
 from seren_meninges import get_version
 from seren_meninges.updates import updates_payload
@@ -795,5 +802,14 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     app.include_router(near_routes.router)
     app.include_router(long_routes.router)
     app.include_router(search_routes.router)
+    app.include_router(docket_routes.router)
+    app.include_router(tidy_routes.router)
+
+    @app.get("/tombstones")
+    async def tombstones(request: Request):
+        """What has been purged: id, kind, reason, time, and what the
+        cascade removed. Never the content."""
+        rows = request.app.state.store.list_tombstones()
+        return {"count": len(rows), "entries": rows}
 
     return app

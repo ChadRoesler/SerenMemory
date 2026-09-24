@@ -708,57 +708,24 @@ class Consolidator:
     #  Step 4: age out short-term
     # ------------------------------------------------------------------
     def _age_out_short_term(self) -> int:
-        rows = self._store.get_short_all(limit=None)
-        now = time.time()
-        cutoff = self._cfg.lifetimes.short_term_seconds
-        stale = [r for r in rows
-                 if not r["metadata"].get("pinned")
-                 and (now - r["metadata"].get("ts", now)) > cutoff]
-        if not stale:
-            return 0
-        # Safety net first, then delete.
-        if self._cfg.consolidator.pruned_safety_days > 0:
-            self._store.archive_pruned(stale)
-        self._store.delete_short([r["id"] for r in stale])
-        self._log(f"aged out {len(stale)} short-term entries (archived to pruned)")
-        return len(stale)
+        # The store owns the mechanics (MemoryStore.age_out_short) so the
+        # hippocampus can ask for the same step over /tidy.
+        n = self._store.age_out_short(
+            self._cfg.lifetimes.short_term_seconds,
+            keep_pruned=self._cfg.consolidator.pruned_safety_days > 0)
+        if n:
+            self._log(f"aged out {n} short-term entries (archived to pruned)")
+        return n
 
     # ------------------------------------------------------------------
     #  Step 5: maintain near-term
     # ------------------------------------------------------------------
     def _maintain_near_term(self) -> dict[str, int]:
-        rows = self._store.get_near_all()
-        now = time.time()
-        expired_ids: list[str] = []
-        completed_promoted = 0
-        completed_ids: list[str] = []
-
-        for r in rows:
-            meta = r["metadata"]
-            # Completed -> promote to long-term as a record of "we did this."
-            if meta.get("completed"):
-                entry = LongTermEntry(
-                    content=f"Completed intent: {r['content']}",
-                    topic="completed_intents",
-                    evidence_count=1,
-                    source=Source.CONSOLIDATOR,
-                )
-                self._store.add_long(entry)
-                completed_promoted += 1
-                completed_ids.append(r["id"])
-                continue
-            # Expired -> drop.
-            exp = meta.get("expires_at")
-            if isinstance(exp, (int, float)) and exp > 0 and now > exp:
-                expired_ids.append(r["id"])
-
-        if completed_ids:
-            self._store.delete_near(completed_ids)
-        if expired_ids:
-            self._store.delete_near(expired_ids)
-            self._log(f"dropped {len(expired_ids)} expired near-term intents")
-
-        return {"expired": len(expired_ids), "completed_promoted": completed_promoted}
+        # MemoryStore.maintain_near holds the mechanics; see /tidy.
+        near = self._store.maintain_near()
+        if near["expired"]:
+            self._log(f"dropped {near['expired']} expired near-term intents")
+        return near
 
     # ------------------------------------------------------------------
     #  Model plumbing

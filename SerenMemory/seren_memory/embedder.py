@@ -58,7 +58,7 @@ STAMP_FILE = ".seren_store_meta.json"
 # seren_meta is intentionally absent - the stamp is a sidecar file, not a
 # collection.
 MIGRATED_COLLECTIONS = (
-    "short", "near", "long", "briefs", "pruned", "runs", "drafts",
+    "short", "near", "long", "briefs", "pruned", "runs", "drafts", "dockets",
 )
 
 
@@ -82,7 +82,20 @@ def resolve_embedding_function(model_name: Optional[str], device: str = "cpu") -
     if not model_name:
         return None
     from chromadb.utils import embedding_functions as ef
-    return ef.SentenceTransformerEmbeddingFunction(model_name=model_name, device=device)
+    try:
+        return ef.SentenceTransformerEmbeddingFunction(model_name=model_name, device=device)
+    except (ImportError, ValueError) as e:
+        # chroma raises ValueError("The sentence_transformers python package
+        # is not installed...") for the missing dep. Name the extra, because
+        # the default config never needs it and the Nano never carries it.
+        if "sentence_transformers" in str(e) or "sentence-transformers" in str(e) \
+                or isinstance(e, ImportError):
+            raise RuntimeError(
+                f"storage.embedding_model='{model_name}' needs sentence-transformers, "
+                f"which is an optional extra:  pip install 'seren-memory[st]'  "
+                f"(leave embedding_model empty for chroma's bundled ONNX MiniLM, no torch)"
+            ) from e
+        raise
 
 
 def model_label(model_name: Optional[str]) -> str:
@@ -210,6 +223,39 @@ class MigrationProgress:
         }
 
 
+def _release_chroma_systems() -> None:
+    """Stop and forget every cached chroma System in this process.
+
+    chroma caches one System per persist path (SharedSystemClient) and hands
+    it to every PersistentClient opened on that path, so `del client` never
+    closes the files. Only clearing the cache does. The migration runs in
+    safe mode, when nothing else in the process has the live dir open, so
+    this is safe here; it would not be safe from inside a running store."""
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+    except Exception:  # noqa: BLE001 - older layout
+        try:
+            from chromadb.api.client import SharedSystemClient  # type: ignore[no-redef]
+        except Exception:  # noqa: BLE001
+            return
+    try:
+        SharedSystemClient.clear_system_cache()
+    except Exception:  # noqa: BLE001 - best effort; the retry loop reports if it did not help
+        pass
+
+
+def _backup_path(live: Path) -> Path:
+    """<persist_dir>_YYYYMMDDHHMMSS, suffixed -2, -3... if that name is
+    taken. Two migrations inside one second (a retry after a failure is
+    exactly that) used to pick the same name and copytree refused."""
+    base = live.parent / (live.name + "_" + time.strftime("%Y%m%d%H%M%S"))
+    cand, n = base, 1
+    while cand.exists():
+        n += 1
+        cand = base.with_name(f"{base.name}-{n}")
+    return cand
+
+
 def migrate_store(persist_dir: Path,
                   old_model: Optional[str], new_model: Optional[str],
                   collection_names: dict[str, str],
@@ -223,17 +269,23 @@ def migrate_store(persist_dir: Path,
 
       1. BACKUP: copy the live dir to <persist_dir>_YYYYMMDDHHMMSS (insurance,
          kept forever as the rollback; only ever read on a restore).
-      2. READ ALL collections' docs+metadata INTO MEMORY first (shortest window
-         where any collection is missing its vectors).
-      3. REBUILD each collection THROUGH CHROMA'S API: delete_collection ->
-         get_or_create_collection(new_ef) -> add(docs). Chroma bakes the EF in
-         at create time, so this is how you change embedder for a collection.
+      2. RECONCILE any rebuild a previous crash left behind (rebuild.py).
+      3. REBUILD each collection THROUGH CHROMA'S API, crash-safe: copy every
+         row into <name>__migrating under new_ef, then delete the original and
+         rename the copy (rebuild.rebuild_collection). The original is never
+         touched until a complete copy exists, so a kill mid-way loses nothing
+         and the next boot finishes or discards the copy. Chroma bakes the EF
+         in at create time, so a new collection is how you change embedder.
          All operations go through the API - we never manipulate chroma's files
          as a plain tree (renaming/copying a live store's dir reads stale cache;
          this was proven the hard way - the API path is the only reliable one).
+         short and long are re-embedded on the DISTILLED retrieval key
+         (collections._retrieval_text), the same text a live write embeds,
+         so recall does not regress after a migration.
       4. STAMP LAST: write the new model to the sidecar only after every
          collection is rebuilt. A crash before this leaves the next-boot guard
-         to catch the half-state (stamp still says old model).
+         to catch the half-state (stamp still says old model), with every
+         collection either fully old-space or fully new-space.
       5. VERIFY: reopen fresh and confirm a sample vector embeds under the new
          model. On ANY failure, restore the live dir from the backup copy so
          the operator is exactly where they started - never half-migrated.
@@ -247,7 +299,7 @@ def migrate_store(persist_dir: Path,
     from chromadb.config import Settings
 
     live = Path(persist_dir)
-    backup = live.parent / (live.name + "_" + time.strftime("%Y%m%d%H%M%S"))
+    backup = _backup_path(live)
 
     progress.state = "running"
     progress.from_model = model_label(old_model)
@@ -261,7 +313,6 @@ def migrate_store(persist_dir: Path,
         shutil.copytree(live, backup)
         progress.stash_dir = str(backup)
 
-        old_ef = resolve_embedding_function(old_model, device)
         new_ef = resolve_embedding_function(new_model, device)
 
         # The concrete chroma collection names. Configurable ones from config;
@@ -274,58 +325,51 @@ def migrate_store(persist_dir: Path,
             collection_names.get("draft_collection", "seren_consolidator_drafts"),
             "seren_pruned",
             "seren_consolidator_runs",
+            "seren_dockets",
         ]
 
         client = chromadb.PersistentClient(
             path=str(live), settings=Settings(anonymized_telemetry=False))
 
-        # 2. READ ALL into memory first (shortest missing-vectors window).
-        #    We open each collection WITHOUT specifying old_ef here because
-        #    .get(include=["documents","metadatas"]) is pure SQL and never
-        #    touches the embedding function.  Passing old_ef to get_collection
-        #    can raise an EF-mismatch exception in newer ChromaDB (Rust backend)
-        #    when the stored EF config doesn't match the object we pass, which
-        #    causes the collection to be silently skipped and migrated as empty.
-        in_mem: dict[str, tuple] = {}
-        total = 0
-        for cname in names:
-            try:
-                col = client.get_collection(cname)
-            except Exception:  # noqa: BLE001 - collection may not exist
-                continue
-            got = col.get(include=["documents", "metadatas"])
-            ids = got.get("ids", []) or []
-            in_mem[cname] = (ids,
-                             got.get("documents", []) or [],
-                             got.get("metadatas", []) or [])
-            total += len(ids)
+        # 2. RECONCILE: a copy a previous crash left behind is finished or
+        #    dropped before anything reads the real names.
+        from .rebuild import reconcile, rebuild_collection
+        from .collections import _retrieval_text
+        reconcile(client)
+
+        # Count first so the progress bar has a total. Pure SQL reads, no EF.
+        existing_names = {c.name for c in client.list_collections()}
+        present = [n for n in names if n in existing_names]
+        counts = {n: client.get_collection(n).count() for n in present}
+        total = sum(counts.values())
         progress.total = total
 
-        # Sanity: if chroma has any of our collections but we read zero entries,
-        # something went wrong in the read phase.  Abort so the backup restore
-        # fires rather than silently wiping all data.
-        existing_names = {c.name for c in client.list_collections()}
-        our_names = set(names) & existing_names
-        if our_names and total == 0:
+        # Sanity: if chroma has any of our collections but they hold zero
+        # entries, something is wrong. Abort so the backup restore fires
+        # rather than silently rebuilding an empty store as the new truth.
+        if present and total == 0:
             raise RuntimeError(
                 "read phase returned 0 entries across all collections "
-                f"({sorted(our_names)}); aborting to preserve backup"
+                f"({sorted(present)}); aborting to preserve backup"
             )
 
-        # 3. REBUILD each via API: delete -> recreate(new_ef) -> re-add.
-        ef_kwargs = {"embedding_function": new_ef} if new_ef is not None else {}
-        for cname, (ids, docs, metas) in in_mem.items():
-            try:
-                client.delete_collection(cname)
-            except Exception:  # noqa: BLE001
-                pass
-            new_col = client.get_or_create_collection(cname, **ef_kwargs)
-            BATCH = 256
-            for i in range(0, len(ids), BATCH):
-                new_col.add(ids=ids[i:i + BATCH],
-                            documents=docs[i:i + BATCH],
-                            metadatas=metas[i:i + BATCH])
-                progress.done += len(ids[i:i + BATCH])
+        # 3. REBUILD each collection, crash-safe, re-embedding under new_ef.
+        #    The searched-and-distilled tiers embed the retrieval key the way
+        #    a live write does; everything else embeds its document.
+        distilled = {collection_names.get("short_collection", "seren_short"),
+                     collection_names.get("long_collection", "seren_long")}
+
+        def _key(doc: str, meta: dict) -> str:
+            return _retrieval_text(doc, (meta or {}).get("topic"))
+
+        def _tick(n: int) -> None:
+            progress.done += n
+
+        for cname in present:
+            rebuild_collection(client, cname, ef=new_ef, reembed=True,
+                               embed_for=_key if cname in distilled else None,
+                               on_progress=_tick)
+        in_mem = {n: None for n in present}   # the verify below only needs a name
 
         # 4. STAMP LAST.
         write_stamp(live, new_model)
@@ -333,6 +377,7 @@ def migrate_store(persist_dir: Path,
         # Release the client before the verify reopen (fresh read, no cache).
         del client
         gc.collect()
+        _release_chroma_systems()
         time.sleep(0.05)
 
         # 5. VERIFY through a fresh open: a sample must embed under new_ef.
@@ -340,7 +385,7 @@ def migrate_store(persist_dir: Path,
         #    compare dimension against; with the chroma-default EF we can't
         #    introspect a target dim, so we trust the API round-trip there.
         if total > 0 and new_ef is not None and in_mem:
-            sample_name = next(iter(in_mem))
+            sample_name = next(n for n in in_mem if counts.get(n))
             vc = chromadb.PersistentClient(
                 path=str(live), settings=Settings(anonymized_telemetry=False))
             try:
@@ -376,11 +421,27 @@ def migrate_store(persist_dir: Path,
         # client before its verify reopen; the failure path must do the same.
         # Null every chroma ref we might hold (the client + any collection that
         # transitively keeps it alive), gc, and give the OS a beat to release.
+        #
+        # The frames on the exception's traceback are the other half of it:
+        # rebuild_collection's locals (its source and copy collection handles)
+        # stay alive for as long as `e.__traceback__` references the frame, and
+        # that is the whole except block. clear_frames() empties those locals
+        # in place, so the handles can actually close before the rmtree.
+        import traceback as _tb
+        try:
+            _tb.clear_frames(e.__traceback__)
+        except Exception:  # noqa: BLE001 - a frame still executing; nothing to clear
+            pass
         client = None
-        new_col = None
-        col = None
         vc = None
         scol = None
+        gc.collect()
+        # chroma keeps every PersistentClient's System in a process-wide cache
+        # keyed by path, so dropping our references closes nothing: the sqlite
+        # and hnsw files under the live dir stay open, and on Windows rmtree
+        # then fails with WinError 32 - the restore, the whole safety net,
+        # never fired (seen on chroma 1.5.9). Stop the cached systems.
+        _release_chroma_systems()
         gc.collect()
         time.sleep(0.2)
 

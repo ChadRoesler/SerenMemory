@@ -68,7 +68,10 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
         for hit in raw:
             meta = hit["metadata"]
 
-            # Long-term filtering: skip superseded unless asked.
+            # Long-term filtering: satellites are the surroundings, not the
+            # answer, and superseded cores are history - both off unless asked.
+            if tier == "long" and not req.include_satellites and meta.get("kind") == "satellite":
+                continue
             if tier == "long" and not req.include_superseded:
                 if meta.get("superseded_by"):
                     continue
@@ -127,6 +130,7 @@ async def by_topic(request: Request,
         req.topics, req.n_results,
         include_short=req.include_short, include_near=req.include_near,
         include_long=req.include_long, include_superseded=req.include_superseded,
+        include_satellites=req.include_satellites,
         exclude_ids=req.exclude_ids,
     )
     hits = [TopicHit(
