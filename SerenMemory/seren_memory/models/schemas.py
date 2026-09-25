@@ -202,7 +202,8 @@ class OpStatus(str, Enum):
 
 class DocketStatus(str, Enum):
     PENDING = "pending"        # at least one operation awaits a verdict
-    REVIEWED = "reviewed"      # every operation has one
+    REVIEWED = "reviewed"      # every operation has one; approved ones are applied
+    CLOSED = "closed"          # the chain has landed: the hippocampus culled it after writing to long
 
 
 class DocketOperation(BaseModel):
