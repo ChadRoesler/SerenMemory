@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { SerenClient, SerenApiError } from "../seren_memory-vscode/src/client";
+import { SerenClient, SerenApiError, checkDecisions } from "../seren_memory-vscode/src/client";
 import { SerenConfig } from "../seren_memory-vscode/src/config";
 import { SecretStorage } from "./mocks/vscode";
 
@@ -102,62 +102,136 @@ describe("search", () => {
   });
 });
 
-// -- approveDraft -------------------------------------------------------------
+// -- listDrafts ---------------------------------------------------------------
 
-describe("approveDraft", () => {
-  it("POSTs to /drafts/:id/approve with no body when note omitted", async () => {
-    mockFetch(200, { ok: true });
-    await makeClient().approveDraft("draft-1");
+describe("listDrafts", () => {
+  it("GETs /drafts with status and limit", async () => {
+    mockFetch(200, { count: 0, entries: [] });
+    const result = await makeClient().listDrafts("pending", 5);
     const [url, init] = lastFetch();
-    expect(url).toBe("http://localhost:7420/drafts/draft-1/approve");
+    expect(url).toBe("http://localhost:7420/drafts?status=pending&limit=5");
+    expect(init.method).toBe("GET");
     expect(init.body).toBeUndefined();
+    expect(result).toEqual({ count: 0, entries: [] });
   });
 
-  it("includes note in body when provided", async () => {
-    mockFetch(200, { ok: true });
-    await makeClient().approveDraft("draft-1", "looks good");
-    const [, init] = lastFetch();
-    expect(JSON.parse(init.body as string)).toEqual({ note: "looks good" });
+  it("sends no query string when status and limit are omitted", async () => {
+    mockFetch(200, { count: 0, entries: [] });
+    await makeClient().listDrafts();
+    const [url] = lastFetch();
+    expect(url).toBe("http://localhost:7420/drafts");
   });
 });
 
-// -- rejectDraft ---------------------------------------------------------------
+// -- getDraft -----------------------------------------------------------------
 
-describe("rejectDraft", () => {
-  it("POSTs to /drafts/:id/reject with critique", async () => {
-    mockFetch(200, { ok: true, action: "redrafted" });
-    await makeClient().rejectDraft("draft-2", "conflated X with Y");
+describe("getDraft", () => {
+  it("GETs /drafts/:id", async () => {
+    mockFetch(200, { id: "draft-1", operations: [], terminal: false });
+    const result = await makeClient().getDraft("draft-1");
     const [url, init] = lastFetch();
-    expect(url).toBe("http://localhost:7420/drafts/draft-2/reject");
-    expect(JSON.parse(init.body as string)).toEqual({ critique: "conflated X with Y" });
+    expect(url).toBe("http://localhost:7420/drafts/draft-1");
+    expect(init.method).toBe("GET");
+    expect(result).toEqual({ id: "draft-1", operations: [], terminal: false });
   });
 });
 
-// -- selectDraft ---------------------------------------------------------------
+// -- reviewDraft --------------------------------------------------------------
 
-describe("selectDraft", () => {
-  it("sends no body when neither edited_content nor note provided", async () => {
-    mockFetch(200, { ok: true });
-    await makeClient().selectDraft("draft-3");
-    const [, init] = lastFetch();
-    expect(init.body).toBeUndefined();
+describe("reviewDraft", () => {
+  it("POSTs to /drafts/:id/review with decisions and note", async () => {
+    mockFetch(200, { ok: true, status: "reviewed" });
+    await makeClient().reviewDraft(
+      "draft-2",
+      [
+        { op: 0, verdict: "approve" },
+        { op: 1, verdict: "deny", critique: "conflates X with Y" },
+      ],
+      "looks mostly right"
+    );
+    const [url, init] = lastFetch();
+    expect(url).toBe("http://localhost:7420/drafts/draft-2/review");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      decisions: [
+        { op: 0, verdict: "approve" },
+        { op: 1, verdict: "deny", critique: "conflates X with Y" },
+      ],
+      note: "looks mostly right",
+    });
   });
 
-  it("omits edited_content when whitespace-only", async () => {
+  it("omits note when not provided", async () => {
     mockFetch(200, { ok: true });
-    await makeClient().selectDraft("draft-3", "   ");
+    await makeClient().reviewDraft("draft-2", [{ op: 0, verdict: "approve" }]);
     const [, init] = lastFetch();
-    expect(init.body).toBeUndefined();
+    expect(JSON.parse(init.body as string)).toEqual({ decisions: [{ op: 0, verdict: "approve" }] });
   });
 
-  it("includes edited_content when non-empty", async () => {
+  it("includes edited_content on an approve when non-empty", async () => {
     mockFetch(200, { ok: true });
-    await makeClient().selectDraft("draft-3", "revised text", "my note");
+    await makeClient().reviewDraft("draft-3", [
+      { op: 0, verdict: "approve", edited_content: "revised text" },
+    ]);
     const [, init] = lastFetch();
     expect(JSON.parse(init.body as string)).toEqual({
-      edited_content: "revised text",
-      note: "my note",
+      decisions: [{ op: 0, verdict: "approve", edited_content: "revised text" }],
     });
+  });
+
+  it("drops whitespace-only edited_content", async () => {
+    mockFetch(200, { ok: true });
+    await makeClient().reviewDraft("draft-3", [
+      { op: 0, verdict: "approve", edited_content: "   " },
+    ]);
+    const [, init] = lastFetch();
+    expect(JSON.parse(init.body as string)).toEqual({
+      decisions: [{ op: 0, verdict: "approve" }],
+    });
+  });
+
+  it("refuses a deny without a critique before sending anything", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    await expect(
+      makeClient().reviewDraft("draft-4", [
+        { op: 0, verdict: "approve" },
+        { op: 1, verdict: "deny", critique: "  " },
+      ])
+    ).rejects.toThrow(/critique is required/);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses an empty decisions list", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    await expect(makeClient().reviewDraft("draft-4", [])).rejects.toThrow(/non-empty/);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+// -- checkDecisions -----------------------------------------------------------
+
+describe("checkDecisions", () => {
+  it("rejects an unknown verdict", () => {
+    expect(() => checkDecisions([{ op: 0, verdict: "approved" as any }])).toThrow(/approve or deny/);
+  });
+
+  it("rejects a non-integer op", () => {
+    expect(() => checkDecisions([{ op: 1.5, verdict: "approve" }])).toThrow(/operation index/);
+  });
+
+  it("rejects the same op decided twice", () => {
+    expect(() =>
+      checkDecisions([
+        { op: 0, verdict: "approve" },
+        { op: 0, verdict: "deny", critique: "no" },
+      ])
+    ).toThrow(/decided twice/);
+  });
+
+  it("drops a critique on an approve", () => {
+    expect(checkDecisions([{ op: 2, verdict: "approve", critique: "fine" }])).toEqual([
+      { op: 2, verdict: "approve" },
+    ]);
   });
 });
 
@@ -165,18 +239,19 @@ describe("selectDraft", () => {
 
 describe("SerenApiError", () => {
   it("is thrown on non-2xx responses", async () => {
-    mockFetch(404, { detail: "not found" });
-    await expect(makeClient().approveDraft("nope")).rejects.toBeInstanceOf(SerenApiError);
+    mockFetch(404, { detail: "no draft 'nope'" });
+    await expect(makeClient().getDraft("nope")).rejects.toBeInstanceOf(SerenApiError);
   });
 
   it("carries status and body", async () => {
-    mockFetch(409, { detail: "already reviewed" });
+    expect.assertions(3);
+    mockFetch(409, { detail: "operation 0 is already approved" });
     try {
-      await makeClient().approveDraft("done");
+      await makeClient().reviewDraft("done", [{ op: 0, verdict: "approve" }]);
     } catch (e) {
       expect(e).toBeInstanceOf(SerenApiError);
       expect((e as SerenApiError).status).toBe(409);
-      expect((e as SerenApiError).body).toEqual({ detail: "already reviewed" });
+      expect((e as SerenApiError).body).toEqual({ detail: "operation 0 is already approved" });
     }
   });
 });
@@ -189,5 +264,12 @@ describe("URL encoding", () => {
     await makeClient().forgetLong("id/with/slashes", "test");
     const [url] = lastFetch();
     expect(url).toBe("http://localhost:7420/long/id%2Fwith%2Fslashes/forget");
+  });
+
+  it("encodes special characters in draft IDs", async () => {
+    mockFetch(200, { ok: true });
+    await makeClient().reviewDraft("id/with/slashes", [{ op: 0, verdict: "approve" }]);
+    const [url] = lastFetch();
+    expect(url).toBe("http://localhost:7420/drafts/id%2Fwith%2Fslashes/review");
   });
 });

@@ -5,16 +5,13 @@ import {
   SearchTool,
   WriteTool,
   BriefTool,
-  ConsolidateTool,
   PreserveVerbatimTool,
   PromoteNowTool,
   ForgetLongTool,
   CompleteIntentTool,
   ListDraftsTool,
-  DraftChainTool,
-  ApproveDraftTool,
-  RejectDraftTool,
-  SelectDraftTool,
+  GetDraftTool,
+  ReviewDraftTool,
 } from "./tools";
 
 let statusBar: vscode.StatusBarItem;
@@ -76,16 +73,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.lm.registerTool("seren_memory_search", new SearchTool(client)),
     vscode.lm.registerTool("seren_memory_write", new WriteTool(client)),
     vscode.lm.registerTool("seren_memory_brief", new BriefTool(client)),
-    vscode.lm.registerTool("seren_memory_consolidate", new ConsolidateTool(client)),
     vscode.lm.registerTool("seren_memory_preserve_verbatim", new PreserveVerbatimTool(client)),
     vscode.lm.registerTool("seren_memory_promote_now", new PromoteNowTool(client)),
     vscode.lm.registerTool("seren_memory_forget_long", new ForgetLongTool(client)),
     vscode.lm.registerTool("seren_memory_complete_intent", new CompleteIntentTool(client)),
     vscode.lm.registerTool("seren_memory_list_drafts", new ListDraftsTool(client)),
-    vscode.lm.registerTool("seren_memory_draft_chain", new DraftChainTool(client)),
-    vscode.lm.registerTool("seren_memory_approve_draft", new ApproveDraftTool(client)),
-    vscode.lm.registerTool("seren_memory_reject_draft", new RejectDraftTool(client)),
-    vscode.lm.registerTool("seren_memory_select_draft", new SelectDraftTool(client))
+    vscode.lm.registerTool("seren_memory_get_draft", new GetDraftTool(client)),
+    vscode.lm.registerTool("seren_memory_review_draft", new ReviewDraftTool(client))
   );
 
   // -- startup health check ---------------------------------------------------

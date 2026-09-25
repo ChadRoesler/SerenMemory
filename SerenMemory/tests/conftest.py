@@ -15,12 +15,6 @@ What's here:
     closed, ChromaDB WAL flushed, temp dir removed. Each per-file fixture
     calls this instead of managing mkdtemp() manually.
 
-  - `approve_pending_drafts` fixture: returns a callable that approves all
-    pending consolidator drafts. Wave 2 put cluster synthesis behind a model
-    review queue; tests that want to observe the full short -> long path
-    through cluster promotion need to step the gate explicitly. (Verbatim
-    peel-off and completed-near bypass the queue by design - those tests
-    don't need this helper.)
 """
 from __future__ import annotations
 
@@ -129,12 +123,8 @@ def make_client(tmp_path, fake_embedder):
     Usage in a per-file client fixture::
 
         @pytest.fixture
-        def client(make_client, monkeypatch):
-            from seren_memory.consolidator import service as svc_mod
-            monkeypatch.setattr(svc_mod.Consolidator, "_call_model", stub)
-            return make_client(MemoryConfig(
-                consolidator=ConsolidatorConfig(enabled=False),
-            ))
+        def client(make_client):
+            return make_client(MemoryConfig())
 
     ``raise_server_exceptions`` is forwarded as a kwarg when needed.
     """
@@ -162,21 +152,3 @@ def make_client(tmp_path, fake_embedder):
             tc.__exit__(None, None, None)
         except Exception:  # noqa: BLE001
             pass
-
-
-@pytest.fixture
-def approve_pending_drafts():
-    """Returns a callable: approve_pending_drafts(client) -> int.
-
-    Approves every pending consolidator draft via the same /drafts/{id}/approve
-    endpoint the Halls viewer's button calls. Wave 2 cluster synthesis writes
-    drafts; this is the explicit gate-step a test takes when it wants to
-    observe the resulting long-term entry. Returns the count approved.
-    """
-    def _approve(client) -> int:
-        pending = client.get("/drafts", params={"status": "pending"}).json()["entries"]
-        for d in pending:
-            r = client.post(f"/drafts/{d['id']}/approve")
-            assert r.status_code == 200, f"approve failed: {r.status_code} {r.text}"
-        return len(pending)
-    return _approve

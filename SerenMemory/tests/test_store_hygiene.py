@@ -78,7 +78,7 @@ def _open(tmp_path) -> MemoryStore:
 def test_new_collections_are_cosine(tmp_path):
     s = _open(tmp_path)
     try:
-        for col in (s.short, s.near, s.long, s.briefs, s.pruned, s.runs, s.drafts):
+        for col in (s.short, s.near, s.long, s.briefs, s.pruned, s.drafts):
             assert R.space_of(col) == "cosine", col.name
     finally:
         s.close()
@@ -257,5 +257,42 @@ def test_a_plain_update_still_merges_in_one_call(tmp_path):
         assert s.update_short_metadata(e.id, {"pinned": True})
         meta = s.get_by_id(e.id)["metadata"]
         assert meta["pinned"] is True and meta["topic"] == "m"
+    finally:
+        s.close()
+
+
+# ── 5. the docket -> draft rename (25 Sept 2026) ────────────────────────────
+
+def test_a_store_from_before_the_rename_keeps_its_drafts(tmp_path):
+    """The hippocampus's drafts lived in seren_dockets. On boot the store
+    renames the collection in place, rows and all; the retired consolidator's
+    queue is left on disk and opened only so a purge can scrub it."""
+    raw = _raw(tmp_path)
+    old = raw.get_or_create_collection("seren_dockets", embedding_function=_Len3(),
+                                       metadata={"hnsw:space": "cosine"})
+    old.add(ids=["d1"], documents=["tonight"],
+            metadatas=[{"status": "pending", "operations": "[]", "previous_docket_ids": '["d0"]'}])
+    raw.get_or_create_collection("seren_consolidator_drafts", embedding_function=_Len3(),
+                                 metadata={"hnsw:space": "cosine"}).add(ids=["x"], documents=["old"])
+    del old, raw
+
+    s = _open(tmp_path)
+    try:
+        names = {getattr(c, "name", c) for c in s._client.list_collections()}
+        assert "seren_drafts" in names and "seren_dockets" not in names
+        assert s.drafts.get(include=[])["ids"] == ["d1"]
+        d = s.get_draft("d1")
+        assert d is not None and d.previous_draft_ids == ["d0"], "the old key still reads"
+        assert s.legacy_drafts is not None and s.legacy_drafts.count() == 1
+    finally:
+        s.close()
+
+
+def test_a_fresh_store_does_not_create_the_retired_queue(tmp_path):
+    s = _open(tmp_path)
+    try:
+        names = {getattr(c, "name", c) for c in s._client.list_collections()}
+        assert "seren_consolidator_drafts" not in names and "seren_consolidator_runs" not in names
+        assert s.legacy_drafts is None
     finally:
         s.close()

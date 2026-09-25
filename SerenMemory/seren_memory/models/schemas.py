@@ -150,7 +150,7 @@ class LongTermEntry(BaseModel):
     # A core and its surroundings (settled 23 Sept 2026). A CORE is what
     # recall returns: the durable statement with the lesson in it. A
     # SATELLITE is a supporting episode attached to a core (core_id): the
-    # evidence with its date, pulled by the docket around a hit, never
+    # evidence with its date, pulled by the draft around a hit, never
     # ranked on its own. Superseded cores keep superseded_by pointing
     # forward and stay recallable through history.
     kind: str = Field(default="core", description='"core" | "satellite"')
@@ -158,7 +158,7 @@ class LongTermEntry(BaseModel):
     # The forget flag: a person's voice. It means PURGE - executed with a
     # tombstone and a cascade (MemoryStore.purge_long), by the hippocampus at
     # its next sleep or immediately for an emergency. Demotion is not this;
-    # demotion is supersession, which arrives through a docket.
+    # demotion is supersession, which arrives through a draft.
     forget_flag: Optional[str] = Field(None, description="Reason a purge was requested.")
 
     source: Source = Field(default=Source.CONSOLIDATOR)
@@ -167,27 +167,15 @@ class LongTermEntry(BaseModel):
 
 
 # -------------------------------------------------------------------------
-#  Consolidator drafts - the model-review gate between synthesis and
-#  long-term commit.
-#
-#  Each cluster synthesis lands here as a DraftEntry (status=pending) for
-#  the main model to review. The model can approve (commits to long-term,
-#  source shorts archived to pruned) or reject with a critique (triggers
-#  a consolidator redraft using the critique as steering). Redrafts form a
-#  chain tied by cluster_id; after max_redraft_attempts the chain flips to
-#  requires_selection and the model picks the best attempt.
-#
-#  Verbatim peel-off and direct-promote bypass this gate - both already
-#  carry an explicit model review-in-advance signal.
-# -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
-#  The docket - what a consolidation pass proposes (see seren_memory.docket).
+#  The draft - what a consolidation pass proposes (see seren_memory.draft).
 #
 #  Replaces "one draft becomes one long-term entry" with a LIST of
 #  operations on long-term, each reviewed on its own by the main model.
-#  DraftEntry below stays for the in-process consolidator and the
-#  model-as-consolidator tools; the hippocampus writes dockets.
-class DocketOpKind(str, Enum):
+#  SerenHippocampus writes these; Memory applies what is approved. (Called
+#  a docket until 25 Sept 2026 - in Probe and the Callosum a docket is the
+#  briefing packet a search returns, so here it is a draft.)
+# -------------------------------------------------------------------------
+class DraftOpKind(str, Enum):
     NEW_CORE = "new_core"      # a durable statement with the lesson in it
     ATTACH = "attach"          # evidence for an existing core (a satellite); may restate the core
     SUPERSEDE = "supersede"    # a new core that overrides an old one, which stays, demoted
@@ -200,16 +188,16 @@ class OpStatus(str, Enum):
     DENIED = "denied"
 
 
-class DocketStatus(str, Enum):
+class DraftStatus(str, Enum):
     PENDING = "pending"        # at least one operation awaits a verdict
     REVIEWED = "reviewed"      # every operation has one; approved ones are applied
     CLOSED = "closed"          # the chain has landed: the hippocampus culled it after writing to long
 
 
-class DocketOperation(BaseModel):
+class DraftOperation(BaseModel):
     """One proposed change to long-term, with its own verdict."""
-    index: int = Field(default=0, description="Position in the docket; set on submit.")
-    kind: DocketOpKind
+    index: int = Field(default=0, description="Position in the draft; set on submit.")
+    kind: DraftOpKind
     content: str = Field(default="", description="The core's statement, the satellite's episode, or the verbatim text.")
     topic: Optional[str] = Field(None)
     target_core_id: Optional[str] = Field(None, description="attach / supersede: the existing core.")
@@ -221,110 +209,31 @@ class DocketOperation(BaseModel):
     status: OpStatus = Field(default=OpStatus.PENDING)
     critique: Optional[str] = Field(None, description="On deny: what to fix.")
     note: Optional[str] = Field(None)
-    edited_content: Optional[str] = Field(None, description="On a terminal docket only: the reviewer's revision, applied instead of content.")
+    edited_content: Optional[str] = Field(None, description="On a terminal draft only: the reviewer's revision, applied instead of content.")
     long_term_id: Optional[str] = Field(None, description="What this operation became or touched.")
     reviewed_at: Optional[float] = Field(None)
 
 
-class Docket(BaseModel):
+class Draft(BaseModel):
     """A consolidation pass's proposals, reviewed per operation."""
     id: str = Field(default_factory=_new_id)
-    summary: str = Field(default="", description="What this docket is about - the embedded text and the viewer's line.")
-    operations: list[DocketOperation] = Field(default_factory=list)
-    # chain: a denied operation comes back as a new docket with the same
+    summary: str = Field(default="", description="What this draft is about - the embedded text and the viewer's line.")
+    operations: list[DraftOperation] = Field(default_factory=list)
+    # chain: a denied operation comes back as a new draft with the same
     # cluster_id, attempt+1; terminal=true on the last permitted attempt,
     # which is the only time an approval may carry edited_content.
     cluster_id: Optional[str] = Field(None)
     attempt: int = Field(default=1)
     terminal: bool = Field(default=False)
-    previous_docket_ids: list[str] = Field(default_factory=list)
+    previous_draft_ids: list[str] = Field(default_factory=list)
     brief_id_used: Optional[str] = Field(None)
     created_at: float = Field(default_factory=_now)
     reviewed_at: Optional[float] = Field(None)
-    status: DocketStatus = Field(default=DocketStatus.PENDING)
-    source: Source = Field(default=Source.CONSOLIDATOR)
-    extra: dict[str, Any] = Field(default_factory=dict)
-
-
-class DraftStatus(str, Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    # All redraft attempts exhausted: the main model must pick the best
-    # of the chain via POST /drafts/{id}/select. Source shorts stay in
-    # place until the selection commits.
-    REQUIRES_SELECTION = "requires_selection"
-
-
-class DraftEntry(BaseModel):
-    """A consolidator cluster-synthesis awaiting model review before long-term commit."""
-
-    content: str = Field(..., description="The synthesized candidate text.")
-    topic: Optional[str] = Field(None)
-    evidence_count: int = Field(default=1,
-        description="How many short-term entries supported this synthesis.")
-
-    # The cluster's source short-term IDs. On approve, these get archived
-    # to pruned (the insurance-window path) and removed from short. On
-    # reject, they stay in short for the next consolidation pass.
-    source_short_ids: list[str] = Field(default_factory=list)
-
-    # Which brief steered this synthesis, if any. Useful for "why did the
-    # consolidator surface THIS cluster" - the answer is usually 'because
-    # the brief said so'.
-    brief_id_used: Optional[str] = Field(None)
-
-    # Redraft chain tracking. cluster_id ties all attempts for one cluster
-    # together (set to the first draft's id; inherited by all redrafts).
-    # attempt counts from 1. previous_draft_ids is the ordered chain of
-    # earlier attempts so the model (and the redraft prompt) can compare.
-    cluster_id: Optional[str] = Field(None,
-        description="Stable id shared by all redraft attempts for this cluster.")
-    attempt: int = Field(default=1,
-        description="Which synthesis attempt this is (1-based).")
-    previous_draft_ids: list[str] = Field(default_factory=list,
-        description="Ordered ids of earlier attempts in this chain.")
-
-    created_at: float = Field(default_factory=_now)
     status: DraftStatus = Field(default=DraftStatus.PENDING)
-    reviewed_at: Optional[float] = Field(None)
-
-    # On reject: the model's critique that steered the redraft.
-    # On approve: optional confirmation note.
-    critique: Optional[str] = Field(None,
-        description="Model critique on reject; optional note on approve.")
-
-    # On approve or select, the resulting long-term entry's id gets recorded
-    # here. Forward link so we can answer 'what did this draft become' from
-    # the draft side.
-    long_term_id: Optional[str] = Field(None)
-
-    # -- Edit-on-select audit trail --
-    # When all redraft attempts are rejected and the chain flips to
-    # requires_selection, the editor (the same model role that did the
-    # reviews) can commit the best attempt AS-IS or with revisions. If
-    # revisions are made, the edited text lives here while the original
-    # synthesis stays in `content` - keeps the audit trail intact so we
-    # can always see what the consolidator wrote vs what the editor
-    # committed. The long-term entry uses edited_content if set, else
-    # content. Only meaningful on select (not on approve, which is the
-    # "this is fine as-is" path - if you'd want to edit, reject with a
-    # critique and let the loop do its job).
-    edited_content: Optional[str] = Field(None,
-        description="On select: the editor's revised content. The long-term "
-                    "entry uses this if set; content stays as the original "
-                    "synthesis for audit.")
-
     source: Source = Field(default=Source.CONSOLIDATOR)
-    id: str = Field(default_factory=_new_id)
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-# -------------------------------------------------------------------------
-#  Daily brief - the main model's "here's what mattered" note that steers
-#  the consolidator's search. Input to consolidation; also a LongTerm
-#  candidate itself.
-# -------------------------------------------------------------------------
 class DailyBrief(BaseModel):
     """Main model's end-of-cycle summary. Steers consolidation."""
 
@@ -425,54 +334,3 @@ class TopicSearchResponse(BaseModel):
     topics: list[str]
     hits: list[TopicHit]
     searched_tiers: list[str]
-
-# -------------------------------------------------------------------------
-#  Consolidator runs - operational record of each dream-cycle.
-#
-#  Each call to Consolidator.run_once() emits one of these on completion
-#  (success, error, OR noop - the try/finally guarantees it). Persisting
-#  these gives the cluster a durable answer to "when did I last consolidate"
-#  and a substrate for the Halls viewer's operational dashboard panel
-#  (promotion rates over time, run duration trend, etc.).
-#
-#  The fields mirror the report dict run_once() already builds - we're not
-#  adding new instrumentation, just persisting what's already being computed.
-# -------------------------------------------------------------------------
-class ConsolidatorRunStatus(str, Enum):
-    """Outcome of one consolidation pass."""
-    SUCCESS = "success"   # ran and did work
-    NOOP = "noop"         # ran cleanly but nothing needed doing
-    ERROR = "error"       # raised an exception (recorded anyway)
-
-
-class ConsolidatorRun(BaseModel):
-    """One consolidator pass, recorded for observability."""
-
-    started_at: float
-    finished_at: float
-    duration_seconds: float
-    status: ConsolidatorRunStatus
-
-    # Counters - same as report dict in run_once()
-    promoted: int = 0
-    drafted: int = 0
-    aged_out: int = 0
-    near_expired: int = 0
-    near_completed_promoted: int = 0
-    forget_flags_handled: int = 0
-    pruned_swept: int = 0
-
-    # Which brief steered this run, and whether the assistant left it (push)
-    # or the consolidator had to fabricate one from short-term (pull).
-    brief_id_used: Optional[str] = None
-    brief_was_pulled: bool = False
-
-    # If status == ERROR, the exception message (type + str)
-    error: Optional[str] = None
-
-    # Counts AFTER the run (mirrors report["counts_after"]; JSON-encoded
-    # into chroma metadata by _clean_meta).
-    counts_after: dict[str, Any] = Field(default_factory=dict)
-
-    created_at: float = Field(default_factory=_now)
-    id: str = Field(default_factory=_new_id)

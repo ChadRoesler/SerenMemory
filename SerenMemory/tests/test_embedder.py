@@ -382,8 +382,8 @@ def test_safe_mode_allows_control_paths(path):
 
 
 @pytest.mark.parametrize("path", [
-    "/short", "/long", "/near", "/search", "/drafts", "/consolidate/run",
-    "/brief", "/short/x/promote", "/drafts/x/approve",
+    "/short", "/long", "/near", "/search", "/drafts", "/dockets",
+    "/brief", "/short/x/promote", "/drafts/x/review", "/tidy",
 ])
 def test_safe_mode_blocks_memory_paths(path):
     assert _allowed_in_safe_mode(path) is False

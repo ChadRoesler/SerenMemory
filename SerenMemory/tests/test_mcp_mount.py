@@ -2,7 +2,7 @@
 
 Gated behind `pytest.importorskip("mcp")` - without the SDK, the whole
 file skips. This file exercises the lifecycle that app.py runs at
-startup: build a FastAPI app, wire app.state.store/config/consolidator,
+startup: build a FastAPI app, wire app.state.store/config,
 call mount_mcp_routes, verify the /mcp route lands.
 """
 from __future__ import annotations
@@ -25,7 +25,6 @@ from fastapi import FastAPI
 
 from seren_memory.collections import MemoryStore
 from seren_memory.config import ConsolidatorConfig, MemoryConfig
-from seren_memory.consolidator.service import Consolidator
 
 
 # --- fixtures ----------------------------------------------------------------
@@ -41,12 +40,10 @@ def wired_app(tmp_path, fake_embedder):
         "consolidator": ConsolidatorConfig(enabled=False),
     })
     store = MemoryStore(cfg, embedding_function=fake_embedder, _allow_reset=True)
-    consolidator = Consolidator(store, cfg)
 
     app = FastAPI()
     app.state.store = store
     app.state.config = cfg
-    app.state.consolidator = consolidator
 
     yield app
     store.close()

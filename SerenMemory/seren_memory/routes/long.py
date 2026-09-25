@@ -2,7 +2,8 @@
 LongTerm routes - /long/*.
 
 THE GATED TIER. Reads are open. Direct writes are NOT exposed - long-term
-is written exclusively by the consolidator. What IS exposed:
+is written by approved draft operations (and the promote-now escape
+hatch on short-term). What IS exposed:
 
     GET  /long                  - list cores (debugging / dashboard)
     GET  /long/{id}/satellites  - the surroundings of a core
@@ -13,8 +14,8 @@ is written exclusively by the consolidator. What IS exposed:
 
 There is deliberately NO POST /long to create and NO DELETE /long/{id} to
 remove. If you want to add a long-term memory, you write it to short-term
-and let consolidation earn its promotion. If you want one gone, you flag it
-and the consolidator decides. This is the ethos made mechanical: the system
+and let a sleep earn its promotion. If you want one gone, you flag it and
+the hippocampus purges it, leaving a tombstone. This is the ethos made mechanical: the system
 won't hand you the scalpel.
 """
 from __future__ import annotations
@@ -43,7 +44,7 @@ async def list_long(request: Request, include_superseded: bool = False,
 @router.get("/{entry_id}/satellites")
 async def satellites(request: Request, entry_id: str):
     """The surroundings of a core: its supporting episodes, oldest first,
-    plus the core it superseded (if any). This is the docket around a hit."""
+    plus the core it superseded (if any). This is the draft around a hit."""
     store = request.app.state.store
     core = store.get_by_id(entry_id)
     if core is None or core.get("tier") != "long":
@@ -58,7 +59,7 @@ async def satellites(request: Request, entry_id: str):
 async def purge(request: Request, entry_id: str, body: dict = Body(...)):
     """Execute a purge now. Removes the entry, its satellites, the source
     short-terms wherever they still sit, drafts that became it, scrubs the
-    docket operations that touched it, and (purge_backups, default true)
+    draft operations that touched it, and (purge_backups, default true)
     every migration backup beside the store. Writes a tombstone that holds
     the id, the reason and what was removed - never the content.
 
@@ -86,7 +87,7 @@ async def flag_forget(request: Request, entry_id: str, body: dict = Body(...)):
     the tombstone keeps.
 
     This is not how a fact gets corrected. "I like yellow now" is a new
-    memory; the docket supersedes blue with yellow and keeps blue as
+    memory; the draft supersedes blue with yellow and keeps blue as
     history. Flagging is for what must not exist."""
     reason = (body or {}).get("reason", "").strip()
     if not reason:
