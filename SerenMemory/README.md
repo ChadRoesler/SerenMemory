@@ -184,6 +184,8 @@ history), `verbatim` - each reviewed on its own:
 | `POST /dockets`                | hippocampus| submit a docket                               |
 | `GET /dockets?status=pending`  | reviewer   | the queue (also the `list_dockets` MCP tool)  |
 | `POST /dockets/{id}/review`    | reviewer   | `{"decisions": [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "deny", "critique": "..."}]}` |
+| `POST /dockets/{id}/close`     | hippocampus | the cull: a reviewed docket whose chain has landed is closed; it leaves the reviewed queue (409 while pending) |
+| `POST /brief/{id}/consume`     | hippocampus | the brief that opened the sleep is retired once the chain lands; `GET /brief` shows open briefs only unless `include_consumed=true` |
 | `GET /long/{id}/satellites`    | anyone     | a core's surroundings                         |
 | `POST /tidy`                   | hippocampus| age out, maintain near-term, sweep, purge flagged |
 | `POST /long/{id}/purge`        | hippocampus, or the model in an emergency | execute a purge with the cascade; `GET /tombstones` |

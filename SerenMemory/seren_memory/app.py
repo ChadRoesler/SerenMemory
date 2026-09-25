@@ -370,13 +370,24 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         return {"ok": True, "id": saved.id}
 
     @app.get("/brief")
-    async def list_briefs(request: Request, limit: int = 20):
-        """List the most recent briefs, newest first. Backs the Halls
-        viewer's brief panel - lets you see steering history alongside
-        the tier collections."""
+    async def list_briefs(request: Request, limit: int = 20, include_consumed: bool = False):
+        """The open briefs, newest first - what the hippocampus's check sees.
+        A brief is the gate of a sleep: one arrives, a sleep drafts on it, and
+        it is consumed once that docket's chain has landed. include_consumed
+        is the steering history for the Halls viewer."""
         store = request.app.state.store
-        rows = store.get_recent_briefs(limit=limit)
+        rows = store.get_recent_briefs(limit=limit, include_consumed=include_consumed)
         return {"entries": rows, "count": len(rows)}
+
+    @app.post("/brief/{brief_id}/consume")
+    async def consume_brief(request: Request, brief_id: str, body: Optional[dict] = Body(None)):
+        """Retire a brief after the sleep it steered has landed. The
+        hippocampus calls this when it culls; the brief stays as history."""
+        store = request.app.state.store
+        if store.get_brief(brief_id) is None:
+            raise HTTPException(404, f"no brief '{brief_id}'")
+        store.consume_brief(brief_id, docket_id=(body or {}).get("docket_id"))
+        return {"ok": True, "consumed": brief_id}
 
     # -- Consolidator drafts (model review queue) --
     @app.get("/drafts")

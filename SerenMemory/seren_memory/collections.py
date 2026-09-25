@@ -484,20 +484,34 @@ class MemoryStore(DocketMixin):
         self.briefs.add(documents=[brief.summary], metadatas=[meta], ids=[brief.id])
         return brief
 
-    def get_latest_brief(self) -> Optional[dict[str, Any]]:
-        rows = _zip_get(self.briefs.get(include=["documents", "metadatas"]), None)
-        if not rows:
-            return None
-        # Most recent by created_at
-        rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
-        return rows[0]
+    def get_latest_brief(self, include_consumed: bool = False) -> Optional[dict[str, Any]]:
+        rows = self.get_recent_briefs(limit=1, include_consumed=include_consumed)
+        return rows[0] if rows else None
 
-    def get_recent_briefs(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Most recent N briefs by created_at. For the Halls viewer's
-        brief panel and any caller that wants to scan steering history."""
+    def get_recent_briefs(self, limit: int = 20, include_consumed: bool = False) -> list[dict[str, Any]]:
+        """Most recent N briefs by created_at. A brief is the GATE of a sleep:
+        the hippocampus checks for one, drafts on it, and marks it consumed
+        once the docket it steered has landed in long-term. The default view
+        is the open briefs - what a check should see; include_consumed is the
+        steering history for the viewer."""
         rows = _zip_get(self.briefs.get(include=["documents", "metadatas"]), None)
+        if not include_consumed:
+            rows = [r for r in rows if not r["metadata"].get("consumed_at")]
         rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
         return rows[:limit]
+
+    def get_brief(self, brief_id: str) -> Optional[dict[str, Any]]:
+        rows = _zip_get(self.briefs.get(ids=[brief_id], include=["documents", "metadatas"]), None)
+        return rows[0] if rows else None
+
+    def consume_brief(self, brief_id: str, docket_id: Optional[str] = None) -> bool:
+        """Retire a brief: it steered its sleep and the chain has closed. Kept,
+        never deleted - it is the record of what mattered that day - but no
+        check for an open brief will see it again."""
+        updates: dict[str, Any] = {"consumed_at": time.time()}
+        if docket_id:
+            updates["consumed_by_docket"] = docket_id
+        return self._apply_metadata_updates(self.briefs, brief_id, updates)
 
     # ------------------------------------------------------------------
     #  Pruned safety net

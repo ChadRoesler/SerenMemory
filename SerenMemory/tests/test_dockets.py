@@ -240,3 +240,32 @@ def test_age_out_leaves_the_evidence_under_a_pending_docket(client):
     assert aged == 1
     left = {e["id"] for e in client.get("/short").json()["entries"]}
     assert left == {s_held}, "the held fragment is evidence under review"
+
+
+# ── the brief is the gate; the cull ──────────────────────────────────────────
+
+def test_a_consumed_brief_leaves_the_open_view_but_stays_as_history(client):
+    a = client.post("/brief", json={"summary": "day one", "promote_hints": [], "noise_hints": []}).json()["id"]
+    b = client.post("/brief", json={"summary": "day two", "promote_hints": [], "noise_hints": []}).json()["id"]
+    assert [e["id"] for e in client.get("/brief").json()["entries"]] == [b, a]
+    r = client.post(f"/brief/{b}/consume", json={"docket_id": "d1"})
+    assert r.status_code == 200 and r.json()["consumed"] == b
+    assert [e["id"] for e in client.get("/brief").json()["entries"]] == [a], "the check sees only open briefs"
+    hist = client.get("/brief", params={"include_consumed": "true"}).json()["entries"]
+    assert hist[0]["id"] == b and hist[0]["metadata"]["consumed_by_docket"] == "d1" and hist[0]["metadata"]["consumed_at"]
+    assert client.post("/brief/nope/consume").status_code == 404
+
+
+def test_only_a_reviewed_docket_closes_and_closed_leaves_the_reviewed_queue(client):
+    s1 = _short(client, "a"); s2 = _short(client, "b")
+    did = _submit(client, [{"kind": "new_core", "content": "x", "source_short_ids": [s1, s2]}])
+    assert client.post(f"/dockets/{did}/close").status_code == 409, "pending still owes verdicts"
+    _review(client, did, [{"op": 0, "verdict": "approve"}])
+    assert client.get("/dockets", params={"status": "reviewed"}).json()["count"] == 1
+    r = client.post(f"/dockets/{did}/close")
+    assert r.status_code == 200 and r.json()["status"] == "closed"
+    assert client.get("/dockets", params={"status": "reviewed"}).json()["count"] == 0
+    assert client.get("/dockets", params={"status": "closed"}).json()["count"] == 1
+    assert client.get(f"/dockets/{did}").json()["status"] == "closed"
+    assert client.post(f"/dockets/{did}/close").status_code == 200, "closing twice is fine"
+    assert client.post("/dockets/nope/close").status_code == 404

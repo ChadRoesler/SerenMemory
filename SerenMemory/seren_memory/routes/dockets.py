@@ -10,6 +10,7 @@ applies. See seren_memory.docket for the shape and the reasons.
     GET  /dockets/{id}/chain      - every attempt in the docket's chain
     POST /dockets/{id}/review     - {"decisions": [{"op": 0, "verdict": "approve"},
                                                    {"op": 1, "verdict": "deny", "critique": "..."}]}
+    POST /dockets/{id}/close      - the hippocampus culls a reviewed docket once its chain has landed
 """
 from __future__ import annotations
 
@@ -77,3 +78,17 @@ async def review_docket(request: Request, docket_id: str, body: dict = Body(...)
     except DocketError as e:
         raise HTTPException(409 if "already" in str(e) else 400, str(e))
     return {"ok": True, **result}
+
+
+@router.post("/{docket_id}/close")
+async def close_docket(request: Request, docket_id: str):
+    """Close a reviewed docket: the chain has landed in long-term and the
+    hippocampus is culling. A pending docket still owes verdicts (409)."""
+    store = request.app.state.store
+    try:
+        d = store.close_docket(docket_id)
+    except KeyError:
+        raise HTTPException(404, f"no docket '{docket_id}'")
+    except DocketError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True, "id": d.id, "status": d.status.value}

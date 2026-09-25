@@ -164,6 +164,23 @@ class DocketMixin:
         chain.sort(key=lambda d: d.attempt)
         return chain
 
+    def close_docket(self, docket_id: str) -> Docket:
+        """The hippocampus's last step: every operation decided and applied
+        (or the chain ended terminal), the brief consumed - close the docket
+        so no tend examines it again. Only a reviewed docket closes; a pending
+        one still owes verdicts."""
+        d = self.get_docket(docket_id)
+        if d is None:
+            raise KeyError(docket_id)
+        if d.status == DocketStatus.CLOSED:
+            return d
+        if d.status != DocketStatus.REVIEWED:
+            raise DocketError(f"docket {docket_id} is {d.status.value}; only a reviewed docket closes")
+        d.status = DocketStatus.CLOSED
+        d.extra["closed_at"] = time.time()
+        self._save_docket(d)
+        return d
+
     def _save_docket(self, d: Docket) -> None:
         # replace, not merge: operations is a JSON list that must be rewritten whole
         self.dockets.delete(ids=[d.id])
