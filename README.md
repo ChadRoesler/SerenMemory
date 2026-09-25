@@ -5,9 +5,9 @@ local AI.
 
 You bring an LLM (any OpenAI-compatible endpoint - llama.cpp, ollama, a
 remote API). SerenMemory brings the memory: a working-memory tier, an
-open-loops tier, a durable long-term tier, and a small "consolidator" model
-that does the dream-work of deciding what's worth keeping while you're not
-looking.
+open-loops tier and a durable long-term tier. Its companion,
+**SerenHippocampus**, is the small model that does the dream-work of deciding
+what's worth keeping while you're not looking.
 
 Configure a couple of values, point it at your model, and you've got a
 memory system that *matters* - not a flat pile of vectors that drowns the
@@ -32,17 +32,19 @@ or expired. Free to write (it's the most time-sensitive tier - gating it
 would defeat the point).
 
 **LongTerm** - consolidated knowledge. Durable. The *only* gated tier:
-reads are open, but writes happen exclusively through the consolidator
-during its periodic window. **No surgical edits.** If a fact changes, the
+reads are open, but writes happen only when the main model approves what the
+hippocampus drafted during a sleep. **No surgical edits.** If a fact changes, the
 old one is superseded (kept for history), not overwritten. If you want
-something gone, you *flag* it and the consolidator decides - a flag, not a
+something gone, you *flag* it and the next sleep purges it - a flag, not a
 scalpel. (More on that philosophy below.)
 
-**The Consolidator** - a small model (2B–4B is plenty) that wakes up every
-~20 hours and does the filing: groups short-term entries by topic tag
-(exact match; untagged entries form one bucket the model sorts), promotes
-the ones that recur or matter, ages out the rest, maintains the open loops,
-honors forget-flags. It's the part that sleeps so the memory stays clean.
+**The hippocampus** - a separate service, SerenHippocampus, with a small
+model (2B-4B is plenty). A brief from the main model opens each sleep; it
+reads the short-terms, drafts what should become long-term, and the main model
+approves or denies each proposal. It also ages out the rest, maintains the
+open loops and executes forget-flags. It's the part that sleeps so the memory
+stays clean. Memory holds the data and applies what is approved; it runs no
+model of its own.
 
 ---
 
@@ -57,13 +59,11 @@ python -m seren_memory
 
 # Or with a config file
 cp seren-memory.yaml.sample seren-memory.yaml
-# edit it - at minimum, point consolidator.model_url at your LLM
 python -m seren_memory --config seren-memory.yaml
 ```
 
 First run downloads the default embedding model (`all-MiniLM-L6-v2` as ONNX,
-~80MB, CPU-friendly, no torch). After that it's offline-capable except for the
-consolidator's calls to your LLM. Naming a different `storage.embedding_model`
+~80MB, CPU-friendly, no torch). After that it's fully offline. Naming a different `storage.embedding_model`
 needs `pip install seren-memory[st]` (sentence-transformers, and torch with
 it); the installer's `--st` flag does that.
 
@@ -88,14 +88,11 @@ curl -X POST localhost:7420/search \
   -H 'content-type: application/json' \
   -d '{"query": "what does Chad prefer for paths", "n_results": 5}'
 
-# Submit a daily brief (steers the next consolidation)
+# Submit a daily brief (it opens the hippocampus's next sleep)
 curl -X POST localhost:7420/brief \
   -H 'content-type: application/json' \
   -d '{"summary": "Worked on the wipe script. Chad was tired.",
        "promote_hints": ["wipe script"], "completed_intents": []}'
-
-# Trigger consolidation manually (or let it run on its ~20h cycle)
-curl -X POST localhost:7420/consolidate/run
 ```
 
 Full endpoint list is in `seren_memory/app.py`'s module docstring.
@@ -123,7 +120,7 @@ to tune them.
 You'll notice there's no `POST /long` to create a long-term memory directly,
 and no `DELETE /long/{id}` to remove one. That's deliberate.
 
-Long-term memory is *earned* through consolidation, not injected. And it's
+Long-term memory is *earned* through a sleep, not injected. And it's
 not casually deletable, because casual deletion of an entity's memory is
 exactly the thing this design refuses to make easy. (If you've seen *Eternal
 Sunshine*, you know why "just let me erase that one memory" is a trap.)
@@ -135,56 +132,50 @@ curl -X POST localhost:7420/long/<id>/forget \
   -d '{"reason": "that fact is wrong, I changed my mind"}'
 ```
 
-The flag means *purge this*: the consolidator removes the entry on its next
-sleep and leaves a tombstone (id, reason, time - never the content), cascading
-to drafts, the pruned tier and migration backups. It exists for the
-emergency - "I pasted you my SSH key and it got committed to memory" - and
-it is deliberate: a flag is a decision, not a hint.
+The flag means *purge this*: the hippocampus purges the entry on its next
+tick and leaves a tombstone (id, reason, time - never the content), cascading
+to its satellites, its source short-terms in the pruned tier, any draft that
+named it, and migration backups. It exists for the emergency - "I pasted you
+my SSH key and it got committed to memory" - and it is deliberate: a flag is a
+decision, not a hint.
 
 **Demotion is a different thing and it is not deletion.** When a newer memory
 overrides an older one ("I like blue", then a month later "I like yellow"),
 the old one is kept and demoted: it ranks below, carries `superseded_by`, and
 recall can still say "last week you said blue, now it's yellow". Both are
-valid; one supersedes the other. That is the consolidator's job, triggered by
-the newer memory, never by the forget route.
+valid; one supersedes the other. That is a `supersede` operation in a draft,
+triggered by the newer memory, never by the forget route.
 
-> Today's code decides purge-or-demote by sniffing the reason string for words
-> like "ssn" or "password". That is drift - the substring test, not demotion -
-> and is replaced with the hippocampus split (punch list: mem-purge, mem-pii,
-> mem-reinforce).
-
-The flag is your voice. The action is the consolidator's. If you need
-something gone *right now* for a genuine emergency (a leaked secret), that's
-a real gap - see "Emergency purge" below.
+The flag is your voice. The purge is the hippocampus's.
 
 ### Emergency purge
 
-For a true "this must be gone immediately" case, stop the service and
-delete the chroma collection directory under `persist_dir`, or use a chroma
-admin script directly. We don't expose instant deletion as a casual API on
-purpose - but it's your data on your disk, and the door is there when you
-genuinely need it.
+For a true "this must be gone immediately" case, `POST /long/{id}/purge`
+(or the `purge_memory_now` MCP tool) executes the flag now instead of at the
+next tick - same cascade, same tombstone. It is still not a delete button:
+there is no route that removes a memory without leaving the tombstone.
 
 ---
 
-## The hippocampus (the consolidator, split out)
+## The hippocampus: drafts and the review
 
 The sleep cycle lives in its own service, **SerenHippocampus** (port 7424).
-It holds no store: it reads short-terms from here, writes **dockets** here,
+It holds no store: it reads short-terms from here, writes **drafts** here,
 resubmits what the reviewer denied, and purges what was flagged. Memory
 keeps the data and applies what is approved.
 
-A docket is a list of operations on long-term - `new_core`, `attach` (a
+A draft is a list of operations on long-term - `new_core`, `attach` (a
 satellite on an existing core; the core's evidence grows, its wording may be
 restated), `supersede` (the old core stays, demoted, still recallable through
 history), `verbatim` - each reviewed on its own:
 
 | route                          | who        | what                                          |
 |--------------------------------|------------|-----------------------------------------------|
-| `POST /dockets`                | hippocampus| submit a docket                               |
-| `GET /dockets?status=pending`  | reviewer   | the queue (also the `list_dockets` MCP tool)  |
-| `POST /dockets/{id}/review`    | reviewer   | `{"decisions": [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "deny", "critique": "..."}]}` |
-| `POST /dockets/{id}/close`     | hippocampus | the cull: a reviewed docket whose chain has landed is closed; it leaves the reviewed queue (409 while pending) |
+| `POST /drafts`                 | hippocampus| submit a draft                                |
+| `GET /drafts?status=pending`   | reviewer   | the queue (also the `list_drafts` MCP tool)   |
+| `GET /drafts/{id}`, `/chain`   | reviewer   | one draft with every verdict; every attempt in its chain (`get_draft`) |
+| `POST /drafts/{id}/review`     | reviewer   | `{"decisions": [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "deny", "critique": "..."}]}` (`review_draft`) |
+| `POST /drafts/{id}/close`      | hippocampus | the cull: a reviewed draft whose chain has landed is closed; it leaves the reviewed queue (409 while pending) |
 | `POST /brief/{id}/consume`     | hippocampus | the brief that opened the sleep is retired once the chain lands; `GET /brief` shows open briefs only unless `include_consumed=true` |
 | `GET /long/{id}/satellites`    | anyone     | a core's surroundings                         |
 | `POST /tidy`                   | hippocampus| age out, maintain near-term, sweep, purge flagged |
@@ -200,9 +191,22 @@ recent satellites and the superseded core along in full. Having the
 surroundings is one thing; a hit that does not say they exist is how they
 stay unread.
 
-The in-process consolidator (`consolidator.mode: thread`) still runs the old
-one-draft-per-cluster loop and is on its way out; set `mode: external` and
-run the hippocampus instead.
+Until 25 Sept 2026 these were called *dockets*. In Probe and the Corpus
+Callosum a docket is the briefing packet a search hands back, so here the
+word is draft. `/dockets/*` still answers as an unadvertised alias for one
+release, so a hippocampus built before the rename keeps working until it is
+upgraded; the store renames its `seren_dockets` collection to `seren_drafts`
+in place on first boot.
+
+**The in-process consolidator is retired** (25 Sept 2026). Memory used to run
+its own one-draft-per-cluster loop in a thread; that loop, `/consolidate/run`,
+`/consolidate/wake`, `/consolidator/status`, the old `/drafts/{id}/approve`
+queue and the `consolidate_now` / `prepare_consolidation` family of MCP tools
+are gone. Its collections (`seren_consolidator_drafts`,
+`seren_consolidator_runs`) are left on disk untouched; the old drafts are
+still scrubbed by a purge. A `consolidator:` block in an existing config still
+loads: `enabled` and `mode` are ignored, `pruned_safety_days` is read by
+`/tidy`.
 
 ---
 
@@ -255,7 +259,7 @@ Put the same block in `.vs/mcp.json` at the solution root:
   and match it here.
 
 Once connected, Copilot agent mode gets the full tool set: search memory,
-write short/near term, submit briefs, manage drafts, run consolidation.
+write short/near term, submit briefs, review the hippocampus's drafts.
 
 ### VS Code extension (optional - adds Copilot tools without agent mode)
 
@@ -280,9 +284,10 @@ it can never disagree with the chroma version underneath it (it talks to
 SerenMemory's HTTP API, never to chroma). `/viewer` is public; the API calls
 it makes carry your bearer token if you set one.
 
-Tabs for each tier, search, the consolidator's runs and drafts, and the
-migration modal when the embedder changes. It is read-mostly: it can peer,
-query and show ranked recall, approve or reject drafts, and never deletes.
+Tabs for each tier, search, the hippocampus's drafts (every operation and
+its verdict), and the migration modal when the embedder changes. It is
+read-only: it can peer, query and show ranked recall, and never deletes or
+reviews - the review is the main model's.
 
 ---
 
@@ -292,10 +297,8 @@ query and show ranked recall, approve or reject drafts, and never deletes.
 
 **systemd:** edit and install `seren-memory.service.sample`
 
-**Consolidator as a separate process:** set `consolidator.mode: external`
-in config, then drive it from cron/systemd-timer/your-own-scheduler with
-`POST /consolidate/run`. Useful if you want the API and the consolidation
-work in separate process/resource boundaries.
+**The sleep:** install SerenHippocampus beside it (Starwright wires it to
+this Memory's url and bearer).
 
 ---
 
@@ -305,10 +308,11 @@ See `seren-memory.yaml.sample` - every field is commented. The values you'll
 most likely touch:
 
 - `server.port` (default 7420)
-- `consolidator.model_url` - your LLM's OpenAI-compatible endpoint
-- `consolidator.interval_seconds` - the ~20h cycle (and yes, 20 not 24, on
-  purpose; the comment in the sample explains why)
-- `consolidator.promote_min_evidence` - how eager consolidation is
+- `lifetimes.short_term_seconds` - how long a short-term lives unpromoted
+- `consolidator.pruned_safety_days` - how long an aged-out short-term waits in
+  the pruned tier before `/tidy` sweeps it (0 = no safety net)
+
+The model, the schedule and how eager a sleep is are the hippocampus's config.
 
 Env vars (`SEREN_MEMORY_*`) override file values for Docker/systemd.
 

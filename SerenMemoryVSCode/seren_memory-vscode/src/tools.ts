@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { SerenClient, SerenApiError } from "./client";
+import { SerenClient, SerenApiError, DraftDecision } from "./client";
 
 // -- helpers ----------------------------------------------------------------
 
@@ -142,26 +142,6 @@ export class BriefTool implements vscode.LanguageModelTool<BriefInput> {
   }
 }
 
-// -- seren_memory_consolidate -----------------------------------------------
-
-export class ConsolidateTool implements vscode.LanguageModelTool<object> {
-  constructor(private readonly client: SerenClient) {}
-
-  async invoke(
-    _options: vscode.LanguageModelToolInvocationOptions<object>,
-    token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelToolResult> {
-    const signal = signalFromToken(token);
-    try {
-      await this.client.wakeConsolidator(signal);
-      const result = await this.client.runConsolidation(signal);
-      return json(result);
-    } catch (e) {
-      return err(e);
-    }
-  }
-}
-
 // -- seren_memory_preserve_verbatim -----------------------------------------
 
 interface ShortIdInput {
@@ -254,7 +234,8 @@ export class CompleteIntentTool implements vscode.LanguageModelTool<IntentIdInpu
 // -- seren_memory_list_drafts -----------------------------------------------
 
 interface ListDraftsInput {
-  status?: string;
+  status?: "pending" | "reviewed" | "closed" | "all";
+  limit?: number;
 }
 
 export class ListDraftsTool implements vscode.LanguageModelTool<ListDraftsInput> {
@@ -264,9 +245,11 @@ export class ListDraftsTool implements vscode.LanguageModelTool<ListDraftsInput>
     options: vscode.LanguageModelToolInvocationOptions<ListDraftsInput>,
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
+    const { status = "pending", limit = 20 } = options.input;
     try {
+      // "all" is the tool's spelling of the backend's no-filter.
       const result = await this.client.listDrafts(
-        options.input.status, signalFromToken(token));
+        status === "all" ? undefined : status, limit, signalFromToken(token));
       return json(result);
     } catch (e) {
       return err(e);
@@ -274,13 +257,13 @@ export class ListDraftsTool implements vscode.LanguageModelTool<ListDraftsInput>
   }
 }
 
-// -- seren_memory_draft_chain -----------------------------------------------
+// -- seren_memory_get_draft -------------------------------------------------
 
 interface DraftIdInput {
   draft_id: string;
 }
 
-export class DraftChainTool implements vscode.LanguageModelTool<DraftIdInput> {
+export class GetDraftTool implements vscode.LanguageModelTool<DraftIdInput> {
   constructor(private readonly client: SerenClient) {}
 
   async invoke(
@@ -288,7 +271,7 @@ export class DraftChainTool implements vscode.LanguageModelTool<DraftIdInput> {
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
     try {
-      const result = await this.client.getDraftChain(
+      const result = await this.client.getDraft(
         options.input.draft_id, signalFromToken(token));
       return json(result);
     } catch (e) {
@@ -297,73 +280,25 @@ export class DraftChainTool implements vscode.LanguageModelTool<DraftIdInput> {
   }
 }
 
-// -- seren_memory_approve_draft ---------------------------------------------
+// -- seren_memory_review_draft ----------------------------------------------
 
-interface ApproveInput {
+interface ReviewInput {
   draft_id: string;
+  decisions: DraftDecision[];
   note?: string;
 }
 
-export class ApproveDraftTool implements vscode.LanguageModelTool<ApproveInput> {
+export class ReviewDraftTool implements vscode.LanguageModelTool<ReviewInput> {
   constructor(private readonly client: SerenClient) {}
 
   async invoke(
-    options: vscode.LanguageModelToolInvocationOptions<ApproveInput>,
+    options: vscode.LanguageModelToolInvocationOptions<ReviewInput>,
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
+    const { draft_id, decisions, note } = options.input;
     try {
-      const result = await this.client.approveDraft(
-        options.input.draft_id, options.input.note, signalFromToken(token));
-      return json(result);
-    } catch (e) {
-      return err(e);
-    }
-  }
-}
-
-// -- seren_memory_reject_draft ----------------------------------------------
-
-interface RejectInput {
-  draft_id: string;
-  critique: string;
-}
-
-export class RejectDraftTool implements vscode.LanguageModelTool<RejectInput> {
-  constructor(private readonly client: SerenClient) {}
-
-  async invoke(
-    options: vscode.LanguageModelToolInvocationOptions<RejectInput>,
-    token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelToolResult> {
-    try {
-      const result = await this.client.rejectDraft(
-        options.input.draft_id, options.input.critique, signalFromToken(token));
-      return json(result);
-    } catch (e) {
-      return err(e);
-    }
-  }
-}
-
-// -- seren_memory_select_draft ----------------------------------------------
-
-interface SelectInput {
-  draft_id: string;
-  edited_content?: string;
-  note?: string;
-}
-
-export class SelectDraftTool implements vscode.LanguageModelTool<SelectInput> {
-  constructor(private readonly client: SerenClient) {}
-
-  async invoke(
-    options: vscode.LanguageModelToolInvocationOptions<SelectInput>,
-    token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelToolResult> {
-    const { draft_id, edited_content, note } = options.input;
-    try {
-      const result = await this.client.selectDraft(
-        draft_id, edited_content, note, signalFromToken(token));
+      const result = await this.client.reviewDraft(
+        draft_id, decisions, note, signalFromToken(token));
       return json(result);
     } catch (e) {
       return err(e);

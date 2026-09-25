@@ -1,8 +1,8 @@
 {
   "name": "seren-memory",
   "displayName": "Seren Memory",
-  "description": "Gives GitHub Copilot and the user access to the SerenMemory store - search, write, brief, consolidate, and manage drafts.",
-  "version": "0.2.0",
+  "description": "Gives GitHub Copilot and the user access to the SerenMemory store - search, write, brief, and review the hippocampus's drafts.",
+  "version": "0.3.0",
   "publisher": "ChadRoesler",
   "repository": {
     "type": "git",
@@ -104,7 +104,7 @@
             "include_long": {
               "type": "boolean",
               "default": true,
-              "description": "Search long-term (consolidated durable facts)."
+              "description": "Search long-term (durable facts approved from hippocampus drafts)."
             },
             "include_superseded": {
               "type": "boolean",
@@ -128,7 +128,7 @@
         "displayName": "Write Memory",
         "userDescription": "Write a memory to the short- or near-term tier.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Store a memory entry in the short-term or near-term tier. Use short-term ('short') for transient facts (session notes, observations); use near-term ('near') for future-tense intents ('bring this up later', 'do X next time'). LONG-TERM CANNOT BE WRITTEN DIRECTLY - long-term is the gated tier (writes happen only through consolidation). To get a fact into long-term immediately, use seren_memory_promote_now after writing to short.",
+        "modelDescription": "Store a memory entry in the short-term or near-term tier. Use short-term ('short') for transient facts (session notes, observations); use near-term ('near') for future-tense intents ('bring this up later', 'do X next time'). LONG-TERM CANNOT BE WRITTEN DIRECTLY - long-term is the gated tier, written only when the main model approves a SerenHippocampus draft (see seren_memory_review_draft). To get a fact into long-term immediately, use seren_memory_promote_now after writing to short.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -138,7 +138,7 @@
             },
             "topic": {
               "type": "string",
-              "description": "Topic label - drives consolidation clustering. Use the same topic for related entries so the consolidator can cluster them."
+              "description": "Topic label - drives the hippocampus's clustering. Use the same topic for related entries so the hippocampus drafts them together."
             },
             "tier": {
               "type": "string",
@@ -165,9 +165,9 @@
         ],
         "toolReferenceName": "serenBrief",
         "displayName": "Submit Brief",
-        "userDescription": "Submit a steering brief for the next consolidation.",
+        "userDescription": "Submit a brief that opens the hippocampus's next sleep.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Submit a steering brief for the next consolidator cycle. The brief tells the consolidator what mattered in this period and which topics to promote vs. ignore. promote_hints and noise_hints are matched against entry topics+content during cluster promotion - they ARE the lever for steering what becomes long-term memory. Use them.",
+        "modelDescription": "Submit a steering brief. A brief OPENS SerenHippocampus's next sleep and steers the draft it writes: what mattered in this period and which topics to promote vs. ignore. promote_hints and noise_hints are matched against each topic cluster's topic+content when the hippocampus decides what to draft - they ARE the lever for steering what becomes long-term memory. Use them.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -180,43 +180,26 @@
               "items": {
                 "type": "string"
               },
-              "description": "Topic phrases worth remembering durably. Lowers cluster-promotion threshold for matching entries."
+              "description": "Topic phrases worth remembering durably. A matching cluster is drafted even from a single entry."
             },
             "noise_hints": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Topic phrases that are noise. Raises cluster-promotion threshold for matching entries."
+              "description": "Topic phrases that are noise. A matching cluster is not drafted."
             },
             "completed_intents": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Near-term intents that look done; the consolidator promotes them to long-term as a record."
+              "description": "Near-term intents that look done this period."
             }
           },
           "required": [
             "summary"
           ]
-        }
-      },
-      {
-        "name": "seren_memory_consolidate",
-        "tags": [
-          "seren",
-          "memory",
-          "consolidate"
-        ],
-        "toolReferenceName": "serenConsolidate",
-        "displayName": "Run Consolidation",
-        "userDescription": "Trigger a consolidation pass now.",
-        "canBeReferencedInPrompt": true,
-        "modelDescription": "Trigger the SerenMemory consolidator to cluster and synthesise short-term memories into long-term drafts. REQUIRES a configured consolidator model (a local LLM, typically Nemotron-3-Nano or similar). Without one, the synthesis falls back to mechanical (longest entry per cluster). For deploys with no local LLM, prefer waiting for the next scheduled cycle.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {}
         }
       },
       {
@@ -230,7 +213,7 @@
         "displayName": "Preserve Memory Verbatim",
         "userDescription": "Flag a short-term entry for verbatim promotion.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Mark a short-term entry for verbatim promotion on the next consolidator cycle - preserves exact phrasing instead of having the consolidator synthesise. Use when the WORDS matter, not just the gist (a specific quote, a precise spec, a verbatim user statement). Also pins the entry so it survives aging until the cycle runs.",
+        "modelDescription": "Mark a short-term entry for verbatim promotion at SerenHippocampus's next sleep - the hippocampus drafts it as a verbatim operation that keeps the exact phrasing instead of synthesising. Use when the WORDS matter, not just the gist (a specific quote, a precise spec, a verbatim user statement). Also pins the entry so it survives aging until the sleep runs. Like every draft operation, it lands in long-term only when you approve it.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -255,7 +238,7 @@
         "displayName": "Promote Memory Now",
         "userDescription": "Promote a short-term entry to long-term immediately.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Immediately move a short-term entry to long-term verbatim, skipping the consolidator cycle entirely. Use when you KNOW a fact is durable and shouldn't wait for the next cycle - for example, after the user explicitly tells you to remember something. This is the only way to put a specific fact into long-term immediately (direct long-term writes are forbidden by design - consolidator owns long-term writes).",
+        "modelDescription": "Immediately move a short-term entry to long-term verbatim, skipping the hippocampus's sleep and draft review entirely. Use when you KNOW a fact is durable and shouldn't wait for the next sleep - for example, after the user explicitly tells you to remember something. This is the only way to put a specific fact into long-term immediately (direct long-term writes are forbidden by design - otherwise long-term is written only by approving hippocampus drafts).",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -278,9 +261,9 @@
         ],
         "toolReferenceName": "serenForgetLong",
         "displayName": "Forget Long-Term Memory",
-        "userDescription": "Flag a long-term memory to be forgotten (the Lacuna gate).",
+        "userDescription": "Flag a long-term memory to be purged (the Lacuna gate).",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Flag a long-term memory for the consolidator to handle. PII keywords (ssn, password, credit card, etc.) trigger purge; other reasons demote the entry (zero evidence_count, marks as demoted). Never a surgical delete - the Lacuna gate is a FLAG, not a scalpel. Use when the user asks to forget something, or when you discover a long-term fact is wrong or outdated.",
+        "modelDescription": "Flag a long-term memory for PURGING. The flag means purge: SerenHippocampus executes it on its next tick, with the cascade and a tombstone that keeps the id and the reason, never the content. Never a surgical delete from here - the Lacuna gate is a FLAG, not a scalpel. Use when the user asks to forget something, or for what must not exist (a pasted secret, PII). This is NOT how a wrong or outdated fact gets corrected: write the corrected fact to short-term and let a draft supersede the old core (the old one stays as demoted history).",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -290,7 +273,7 @@
             },
             "reason": {
               "type": "string",
-              "description": "Why this should be forgotten. Specific reasons help the consolidator decide (purge vs. demote vs. supersede)."
+              "description": "Why this must be purged. Required, and the only thing the tombstone keeps."
             }
           },
           "required": [
@@ -310,7 +293,7 @@
         "displayName": "Complete Near-Term Intent",
         "userDescription": "Mark a near-term intent as acted on.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Mark a near-term intent as ACTED ON (not merely referenced). The consolidator promotes completed intents to long-term as a record of 'we did this'. Without this call, intents accumulate forever and never promote.",
+        "modelDescription": "Mark a near-term intent as ACTED ON (not merely referenced). At the hippocampus's next sleep (its /tidy step) a completed intent leaves the open-loop list and becomes a long-term record. Without this call, intents accumulate forever.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -333,9 +316,9 @@
         ],
         "toolReferenceName": "serenListDrafts",
         "displayName": "List Drafts",
-        "userDescription": "List consolidation drafts awaiting review.",
+        "userDescription": "List the hippocampus's drafts awaiting review.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "List consolidation drafts awaiting model review. Filter by status: pending, approved, rejected, or requires_selection.",
+        "modelDescription": "The review queue. A draft is what SerenHippocampus proposes after a sleep: a list of operations on long-term (new_core, attach, supersede, verbatim), each reviewed on its own. status=pending is the queue; reviewed is history; closed means the chain has landed and the hippocampus culled it; all is everything. Newest first. Read a draft with seren_memory_get_draft before reviewing it.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -343,33 +326,39 @@
               "type": "string",
               "enum": [
                 "pending",
-                "approved",
-                "rejected",
-                "requires_selection"
+                "reviewed",
+                "closed",
+                "all"
               ],
-              "description": "Filter drafts by status. Omit for all drafts."
+              "default": "pending",
+              "description": "Filter drafts by status. 'all' returns every draft."
+            },
+            "limit": {
+              "type": "integer",
+              "default": 20,
+              "description": "Max drafts to return."
             }
           }
         }
       },
       {
-        "name": "seren_memory_draft_chain",
+        "name": "seren_memory_get_draft",
         "tags": [
           "seren",
           "memory",
           "drafts"
         ],
-        "toolReferenceName": "serenDraftChain",
-        "displayName": "Get Draft Chain",
-        "userDescription": "Show every synthesis attempt for one cluster.",
+        "toolReferenceName": "serenGetDraft",
+        "displayName": "Get Draft",
+        "userDescription": "Show one draft with every operation and its verdict.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Retrieve the full redraft chain for a draft - all attempts, their critiques, and statuses. Use this when a draft has requires_selection status to compare all attempts before selecting the best one.",
+        "modelDescription": "One draft with every operation (index, kind, content, topic, target_core_id, rationale) and its verdict so far (status, critique). Also shows cluster_id, attempt, and terminal - terminal=true marks the last permitted attempt in the chain, the only time an approval may carry edited_content. Read this before seren_memory_review_draft.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "draft_id": {
               "type": "string",
-              "description": "ID of any draft in the chain."
+              "description": "ID of the draft to read."
             }
           },
           "required": [
@@ -378,94 +367,66 @@
         }
       },
       {
-        "name": "seren_memory_approve_draft",
+        "name": "seren_memory_review_draft",
         "tags": [
           "seren",
           "memory",
           "drafts"
         ],
-        "toolReferenceName": "serenApproveDraft",
-        "displayName": "Approve Draft",
-        "userDescription": "Approve a draft into long-term memory.",
+        "toolReferenceName": "serenReviewDraft",
+        "displayName": "Review Draft",
+        "userDescription": "Approve or deny each operation in a draft.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Approve a pending consolidation draft, committing it to long-term memory.",
+        "modelDescription": "Approve or deny a draft's operations, one verdict each. Approving APPLIES the operation now: a new core, a satellite attached to a core (and the core's evidence grows), a supersession (the old core stays, demoted), or a verbatim core. Denying records the critique; the hippocampus redrafts that operation and resubmits it as the next attempt in the chain. A deny needs a critique, and CRITIQUES SHOULD BE SPECIFIC - 'conflates X with Y; separate them' beats 'wrong vibe' - the next attempt is written from them. edited_content on an approval is accepted only on a terminal draft (the last permitted attempt); otherwise deny and let the loop do its job. An operation already decided cannot be decided again (409).",
         "inputSchema": {
           "type": "object",
           "properties": {
             "draft_id": {
               "type": "string",
-              "description": "ID of the draft to approve."
+              "description": "ID of the draft to review."
+            },
+            "decisions": {
+              "type": "array",
+              "description": "One verdict per operation, e.g. [{\"op\": 0, \"verdict\": \"approve\"}, {\"op\": 1, \"verdict\": \"deny\", \"critique\": \"conflates X with Y; separate them\"}]. Operations left out stay pending.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "integer",
+                    "description": "The operation's index in the draft."
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "deny"
+                    ],
+                    "description": "approve applies the operation now; deny sends it back with the critique."
+                  },
+                  "critique": {
+                    "type": "string",
+                    "description": "Required on deny: what to fix. Be concrete - the redraft is written from it."
+                  },
+                  "edited_content": {
+                    "type": "string",
+                    "description": "On approve, terminal drafts only: your revision, applied instead of the operation's content."
+                  }
+                },
+                "required": [
+                  "op",
+                  "verdict"
+                ]
+              },
+              "minItems": 1
             },
             "note": {
               "type": "string",
-              "description": "Optional confirmation note recorded with the approval."
-            }
-          },
-          "required": [
-            "draft_id"
-          ]
-        }
-      },
-      {
-        "name": "seren_memory_reject_draft",
-        "tags": [
-          "seren",
-          "memory",
-          "drafts"
-        ],
-        "toolReferenceName": "serenRejectDraft",
-        "displayName": "Reject Draft",
-        "userDescription": "Reject a draft with a critique to trigger a redraft.",
-        "canBeReferencedInPrompt": true,
-        "modelDescription": "Reject a consolidation draft with a critique. The consolidator will redraft up to the configured retry limit. Once the limit is reached, the chain moves to requires_selection. CRITIQUE SHOULD BE SPECIFIC - 'you conflated X with Y, separate them and emphasise Y' beats 'wrong vibe'. The next attempt sees the critique + all previous attempts as steering.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "draft_id": {
-              "type": "string",
-              "description": "ID of the draft to reject."
-            },
-            "critique": {
-              "type": "string",
-              "description": "Specific reason for rejection; guides the redraft. Be concrete about what's wrong."
+              "description": "Optional note recorded with the review."
             }
           },
           "required": [
             "draft_id",
-            "critique"
-          ]
-        }
-      },
-      {
-        "name": "seren_memory_select_draft",
-        "tags": [
-          "seren",
-          "memory",
-          "drafts"
-        ],
-        "toolReferenceName": "serenSelectDraft",
-        "displayName": "Select Best Draft",
-        "userDescription": "Select the best draft from a requires_selection chain.",
-        "canBeReferencedInPrompt": true,
-        "modelDescription": "When a draft chain has requires_selection status, select the best draft from all attempts to commit to long-term memory. Use seren_memory_draft_chain first to compare all attempts. Optionally provide edited_content to commit a revised version instead of the draft as-is - use this when none of the chain attempts is quite right but one is closest, and a small edit fixes it.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "draft_id": {
-              "type": "string",
-              "description": "ID of the draft attempt to select as the best."
-            },
-            "edited_content": {
-              "type": "string",
-              "description": "Optional revised text to commit instead of the draft. Omit to commit the draft unchanged. Empty string is rejected with an error - use this field only when you genuinely have a revision."
-            },
-            "note": {
-              "type": "string",
-              "description": "Optional note recorded with the selection."
-            }
-          },
-          "required": [
-            "draft_id"
+            "decisions"
           ]
         }
       }

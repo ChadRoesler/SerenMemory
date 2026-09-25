@@ -23,7 +23,7 @@ async def add_near(request: Request, entry: NearTermEntry = Body(...)):
 @router.get("")
 async def list_near(request: Request, include_completed: bool = False):
     """List open loops. By default hides completed ones (they're awaiting
-    promotion to long-term by the consolidator)."""
+    becoming a long-term record at the next /tidy)."""
     store = request.app.state.store
     rows = store.get_near_all()
     if not include_completed:
@@ -34,8 +34,8 @@ async def list_near(request: Request, include_completed: bool = False):
 
 @router.post("/{entry_id}/complete")
 async def complete_near(request: Request, entry_id: str):
-    """Mark an intent as ACTED ON (not merely referenced). The consolidator
-    promotes completed intents to long-term as a record. This is a status
+    """Mark an intent as ACTED ON (not merely referenced). The next /tidy
+    (the hippocampus's sleep) turns it into a long-term record. This is a status
     flip on an entry you own, not a content edit."""
     store = request.app.state.store
     ok = store.update_near(entry_id, {

@@ -2,14 +2,10 @@
 Smoke test for SerenMemory.
 
 Boots the app with an isolated temp persist dir, exercises the full loop:
-write short -> write near -> search -> submit brief -> consolidate -> verify.
+write short -> write near -> search -> submit brief -> draft -> review -> verify.
 
-The consolidator's model call is monkeypatched so the test doesn't need a
-live LLM - we verify the MECHANICAL pipeline (clustering, promotion, aging,
-near-term maintenance), which is the part that can break silently. The model
-synthesis quality is a separate (manual) concern.
-
-Run:  pytest tests/test_smoke.py -v
+Consolidation is SerenHippocampus's; here a test submits the draft it
+would, and reviews it the way the main model would.
 """
 from __future__ import annotations
 
@@ -19,23 +15,12 @@ from pathlib import Path
 import pytest
 
 from seren_memory.config import MemoryConfig, ConsolidatorConfig
-from seren_memory.consolidator import service as svc_mod
 
 
 @pytest.fixture
-def client(make_client, monkeypatch):
-    """FakeEmbedder and approve_pending_drafts live in conftest.py."""
-    def fake_model(self, prompt, max_tokens=200):
-        return "CONSOLIDATED: " + prompt.split("Fragments:")[-1][:50]
-
-    monkeypatch.setattr(svc_mod.Consolidator, "_call_model", fake_model)
-    return make_client(MemoryConfig(
-        consolidator=ConsolidatorConfig(
-            enabled=False,
-            promote_min_evidence=2,
-            pruned_safety_days=0,
-        ),
-    ))
+def client(make_client):
+    """FakeEmbedder lives in conftest.py."""
+    return make_client(MemoryConfig(consolidator=ConsolidatorConfig(pruned_safety_days=0)))
 
 
 def test_root_and_health(client):
@@ -96,82 +81,45 @@ def test_search_unified(client):
     assert set(body["searched_tiers"]) <= {"short", "near", "long"}
 
 
-def test_consolidation_promotes_cluster(client, approve_pending_drafts):
-    # Write 3 entries on the same topic - should cluster + draft.
-    for i in range(3):
-        client.post("/short", json={
-            "content": f"Chad mentioned liking the color yellow ({i})",
-            "topic": "preferences",
-        })
+def _core(client, content, topic):
+    """What a sleep does, end to end: shorts, a draft that consumes them,
+    the main model's approval. Returns the long-term id."""
+    ids = [client.post("/short", json={"content": f"{content} ({i})", "topic": topic}).json()["id"]
+           for i in range(2)]
+    d = client.post("/drafts", json={"summary": "tonight", "operations": [
+        {"kind": "new_core", "content": content, "topic": topic, "source_short_ids": ids}]}).json()
+    r = client.post(f"/drafts/{d['id']}/review", json={"decisions": [{"op": 0, "verdict": "approve"}]})
+    assert r.status_code == 200, r.text
+    return client.get(f"/drafts/{d['id']}").json()["operations"][0]["long_term_id"]
 
+
+def test_an_approved_draft_lands_in_long_term(client):
     before = client.get("/long").json()["count"]
-    report = client.post("/consolidate/run").json()["report"]
-
-    # Wave 2: cluster synthesis writes drafts; promotion is model-review-gated.
-    assert report["drafted"] >= 1
-    assert report["promoted"] == 0  # nothing promotes without approval
-
-    # Step the gate - same call the Halls viewer's approve button makes.
-    approved = approve_pending_drafts(client)
-    assert approved >= 1
-
-    after = client.get("/long").json()["count"]
-    assert after > before
+    lid = _core(client, "Chad mentioned liking the color yellow", "preferences")
+    assert lid
+    assert client.get("/long").json()["count"] > before
 
 
-def test_consolidation_promotes_completed_near(client):
-    r = client.post("/near", json={"intent": "test the consolidator", "topic": "dev"})
+def test_tidy_records_a_completed_intent(client):
+    r = client.post("/near", json={"intent": "test the hippocampus", "topic": "dev"})
     eid = r.json()["id"]
     client.post(f"/near/{eid}/complete")
 
-    report = client.post("/consolidate/run").json()["report"]
-    assert report["near_completed_promoted"] >= 1
+    client.post("/tidy", json={})
 
     # The completed intent should now be GONE from near and recorded in long.
     near = client.get("/near", params={"include_completed": True}).json()
     assert all(e["id"] != eid for e in near["entries"])
 
 
-def test_forget_flag_does_not_instantly_delete(client, approve_pending_drafts):
-    # Promote something to long-term first (consolidate -> approve draft).
-    for i in range(2):
-        client.post("/short", json={"content": f"flag test entry {i}", "topic": "flagtest"})
-    client.post("/consolidate/run")
-    approve_pending_drafts(client)
+def test_a_forget_flag_waits_for_the_purge(client):
+    target = _core(client, "flag test entry", "flagtest")
 
-    longs = client.get("/long").json()["entries"]
-    assert longs, "expected a promoted long-term entry"
-    target = longs[0]["id"]
-
-    # Flag it - should NOT delete immediately
-    f = client.post(f"/long/{target}/forget", json={"reason": "test disagreement"})
+    # Flag it - should NOT delete immediately: the flag is a request
+    f = client.post(f"/long/{target}/forget", json={"reason": "contains my SSN"})
     assert f.json()["ok"]
-    still_there = client.get("/long").json()["entries"]
-    assert any(e["id"] == target for e in still_there), "flag should not instant-delete"
+    assert any(e["id"] == target for e in client.get("/long").json()["entries"]),         "flag should not instant-delete"
 
-    # After consolidation, non-PII flag demotes (evidence -> 0), keeps content.
-    # No approval step here - forget-handling is a direct consolidator action,
-    # not a draft-creating one.
-    client.post("/consolidate/run")
-    after = client.get("/long").json()["entries"]
-    demoted = next((e for e in after if e["id"] == target), None)
-    assert demoted is not None
-    assert demoted["metadata"].get("evidence_count") == 0
-
-
-def test_pii_flag_purges(client, approve_pending_drafts):
-    for i in range(2):
-        client.post("/short", json={"content": f"pii test {i}", "topic": "piitest"})
-    client.post("/consolidate/run")
-    approve_pending_drafts(client)
-
-    longs = client.get("/long").json()["entries"]
-    assert longs, "expected a promoted long-term entry"
-    target = longs[0]["id"]
-
-    client.post(f"/long/{target}/forget", json={"reason": "contains my SSN"})
-    client.post("/consolidate/run")
-    # PII purge is also a direct consolidator action - no draft to approve.
-
-    after = client.get("/long").json()["entries"]
-    assert all(e["id"] != target for e in after), "PII flag should purge on consolidation"
+    # the hippocampus's tick purges what is flagged
+    client.post("/tidy", json={"age_out": False, "near": False, "sweep": False, "purge": True})
+    assert all(e["id"] != target for e in client.get("/long").json()["entries"]),         "a flagged entry is purged on the next tidy"

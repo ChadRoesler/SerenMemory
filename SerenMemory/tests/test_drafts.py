@@ -1,446 +1,318 @@
 """
-Consolidator drafts (model review queue) - direct lifecycle tests.
+The draft: what the hippocampus proposes, reviewed per operation, applied by
+the store. And the purge: the forget flag executed, with a cascade and a
+tombstone. Settled with Chad 23 Sept 2026 (see seren_memory.draft).
 
-Wave 2 routed cluster synthesis through ``seren_consolidator_drafts``. The
-contract this file documents:
-
-- consolidate writes drafts; long-term stays empty until the model approves
-- approve: commits the draft to long-term, archives source shorts to the
-  pruned tier (the "wrapped deeper" path), and removes them from short.
-  Draft status -> APPROVED with a forward link to the new long-term id.
-- reject: stores the critique, triggers a redraft from the consolidator,
-  increments attempt count. Shorts stay in place for the next synthesis.
-  Status -> REJECTED; new PENDING draft appears in the chain.
-- After max_redraft_attempts rejections, the chain flips to
-  requires_selection - the model must use GET /drafts/{id}/chain to compare
-  all attempts, then POST /drafts/{id}/select to commit the best one.
-- both approve and reject are idempotent over re-doing (returns 409).
-- reject requires a critique (400 without one).
-- missing draft id returns 404 on either action.
-- ``GET /drafts?status=pending`` filters out already-reviewed entries.
-
-Verbatim peel-off and completed-near tests live in test_smoke.py - those
-paths bypass the draft queue intentionally.
+Pinned here:
+- a draft is a list of operations; each gets its own verdict
+- approving new_core / verbatim creates a core; attach creates a satellite
+  and grows the core's evidence (and may restate it); supersede creates a
+  new core and demotes the old one, which stays recallable through history
+- recall returns cores only; satellites and superseded cores come back
+  only when asked; /long/{id}/satellites is the surroundings
+- denying needs a critique; a draft is reviewed once every op has a verdict;
+  re-deciding an operation is a 409; edited_content is refused off a
+  terminal draft
+- purge removes the core AND its satellites AND the source shorts in pruned,
+  scrubs the draft ops that touched it, removes backups, and leaves a
+  tombstone with no content in it
+- /tidy runs the mechanical steps and, when asked, purges flagged entries
 """
 from __future__ import annotations
+
+import json
 
 import pytest
 
 from seren_memory.config import MemoryConfig, ConsolidatorConfig
-from seren_memory.consolidator import service as svc_mod
-
-
-# -- fixtures -----------------------------------------------------------------
 
 
 @pytest.fixture
-def client(make_client, monkeypatch):
-    """FakeEmbedder lives in conftest.py. promote_min_evidence=2 so a 2-entry
-    cluster reliably drafts without needing brief hints.
-    max_redraft_attempts=2 keeps redraft-loop tests fast.
-    """
-    def fake_model(self, prompt, max_tokens=200):
-        return "CONSOLIDATED: " + prompt.split("Fragments:")[-1][:50]
-
-    monkeypatch.setattr(svc_mod.Consolidator, "_call_model", fake_model)
-    return make_client(MemoryConfig(
-        consolidator=ConsolidatorConfig(
-            enabled=False,
-            promote_min_evidence=2,
-            pruned_safety_days=0,
-            max_redraft_attempts=2,
-        ),
-    ))
+def client(make_client):
+    return make_client(MemoryConfig(consolidator=ConsolidatorConfig(enabled=False, pruned_safety_days=1)))
 
 
-def _make_pending_draft(client, topic: str = "drafttest", n: int = 2) -> str:
-    """Write n short entries on the same topic and consolidate so a draft
-    appears. Returns the draft id.
-    """
-    for i in range(n):
-        client.post("/short", json={"content": f"{topic} fragment {i}", "topic": topic})
-    report = client.post("/consolidate/run").json()["report"]
-    assert report["drafted"] >= 1, "expected a draft from the cluster"
-    pending = client.get("/drafts", params={"status": "pending"}).json()["entries"]
-    assert pending, "expected a pending draft to be queued"
-    return pending[0]["id"]
+def _short(client, content, topic="pref"):
+    r = client.post("/short", json={"content": content, "topic": topic})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
 
 
-# -- approve happy path -------------------------------------------------------
+def _submit(client, ops, **kw):
+    r = client.post("/drafts", json={"summary": kw.pop("summary", "tonight"), "operations": ops, **kw})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
 
 
-def test_approve_creates_long_archives_shorts(client):
-    """Approve commits the draft to long-term, archives source shorts, and
-    removes them from short. The shorts_archived count surfaces in the
-    response for audit.
-    """
-    short_before = client.get("/short").json()["count"]
-    draft_id = _make_pending_draft(client, topic="approve_happy", n=2)
-    short_after_consolidate = client.get("/short").json()["count"]
-    long_before = client.get("/long").json()["count"]
+def _review(client, draft_id, decisions, expect=200):
+    r = client.post(f"/drafts/{draft_id}/review", json={"decisions": decisions})
+    assert r.status_code == expect, r.text
+    return r.json()
 
-    assert short_after_consolidate == short_before + 2
-    assert long_before == 0
 
-    r = client.post(f"/drafts/{draft_id}/approve")
+def _long_ids(client, **params):
+    return {e["id"]: e for e in client.get("/long", params=params).json()["entries"]}
+
+
+# ── operations ───────────────────────────────────────────────────────────────
+
+def test_new_core_and_verbatim_become_cores_and_consume_their_shorts(client):
+    s1 = _short(client, "chad prefers tabs in makefiles")
+    s2 = _short(client, "tabs again, in the makefile")
+    s3 = _short(client, "never piss on an electric fence", topic="lesson")
+    did = _submit(client, [
+        {"kind": "new_core", "content": "Chad prefers tabs in makefiles.", "topic": "pref",
+         "source_short_ids": [s1, s2], "evidence_count": 2, "rationale": "two nights running"},
+        {"kind": "verbatim", "content": "never piss on an electric fence", "topic": "lesson",
+         "source_short_ids": [s3]},
+    ])
+    out = _review(client, did, [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "approve"}])
+    assert out["status"] == "reviewed" and out["approved"] == 2
+    longs = _long_ids(client)
+    assert len(longs) == 2
+    verbatim = next(e for e in longs.values() if e["content"] == "never piss on an electric fence")
+    assert verbatim["metadata"]["kind"] == "core" and verbatim["metadata"]["preserved_verbatim"] is True
+    assert client.get("/short").json()["count"] == 0, "approved operations consume their shorts"
+    pruned = client.app.state.store.pruned.get(include=[])["ids"]
+    assert set(pruned) == {s1, s2, s3}, "consumed shorts are archived, not lost"
+
+
+def test_attach_adds_a_satellite_grows_the_core_and_may_restate_it(client):
+    core = _submit(client, [{"kind": "new_core", "content": "Chad likes blue.", "topic": "color",
+                             "evidence_count": 2}])
+    core_id = _review(client, core, [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
+    s = _short(client, "picked the blue theme again")
+    att = _submit(client, [{"kind": "attach", "target_core_id": core_id,
+                            "content": "Picked the blue theme again on 23 Sept.",
+                            "restated_content": "Chad likes blue; he picks it every time.",
+                            "source_short_ids": [s], "evidence_count": 1}])
+    res = _review(client, att, [{"op": 0, "verdict": "approve"}])["results"][0]
+    assert res["kind"] == "attach" and res["restated"] and res["evidence_count"] == 3
+    longs = _long_ids(client)
+    assert list(longs) == [core_id], "the satellite is not listed as a core"
+    assert longs[core_id]["content"] == "Chad likes blue; he picks it every time."
+    assert longs[core_id]["metadata"]["restated_from"] == "Chad likes blue."
+    around = client.get(f"/long/{core_id}/satellites").json()
+    assert around["count"] == 1 and around["satellites"][0]["metadata"]["core_id"] == core_id
+    assert around["satellites"][0]["id"] == res["satellite_id"]
+    hits = client.post("/search", json={"query": "blue theme", "n_results": 5}).json()["hits"]
+    assert {h["id"] for h in hits if h["tier"] == "long"} == {core_id}, "recall returns the core, not the satellite"
+    hits = client.post("/search", json={"query": "blue theme", "n_results": 5,
+                                        "include_satellites": True}).json()["hits"]
+    assert res["satellite_id"] in {h["id"] for h in hits}
+
+
+def test_supersede_keeps_the_old_core_demoted_and_recallable_as_history(client):
+    old = _review(client, _submit(client, [{"kind": "new_core", "content": "Chad likes blue.", "topic": "color"}]),
+                  [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
+    new = _review(client, _submit(client, [{"kind": "supersede", "target_core_id": old,
+                                            "content": "Chad likes yellow now.", "topic": "color"}]),
+                  [{"op": 0, "verdict": "approve"}])["results"][0]
+    assert new["superseded"] == old
+    live = _long_ids(client)
+    assert list(live) == [new["long_term_id"]]
+    hist = _long_ids(client, include_superseded=True)
+    assert hist[old]["metadata"]["superseded_by"] == new["long_term_id"]
+    assert hist[old]["content"] == "Chad likes blue.", "blue is still there, demoted"
+    hits = client.post("/search", json={"query": "favourite colour", "n_results": 5,
+                                        "include_superseded": True}).json()["hits"]
+    assert {old, new["long_term_id"]} <= {h["id"] for h in hits}
+    around = client.get(f"/long/{new['long_term_id']}/satellites").json()
+    assert around["supersedes"]["id"] == old
+
+
+# ── review discipline ────────────────────────────────────────────────────────
+
+def test_each_operation_gets_its_own_verdict_and_a_denial_needs_a_critique(client):
+    did = _submit(client, [
+        {"kind": "new_core", "content": "A", "topic": "t"},
+        {"kind": "new_core", "content": "B", "topic": "t"},
+        {"kind": "new_core", "content": "C", "topic": "t"},
+    ])
+    _review(client, did, [{"op": 1, "verdict": "deny"}], expect=400)
+    out = _review(client, did, [{"op": 0, "verdict": "approve"},
+                                {"op": 1, "verdict": "deny", "critique": "B conflates two things; split it"}])
+    assert out["status"] == "pending" and out["approved"] == 1 and out["denied"] == 1 and out["pending"] == 1
+    d = client.get(f"/drafts/{did}").json()
+    assert d["operations"][1]["critique"].startswith("B conflates")
+    assert d["operations"][1]["status"] == "denied" and d["operations"][2]["status"] == "pending"
+    _review(client, did, [{"op": 0, "verdict": "approve"}], expect=409)   # already approved: a conflict, not a bad request
+    out = _review(client, did, [{"op": 2, "verdict": "approve"}])
+    assert out["status"] == "reviewed"
+    _review(client, did, [{"op": 2, "verdict": "approve"}], expect=409)   # draft closed
+    assert len(_long_ids(client)) == 2
+    assert client.get("/drafts", params={"status": "pending"}).json()["count"] == 0
+    assert client.get("/drafts", params={"status": "reviewed"}).json()["count"] == 1
+
+
+def test_edited_content_only_on_a_terminal_draft(client):
+    did = _submit(client, [{"kind": "new_core", "content": "rough", "topic": "t"}])
+    _review(client, did, [{"op": 0, "verdict": "approve", "edited_content": "polished"}], expect=400)
+    term = _submit(client, [{"kind": "new_core", "content": "rough", "topic": "t"}],
+                   terminal=True, cluster_id=did, attempt=3, previous_draft_ids=[did])
+    out = _review(client, term, [{"op": 0, "verdict": "approve", "edited_content": "polished"}])
+    entry = _long_ids(client)[out["results"][0]["long_term_id"]]
+    assert entry["content"] == "polished" and entry["metadata"]["original_op_content"] == "rough"
+    chain = client.get(f"/drafts/{term}/chain").json()
+    assert [a["attempt"] for a in chain["attempts"]] == [1, 3]
+
+
+def test_submit_refuses_a_bad_target(client):
+    r = client.post("/drafts", json={"operations": [{"kind": "attach", "content": "x"}]})
+    assert r.status_code == 400 and "target_core_id" in r.text
+    r = client.post("/drafts", json={"operations": [{"kind": "supersede", "target_core_id": "nope", "content": "x"}]})
+    assert r.status_code == 400 and "nope" in r.text
+    assert client.get("/drafts/nope").status_code == 404
+
+
+# ── purge ────────────────────────────────────────────────────────────────────
+
+def test_purge_takes_the_core_its_satellites_its_sources_and_the_backups(client, tmp_path):
+    s1 = _short(client, "ssh-rsa AAAA... the actual key", topic="oops")
+    core = _review(client, _submit(client, [{"kind": "new_core", "content": "Chad's key is ssh-rsa AAAA...",
+                                             "topic": "oops", "source_short_ids": [s1]}]),
+                   [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
+    s2 = _short(client, "used the key again", topic="oops")
+    _review(client, _submit(client, [{"kind": "attach", "target_core_id": core, "content": "used it again",
+                                      "source_short_ids": [s2]}]), [{"op": 0, "verdict": "approve"}])
+    store = client.app.state.store
+    persist = store._config.resolved_persist_dir()
+    fake_backup = persist.parent / (persist.name + "_20260101000000")
+    fake_backup.mkdir()
+    (fake_backup / "leak.bin").write_text("ssh-rsa AAAA...")
+    assert len(store.satellites_of(core)) == 1
+    assert set(store.pruned.get(include=[])["ids"]) == {s1, s2}
+
+    r = client.post(f"/long/{core}/purge", json={"reason": "leaked ssh key"})
+    assert r.status_code == 200, r.text
+    tomb = r.json()["tombstone"]
+    assert tomb["cascade"] == {"satellites": 1, "shorts": 0, "pruned": 2, "legacy_drafts": 0,
+                               "drafts_scrubbed": 2, "backups_removed": 1, "backups_retained": 0}
+    assert "ssh-rsa" not in json.dumps(tomb), "a tombstone never carries content"
+    assert not fake_backup.exists()
+    assert _long_ids(client, include_satellites=True) == {}
+    assert store.pruned.get(include=[])["ids"] == []
+    for d in client.get("/drafts", params={"status": "reviewed"}).json()["entries"]:
+        for op in d["operations"]:
+            assert "ssh-rsa" not in (op["content"] or "") and op["status"] == "approved", "verdicts kept, content gone"
+    stones = client.get("/tombstones").json()
+    assert stones["count"] == 1 and stones["entries"][0]["id"] == core and stones["entries"][0]["reason"] == "leaked ssh key"
+    assert client.post(f"/long/{core}/purge", json={"reason": "again"}).status_code == 404
+
+
+def test_purge_needs_a_reason(client):
+    core = _review(client, _submit(client, [{"kind": "new_core", "content": "x", "topic": "t"}]),
+                   [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
+    assert client.post(f"/long/{core}/purge", json={}).status_code == 400
+    assert core in _long_ids(client)
+
+
+# ── tidy ─────────────────────────────────────────────────────────────────────
+
+def test_tidy_runs_the_mechanical_steps_and_purges_flagged_entries_when_asked(client):
+    core = _review(client, _submit(client, [{"kind": "new_core", "content": "flag me", "topic": "t"}]),
+                   [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
+    assert client.post(f"/long/{core}/forget", json={"reason": "must not exist"}).status_code == 200
+    r = client.post("/tidy", json={})
     assert r.status_code == 200
     body = r.json()
-    assert body["ok"] is True
-    assert body["draft_id"] == draft_id
-    assert body["long_term_id"], "approve must surface the new long-term id"
-    assert body["shorts_archived"] == 2
-
-    assert client.get("/long").json()["count"] == 1
-    assert client.get("/short").json()["count"] == short_before
-
-
-def test_approve_sets_draft_status_and_forward_link(client):
-    """After approval, draft is marked APPROVED with a forward link to the
-    long-term id - the audit-trail piece.
-    """
-    draft_id = _make_pending_draft(client, topic="audit_trail")
-    approve_body = client.post(f"/drafts/{draft_id}/approve").json()
-    long_id = approve_body["long_term_id"]
-
-    drafts = client.get("/drafts").json()["entries"]
-    approved = next((d for d in drafts if d["id"] == draft_id), None)
-    assert approved is not None
-    meta = approved["metadata"]
-    assert meta["status"] == "approved"
-    assert meta["long_term_id"] == long_id
+    assert body["aged_out"] == 0 and body["near"] == {"expired": 0, "completed_promoted": 0} and body["pruned_swept"] == 0
+    assert "purged" not in body, "purge is opt-in per call"
+    assert core in _long_ids(client), "a flag alone removes nothing"
+    body = client.post("/tidy", json={"age_out": False, "near": False, "sweep": False, "purge": True}).json()
+    assert [t["id"] for t in body["purged"]] == [core]
+    assert body["purged"][0]["reason"] == "must not exist"
+    assert core not in _long_ids(client)
 
 
-def test_approve_accepts_optional_note(client):
-    """Optional 'note' in the approve body is stored on the draft as
-    review_note for the audit trail.
-    """
-    draft_id = _make_pending_draft(client, topic="with_note")
-    r = client.post(f"/drafts/{draft_id}/approve", json={"note": "checked it twice"})
+def test_age_out_leaves_the_evidence_under_a_pending_draft(client):
+    """mem-ageout: the old consolidator aged out short-terms in the same run
+    it drafted from them, so a redraft had nothing to work from."""
+    import time as _t
+    store = client.app.state.store
+    s_old = _short(client, "an old fragment", topic="t")
+    s_held = _short(client, "a held fragment", topic="t")
+    # make both old
+    for sid in (s_old, s_held):
+        store.update_short_metadata(sid, {"ts": _t.time() - 10 * 24 * 3600})
+    _submit(client, [{"kind": "new_core", "content": "x", "topic": "t", "source_short_ids": [s_held]}])
+    aged = store.age_out_short(cutoff_seconds=8 * 24 * 3600)
+    assert aged == 1
+    left = {e["id"] for e in client.get("/short").json()["entries"]}
+    assert left == {s_held}, "the held fragment is evidence under review"
+
+
+# ── the brief is the gate; the cull ──────────────────────────────────────────
+
+def test_a_consumed_brief_leaves_the_open_view_but_stays_as_history(client):
+    a = client.post("/brief", json={"summary": "day one", "promote_hints": [], "noise_hints": []}).json()["id"]
+    b = client.post("/brief", json={"summary": "day two", "promote_hints": [], "noise_hints": []}).json()["id"]
+    assert [e["id"] for e in client.get("/brief").json()["entries"]] == [b, a]
+    r = client.post(f"/brief/{b}/consume", json={"draft_id": "d1"})
+    assert r.status_code == 200 and r.json()["consumed"] == b
+    assert [e["id"] for e in client.get("/brief").json()["entries"]] == [a], "the check sees only open briefs"
+    hist = client.get("/brief", params={"include_consumed": "true"}).json()["entries"]
+    assert hist[0]["id"] == b and hist[0]["metadata"]["consumed_by_draft"] == "d1" and hist[0]["metadata"]["consumed_at"]
+    assert client.post("/brief/nope/consume").status_code == 404
+
+
+def test_only_a_reviewed_draft_closes_and_closed_leaves_the_reviewed_queue(client):
+    s1 = _short(client, "a"); s2 = _short(client, "b")
+    did = _submit(client, [{"kind": "new_core", "content": "x", "source_short_ids": [s1, s2]}])
+    assert client.post(f"/drafts/{did}/close").status_code == 409, "pending still owes verdicts"
+    _review(client, did, [{"op": 0, "verdict": "approve"}])
+    assert client.get("/drafts", params={"status": "reviewed"}).json()["count"] == 1
+    r = client.post(f"/drafts/{did}/close")
+    assert r.status_code == 200 and r.json()["status"] == "closed"
+    assert client.get("/drafts", params={"status": "reviewed"}).json()["count"] == 0
+    assert client.get("/drafts", params={"status": "closed"}).json()["count"] == 1
+    assert client.get(f"/drafts/{did}").json()["status"] == "closed"
+    assert client.post(f"/drafts/{did}/close").status_code == 200, "closing twice is fine"
+    assert client.post("/drafts/nope/close").status_code == 404
+
+
+# ── the old name still answers, for one release ─────────────────────────────
+
+def test_the_dockets_alias_serves_a_hippocampus_built_before_the_rename(client):
+    s1 = _short(client, "a")
+    r = client.post("/dockets", json={"summary": "tonight", "operations": [
+        {"kind": "new_core", "content": "x", "source_short_ids": [s1]}]})
     assert r.status_code == 200
-
-    drafts = client.get("/drafts").json()["entries"]
-    approved = next(d for d in drafts if d["id"] == draft_id)
-    assert approved["metadata"].get("review_note") == "checked it twice"
-
-
-# -- reject / redraft happy path -----------------------------------------------
-
-
-def test_reject_triggers_redraft_and_preserves_shorts(client):
-    """Reject with a critique must: mark the draft rejected, trigger a new
-    synthesis, and leave source shorts in place (they feed the redraft).
-    The response action should be 'redrafted' and a new draft_id appears.
-    Long-term stays empty.
-    """
-    short_before = client.get("/short").json()["count"]
-    draft_id = _make_pending_draft(client, topic="reject_redraft", n=2)
-
-    r = client.post(f"/drafts/{draft_id}/reject",
-                    json={"critique": "too vague, add specifics"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    assert body["action"] == "redrafted"
-    assert body["new_draft_id"] is not None
-    assert body["new_draft_id"] != draft_id
-    assert body["attempt"] == 2
-
-    # Source shorts untouched; long-term still empty.
-    assert client.get("/short").json()["count"] == short_before + 2
-    assert client.get("/long").json()["count"] == 0
-
-    # The new draft is pending.
-    new_draft = next(
-        (d for d in client.get("/drafts").json()["entries"]
-         if d["id"] == body["new_draft_id"]), None)
-    assert new_draft is not None
-    assert new_draft["metadata"]["status"] == "pending"
-    assert new_draft["metadata"]["attempt"] == 2
-
-
-def test_reject_stores_critique_on_draft(client):
-    """The critique is persisted on the rejected draft's metadata."""
-    draft_id = _make_pending_draft(client, topic="critique_stored")
-    client.post(f"/drafts/{draft_id}/reject",
-                json={"critique": "missing key context"})
-
-    drafts = client.get("/drafts").json()["entries"]
-    rejected = next(d for d in drafts if d["id"] == draft_id)
-    assert rejected["metadata"]["status"] == "rejected"
-    assert rejected["metadata"].get("critique") == "missing key context"
-
-
-def test_reject_accepts_legacy_reason_key(client):
-    """'reason' key is accepted as an alias for 'critique' for backwards
-    compatibility with older callers.
-    """
-    draft_id = _make_pending_draft(client, topic="legacy_reason")
-    r = client.post(f"/drafts/{draft_id}/reject",
-                    json={"reason": "old-style rejection"})
-    assert r.status_code == 200
-    assert r.json()["ok"] is True
-
-
-# -- redraft chain / requires_selection ---------------------------------------
-
-
-def test_exhausting_redrafts_flips_to_requires_selection(client):
-    """When max_redraft_attempts (2 in the test fixture) are exhausted the
-    action becomes 'requires_selection'. No further redraft is produced.
-    """
-    # Attempt 1 (initial draft created by consolidation).
-    draft_id = _make_pending_draft(client, topic="exhaust_chain", n=2)
-
-    # Rejection 1 -> attempt 2 produced (redrafted).
-    r1 = client.post(f"/drafts/{draft_id}/reject",
-                     json={"critique": "first critique"})
-    assert r1.json()["action"] == "redrafted"
-    draft_id_2 = r1.json()["new_draft_id"]
-
-    # Rejection 2 -> limit reached -> requires_selection.
-    r2 = client.post(f"/drafts/{draft_id_2}/reject",
-                     json={"critique": "second critique"})
-    assert r2.status_code == 200
-    body = r2.json()
-    assert body["action"] == "requires_selection"
-    assert body["new_draft_id"] is None
-
-
-def test_chain_endpoint_returns_all_attempts(client):
-    """GET /drafts/{id}/chain returns every attempt for the cluster in order."""
-    draft_id = _make_pending_draft(client, topic="chain_view", n=2)
-    r1 = client.post(f"/drafts/{draft_id}/reject",
-                     json={"critique": "needs more detail"})
-    draft_id_2 = r1.json()["new_draft_id"]
-
-    # Chain is accessible from either draft in the cluster.
-    chain = client.get(f"/drafts/{draft_id}/chain").json()
-    assert chain["count"] == 2
-    attempts = chain["attempts"]
-    assert attempts[0]["metadata"]["attempt"] == 1
-    assert attempts[1]["metadata"]["attempt"] == 2
-
-    # Same cluster visible from the second draft.
-    chain2 = client.get(f"/drafts/{draft_id_2}/chain").json()
-    assert chain2["cluster_id"] == chain["cluster_id"]
-
-
-def test_select_commits_best_attempt_to_long_term(client):
-    """After requires_selection, POST /drafts/{id}/select commits one attempt
-    to long-term and archives the source shorts.
-    """
-    short_before = client.get("/short").json()["count"]
-    draft_id = _make_pending_draft(client, topic="select_best", n=2)
-
-    # Exhaust redraft budget (max=2).
-    r1 = client.post(f"/drafts/{draft_id}/reject",
-                     json={"critique": "c1"})
-    d2 = r1.json()["new_draft_id"]
-    client.post(f"/drafts/{d2}/reject", json={"critique": "c2"})
-
-    # Now attempt 1 is in requires_selection - select it.
-    r = client.post(f"/drafts/{draft_id}/select")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    assert body["long_term_id"]
-    assert body["shorts_archived"] == 2
-
-    assert client.get("/long").json()["count"] == 1
-    assert client.get("/short").json()["count"] == short_before
-
-
-def test_select_on_pending_draft_returns_409(client):
-    """Calling /select on a still-pending draft (not requires_selection)
-    should return 409 - the model should approve or reject it instead.
-    """
-    draft_id = _make_pending_draft(client, topic="select_wrong_state")
-    r = client.post(f"/drafts/{draft_id}/select")
-    assert r.status_code == 409
-
-
-# -- edit-on-select -----------------------------------------------------------
-
-
-def _exhaust_to_requires_selection(client, topic: str = "edit_chain",
-                                    n: int = 2) -> str:
-    """Helper: write n shorts, draft, exhaust the redraft budget so the
-    chain flips to requires_selection. Returns the first draft's id (which
-    is the cluster_id and is itself in requires_selection state)."""
-    draft_id = _make_pending_draft(client, topic=topic, n=n)
-    r1 = client.post(f"/drafts/{draft_id}/reject", json={"critique": "c1"})
-    d2 = r1.json()["new_draft_id"]
-    client.post(f"/drafts/{d2}/reject", json={"critique": "c2"})
-    return draft_id
-
-
-def test_select_with_edited_content_commits_edit(client):
-    """When edited_content is provided on select, the long-term entry uses
-    the edited text - NOT the original draft synthesis. The response
-    surfaces edited=True and a non-zero edit_delta_chars so the operator
-    can see at a glance that a revision happened.
-    """
-    draft_id = _exhaust_to_requires_selection(client, topic="edit_commits")
-    edited = "the editor's polished version, longer than the draft was"
-
-    r = client.post(f"/drafts/{draft_id}/select",
-                    json={"edited_content": edited})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["edited"] is True
-    assert body["edit_delta_chars"] > 0
-
-    # Long-term entry has the edited text, not the draft's synthesis.
-    long_rows = client.get("/long").json()["entries"]
-    long_entry = next(r for r in long_rows if r["id"] == body["long_term_id"])
-    assert long_entry["content"] == edited
-
-
-def test_select_without_edit_commits_draft_as_is(client):
-    """Omitting edited_content (the default path) commits the draft's own
-    content to long-term unchanged. edited=False and edit_delta_chars=0
-    in the response - backstops 'did anything get tweaked?' at a glance.
-    """
-    draft_id = _exhaust_to_requires_selection(client, topic="edit_skipped")
-    # Capture what the draft's content is before commit so we can verify
-    # long-term landed with exactly that text.
-    chain = client.get(f"/drafts/{draft_id}/chain").json()
-    draft_content = next(a["content"] for a in chain["attempts"]
-                         if a["id"] == draft_id)
-
-    r = client.post(f"/drafts/{draft_id}/select", json={})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["edited"] is False
-    assert body["edit_delta_chars"] == 0
-
-    long_rows = client.get("/long").json()["entries"]
-    long_entry = next(r for r in long_rows if r["id"] == body["long_term_id"])
-    assert long_entry["content"] == draft_content
-
-
-def test_select_with_blank_edit_400(client):
-    """edited_content='' or whitespace-only is a bug, not 'no edit'. The
-    route rejects with 400 rather than silently committing a blank
-    long-term entry or treating it as omitted (which would mask the bug).
-    """
-    draft_id = _exhaust_to_requires_selection(client, topic="edit_blank")
-
-    r1 = client.post(f"/drafts/{draft_id}/select",
-                     json={"edited_content": ""})
-    assert r1.status_code == 400
-
-    r2 = client.post(f"/drafts/{draft_id}/select",
-                     json={"edited_content": "   \t\n  "})
-    assert r2.status_code == 400
-
-    # Draft should still be selectable (the 400s left it untouched).
-    r3 = client.post(f"/drafts/{draft_id}/select", json={})
-    assert r3.status_code == 200
-
-
-def test_select_preserves_original_in_draft_for_audit(client):
-    """After select-with-edit, the draft row itself keeps the ORIGINAL
-    synthesis as its content; the edited text is stored separately in
-    metadata.edited_content. Audit trail intact - we can always answer
-    'what did the consolidator originally synthesize for this cluster.'
-    """
-    draft_id = _exhaust_to_requires_selection(client, topic="edit_audit")
-    # Snapshot original content before edit.
-    chain_before = client.get(f"/drafts/{draft_id}/chain").json()
-    original = next(a["content"] for a in chain_before["attempts"]
-                    if a["id"] == draft_id)
-    edited = "completely different editor version"
-
-    r = client.post(f"/drafts/{draft_id}/select",
-                    json={"edited_content": edited})
-    assert r.status_code == 200
-
-    # Pull the draft back via the chain - its content is the original,
-    # and its metadata carries the edit.
-    chain_after = client.get(f"/drafts/{draft_id}/chain").json()
-    selected = next(a for a in chain_after["attempts"] if a["id"] == draft_id)
-    assert selected["content"] == original
-    assert selected["metadata"]["edited_content"] == edited
-    assert selected["metadata"]["edit_delta_chars"] == abs(len(edited) - len(original))
-    assert selected["metadata"]["status"] == "approved"
-
-
-# -- error paths --------------------------------------------------------------
-
-
-def test_approve_missing_draft_404(client):
-    r = client.post("/drafts/nonexistent-id/approve")
-    assert r.status_code == 404
-
-
-def test_reject_missing_draft_404(client):
-    r = client.post("/drafts/nonexistent-id/reject",
-                    json={"critique": "n/a"})
-    assert r.status_code == 404
-
-
-def test_select_missing_draft_404(client):
-    r = client.post("/drafts/nonexistent-id/select")
-    assert r.status_code == 404
-
-
-def test_reject_without_critique_400(client):
-    """The critique field is required - empty or whitespace must return 400."""
-    draft_id = _make_pending_draft(client, topic="needs_critique")
-    assert client.post(f"/drafts/{draft_id}/reject", json={}).status_code == 400
-    assert client.post(f"/drafts/{draft_id}/reject",
-                       json={"critique": "   "}).status_code == 400
-
-
-def test_approve_then_approve_again_409(client):
-    """Reviewing twice returns 409. Protects against double-clicks and
-    replays from the tool path.
-    """
-    draft_id = _make_pending_draft(client, topic="double_approve")
-    assert client.post(f"/drafts/{draft_id}/approve").status_code == 200
-    assert client.post(f"/drafts/{draft_id}/approve").status_code == 409
-
-
-def test_approve_then_reject_409(client):
-    """Approve then reject is also 409 - decision is final."""
-    draft_id = _make_pending_draft(client, topic="flip_blocked")
-    assert client.post(f"/drafts/{draft_id}/approve").status_code == 200
-    assert client.post(f"/drafts/{draft_id}/reject",
-                       json={"critique": "wait, no"}).status_code == 409
-
-
-def test_reject_then_reject_again_409(client):
-    """Rejecting an already-rejected draft returns 409."""
-    draft_id = _make_pending_draft(client, topic="double_reject")
-    assert client.post(f"/drafts/{draft_id}/reject",
-                       json={"critique": "drop"}).status_code == 200
-    # The original draft is now rejected; re-rejecting should 409.
-    assert client.post(f"/drafts/{draft_id}/reject",
-                       json={"critique": "drop again"}).status_code == 409
-
-
-# -- listing / filter behaviour -----------------------------------------------
-
-
-def test_pending_filter_excludes_reviewed_drafts(client):
-    """``GET /drafts?status=pending`` is the model's active review queue -
-    it must exclude approved and rejected drafts.
-    """
-    keep_id = _make_pending_draft(client, topic="will_stay_pending")
-    approve_me = _make_pending_draft(client, topic="will_be_approved")
-    reject_me = _make_pending_draft(client, topic="will_be_rejected")
-
-    client.post(f"/drafts/{approve_me}/approve")
-    client.post(f"/drafts/{reject_me}/reject", json={"critique": "test"})
-
-    pending = client.get("/drafts", params={"status": "pending"}).json()["entries"]
-    pending_ids = {d["id"] for d in pending}
-    assert keep_id in pending_ids
-    assert approve_me not in pending_ids
-    assert reject_me not in pending_ids
-
-    # No filter -> all visible (history view).
-    all_ids = {d["id"] for d in client.get("/drafts").json()["entries"]}
-    assert {keep_id, approve_me, reject_me} <= all_ids
-
+    did = r.json()["id"]
+    assert client.get(f"/drafts/{did}").json()["id"] == did, "one store, two paths"
+    assert client.get("/dockets", params={"status": "pending"}).json()["count"] == 1
+    b = client.post("/brief", json={"summary": "day", "promote_hints": [], "noise_hints": []}).json()["id"]
+    client.post(f"/brief/{b}/consume", json={"docket_id": did})
+    hist = client.get("/brief", params={"include_consumed": "true"}).json()["entries"]
+    assert hist[0]["metadata"]["consumed_by_draft"] == did, "the old body key still lands"
+    assert "/dockets" not in client.get("/openapi.json").json()["paths"], "the alias is not advertised"
+
+
+def test_a_config_from_before_the_retire_still_loads():
+    """The consolidator block of an existing config keeps loading; only
+    pruned_safety_days still means anything."""
+    cfg = MemoryConfig.model_validate({"consolidator": {
+        "enabled": True, "mode": "thread", "interval_seconds": 72000,
+        "model_url": "http://localhost:8090/v1", "model_name": "default",
+        "promote_min_evidence": 3, "max_redraft_attempts": 3, "pruned_safety_days": 3}})
+    assert cfg.consolidator.pruned_safety_days == 3
+
+
+def test_a_bad_decision_applies_nothing(client):
+    """Found 25 Sept: decisions were checked as they were applied, so a bad
+    later decision left the earlier approvals in long-term with the draft
+    still pending - a second review applied them twice."""
+    s1 = _short(client, "a"); s2 = _short(client, "b")
+    did = _submit(client, [{"kind": "new_core", "content": "one", "source_short_ids": [s1]},
+                           {"kind": "new_core", "content": "two", "source_short_ids": [s2]}])
+    before = client.get("/long").json()["count"]
+    for bad in ([{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "deny"}],            # no critique
+                [{"op": 0, "verdict": "approve"}, {"op": 7, "verdict": "approve"}],         # no such op
+                [{"op": 0, "verdict": "approve"}, {"op": 0, "verdict": "approve"}],         # twice
+                [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "approve", "edited_content": "x"}]):  # not terminal
+        r = client.post(f"/drafts/{did}/review", json={"decisions": bad})
+        assert r.status_code == 400, (bad, r.status_code, r.text)
+        assert client.get("/long").json()["count"] == before, f"nothing may land: {bad}"
+    assert all(o["status"] == "pending" for o in client.get(f"/drafts/{did}").json()["operations"])
+    _review(client, did, [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "approve"}])
+    assert client.get("/long").json()["count"] == before + 2, "applied exactly once"

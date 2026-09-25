@@ -65,11 +65,10 @@ function loadOverview(root) {
         tiers.pruned != null ? stat('pruned', tiers.pruned, '') : '',
     ].join('');
 
-    const con = root.consolidator || {};
     const metaRows = [
         ['version',     root.version   || '?'],
         ['embedder',    root.embedding_model || '?'],
-        ['consolidator',con.enabled ? `enabled · ${con.mode || '?'} · every ${con.interval_seconds ?? '?'}s` : 'disabled'],
+        ['consolidation', root.consolidation || 'seren-hippocampus'],
     ].map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${escapeHtml(String(v))}</span></div>`).join('');
 
     $('overview-section').innerHTML = `
@@ -137,37 +136,35 @@ function briefCard(brief) {
 }
 
 function draftCard(draft) {
-    const meta = draft.metadata || {};
+    // A hippocampus draft: a list of operations on long-term, each with its
+    // own verdict. Read-only here - the main model reviews, over MCP or
+    // POST /drafts/{id}/review; this is the window onto the queue.
     const id = draft.id;
-    const status = meta.status || 'pending';
-    const sourceShortIds = Array.isArray(meta.source_short_ids) ? meta.source_short_ids : [];
-    const badges = [`<span class="badge tier-draft">draft</span>`];
-    badges.push(`<span class="badge status-${escapeHtml(status)}">${escapeHtml(status)}</span>`);
-    if (meta.long_term_id) badges.push(`<span class="badge">-> long</span>`);
+    const status = draft.status || 'pending';
+    const badges = [`<span class="badge tier-draft">draft</span>`,
+                    `<span class="badge status-${escapeHtml(status)}">${escapeHtml(status)}</span>`];
+    if (draft.attempt > 1 || draft.terminal) badges.push(`<span class="badge">attempt ${escapeHtml(draft.attempt)}${draft.terminal ? ' · terminal' : ''}</span>`);
     const metaBits = [];
-    if (meta.topic) metaBits.push(`<span><span class="k">topic</span> ${escapeHtml(meta.topic)}</span>`);
-    if (meta.evidence_count != null) metaBits.push(`<span><span class="k">evidence</span> ${escapeHtml(meta.evidence_count)}</span>`);
-    if (meta.brief_id_used) metaBits.push(`<span><span class="k">via brief</span> <code class="id">${escapeHtml(meta.brief_id_used)}</code></span>`);
-    if (meta.created_at != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(meta.created_at))}</span>`);
-    if (meta.reviewed_at != null) metaBits.push(`<span><span class="k">reviewed</span> ${escapeHtml(fmtTs(meta.reviewed_at))}</span>`);
+    if (draft.brief_id_used) metaBits.push(`<span><span class="k">via brief</span> <code class="id">${escapeHtml(draft.brief_id_used)}</code></span>`);
+    if (draft.created_at != null) metaBits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(draft.created_at))}</span>`);
+    if (draft.reviewed_at != null) metaBits.push(`<span><span class="k">reviewed</span> ${escapeHtml(fmtTs(draft.reviewed_at))}</span>`);
     metaBits.push(`<code class="id">${escapeHtml(id)}</code>`);
-    const chipRows = [];
-    if (sourceShortIds.length) chipRows.push(`<div class="chip-row"><span class="k">evidence (${sourceShortIds.length} shorts)</span>` + sourceShortIds.map(sid => `<span class="chip evidence">${escapeHtml(String(sid).slice(0, 8))}…</span>`).join('') + `</div>`);
-    let actionRow = '';
-    if (status === 'pending') {
-        actionRow = `
-        <div class="actions">
-            <button class="approve" onclick="approveDraft('${escapeHtml(id)}')">approve</button>
-            <button class="reject" onclick="rejectDraft('${escapeHtml(id)}')">reject</button>
-        </div>`;
-    } else if (meta.review_note) {
-        actionRow = `<div class="review-note">${escapeHtml(status)}: ${escapeHtml(meta.review_note)}</div>`;
-    }
+    const ops = (draft.operations || []).map(op => {
+        const bits = [`<span class="badge">${escapeHtml(op.kind)}</span>`,
+                      `<span class="badge status-${escapeHtml(op.status || 'pending')}">${escapeHtml(op.status || 'pending')}</span>`];
+        if (op.topic) bits.push(`<span><span class="k">topic</span> ${escapeHtml(op.topic)}</span>`);
+        if (op.target_core_id) bits.push(`<span><span class="k">core</span> <code class="id">${escapeHtml(String(op.target_core_id).slice(0, 8))}…</code></span>`);
+        const shorts = op.source_short_ids || [];
+        if (shorts.length) bits.push(`<span><span class="k">evidence</span> ${shorts.length} short${shorts.length === 1 ? '' : 's'}</span>`);
+        const said = op.edited_content || op.content || '(empty)';
+        const why = op.critique ? `<div class="review-note">denied: ${escapeHtml(op.critique)}</div>`
+                  : op.rationale ? `<div class="review-note">why: ${escapeHtml(op.rationale)}</div>` : '';
+        return `<div class="op"><div class="content">${escapeHtml(said)}</div>${why}<div class="meta">${bits.join(' ')}</div></div>`;
+    }).join('');
     return `
     <div class="entry draft">
-        <div class="content">${escapeHtml(draft.content || '(empty synthesis)')}</div>
-        ${chipRows.join('')}
-        ${actionRow}
+        <div class="content">${escapeHtml(draft.summary || '(no summary)')}</div>
+        ${ops}
         <div class="meta">
             ${badges.join(' ')}
             ${metaBits.join('')}
@@ -175,30 +172,6 @@ function draftCard(draft) {
     </div>`;
 }
 
-async function approveDraft(draftId) {
-    try {
-        await api(`/drafts/${draftId}/approve`, { method: 'POST', body: '{}' });
-        await loadDrafts();
-    } catch (e) { showError(e.message); }
-}
-
-async function rejectDraft(draftId) {
-    const reason = window.prompt('Reason for rejection? (required)');
-    if (!reason || !reason.trim()) return;
-    try {
-        // app.py accepts {critique} (canonical) or legacy {reason}; send critique.
-        await api(`/drafts/${draftId}/reject`, { method: 'POST', body: JSON.stringify({ critique: reason.trim() }) });
-        await loadDrafts();
-    } catch (e) { showError(e.message); }
-}
-
-function renderEntries(html) {
-    $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
-}
-
-// ----------------------------------------------------------------------
-// Loaders per tab
-// ----------------------------------------------------------------------
 async function loadShort() {
     setHint('Working memory · ~8 day lifetime · free read/write');
     setExtraToggle(null);
@@ -227,14 +200,14 @@ async function loadLongInner(includeSuperseded) {
 }
 
 async function loadBriefs() {
-    setHint('Daily briefs · steering payload for the consolidator · newest first');
+    setHint('Daily briefs · what mattered · each one opens a sleep · newest first');
     setExtraToggle(null);
     const data = await api('/brief?limit=50');
     renderEntries((data.entries || []).map(b => briefCard(b)).join(''));
 }
 
 async function loadDrafts() {
-    setHint('Consolidator drafts · synthesized candidates awaiting review · approve commits to LongTerm');
+    setHint('Hippocampus drafts · operations on long-term, reviewed one by one by the main model');
     setExtraToggle('include reviewed', async (checked) => loadDraftsInner(checked));
     await loadDraftsInner($('extra-toggle').checked);
 }

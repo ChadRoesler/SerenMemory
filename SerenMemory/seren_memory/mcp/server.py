@@ -41,7 +41,7 @@ def mount_mcp_routes(app: FastAPI):
     installed (the import gate in app.py catches ImportError when the
     `mcp` package isn't available).
 
-    Reads app.state.store, app.state.config, and app.state.consolidator
+    Reads app.state.store and app.state.config
     (set by the lifespan handler) to wire tools to live state.
 
     Returns the FastMCP instance. The caller MUST enter
@@ -62,7 +62,6 @@ def mount_mcp_routes(app: FastAPI):
 
     store = getattr(app.state, "store", None)
     config = getattr(app.state, "config", None)
-    consolidator = getattr(app.state, "consolidator", None)
     if store is None or config is None:
         raise RuntimeError(
             "mount_mcp_routes called before app.state.store/config were set. "
@@ -70,7 +69,7 @@ def mount_mcp_routes(app: FastAPI):
         )
 
     mcp = FastMCP("seren-memory")
-    register_tools(mcp, store, config, consolidator)
+    register_tools(mcp, store, config)
 
     # -- Bug 1: the double-/mcp footgun --
     # streamable_http_app()/sse_app() serve their endpoint at the path in

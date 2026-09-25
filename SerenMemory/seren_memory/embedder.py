@@ -58,7 +58,7 @@ STAMP_FILE = ".seren_store_meta.json"
 # seren_meta is intentionally absent - the stamp is a sidecar file, not a
 # collection.
 MIGRATED_COLLECTIONS = (
-    "short", "near", "long", "briefs", "pruned", "runs", "drafts", "dockets",
+    "short", "near", "long", "briefs", "pruned", "runs", "drafts", "drafts",
 )
 
 
@@ -325,7 +325,8 @@ def migrate_store(persist_dir: Path,
             collection_names.get("draft_collection", "seren_consolidator_drafts"),
             "seren_pruned",
             "seren_consolidator_runs",
-            "seren_dockets",
+            "seren_dockets",       # before the rename to seren_drafts
+            "seren_drafts",
         ]
 
         client = chromadb.PersistentClient(

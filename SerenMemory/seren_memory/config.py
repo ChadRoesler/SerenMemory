@@ -102,51 +102,16 @@ class TlsConfig(BaseModel):
 
 
 class ConsolidatorConfig(BaseModel):
-    enabled: bool = True
+    """What is left of the retired in-process consolidator's block.
 
-    # Run as a background thread in the API process (simple) or expect an
-    # external process to drive it via POST /consolidate/run (advanced,
-    # e.g. a separate systemd unit or cron). "thread" | "external".
-    mode: str = "thread"
-
-    # How often the consolidation window opens, in seconds. ~20 hours
-    # default - deliberately NOT 24, so the window drifts through the day
-    # over a week and never aligns to a 'day boundary' that doesn't exist
-    # for the system. See the design notes; this number is load-bearing.
-    interval_seconds: int = 20 * 3600  # 72000
-
-    # OpenAI-compatible inference endpoint for the consolidation model.
-    # Could be Seren's llama-server, ollama, a remote API, whatever speaks
-    # /v1/chat/completions. The consolidator does classification + light
-    # summarization, so a 2B-4B model is plenty.
-    model_url: str = "http://localhost:8090/v1"
-    model_name: str = "default"
-    # Per-call timeout for the consolidation model. Consolidation isn't
-    # latency-sensitive (it runs in the background) so this can be generous.
-    model_timeout_seconds: int = 120
-
-    # Safety cap: never process more than this many short-term entries in a
-    # single window. Prevents a runaway consolidation from hammering the
-    # model. Remaining entries get picked up next window.
-    max_entries_per_run: int = 500
-
-    # Promotion threshold: a topic cluster needs at least this many distinct
-    # short-term entries to be promoted to long-term, UNLESS a brief
-    # promote_hint or a pin overrides. Tunable - this is the main 'how
-    # eager is consolidation' knob.
-    promote_min_evidence: int = 3
-
-    # Before deleting aged-out short-term entries, copy them to a
-    # 'pruned' collection for this many days as insurance. 0 = no safety
-    # net (delete immediately). Recommended >0 until you trust the heuristic.
+    Consolidation moved to SerenHippocampus on 25 Sept 2026. `enabled` and
+    `mode` are still accepted so existing configs load, and are ignored.
+    `pruned_safety_days` is read by /tidy: before an aged-out short-term is
+    deleted it is copied to the pruned collection for this many days as
+    insurance; 0 = no safety net."""
+    enabled: bool = False
+    mode: str = "external"
     pruned_safety_days: int = 14
-
-    # How many times the consolidator will re-synthesize a cluster draft
-    # after the main model rejects it with a critique before the chain
-    # flips to requires_selection (the model must pick the best of the
-    # attempts). Minimum 1 (one attempt, no redrafts); 3 is the default.
-    max_redraft_attempts: int = 3
-
 
 class UpdatesConfig(BaseModel):
     """\"Is there a newer seren-memory\" checking. Cosmetic, opt-outable.
@@ -194,12 +159,6 @@ def _apply_env_overrides(cfg: MemoryConfig) -> MemoryConfig:
         cfg.server.bearer_token_keyring = v
     if v := env.get("SEREN_MEMORY_PERSIST_DIR"):
         cfg.storage.persist_dir = v
-    if v := env.get("SEREN_MEMORY_MODEL_URL"):
-        cfg.consolidator.model_url = v
-    if v := env.get("SEREN_MEMORY_MODEL_NAME"):
-        cfg.consolidator.model_name = v
-    if v := env.get("SEREN_MEMORY_CONSOLIDATOR_ENABLED"):
-        cfg.consolidator.enabled = v.lower() in ("1", "true", "yes", "on")
     if v := env.get("SEREN_MEMORY_TRUST_SYSTEM_STORE"):
         cfg.tls.trust_system_store = v.lower() in ("1", "true", "yes", "on")
     # Update checking is cosmetic, so it gets a deploy-time off switch that

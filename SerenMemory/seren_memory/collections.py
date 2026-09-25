@@ -46,18 +46,15 @@ import chromadb
 from chromadb.config import Settings
 
 from .config import MemoryConfig
-from .docket import DocketMixin
+from .draft import DraftMixin
 from .models.schemas import (
-    DocketStatus,
+    DraftStatus,
     OpStatus,
     LongTermEntry,
     NearTermEntry,
     ShortTermEntry,
     DailyBrief,
     Source,
-    ConsolidatorRun,
-    DraftEntry,
-    DraftStatus,
 )
 
 # Chroma metadata can't hold None. We drop None-valued keys on write and
@@ -126,9 +123,9 @@ def _retrieval_text(content: str, topic: Optional[str],
     return f"{topic}. {body}" if topic else body
 
 
-class MemoryStore(DocketMixin):
-    """Owns the chroma client and the tier collections. The docket
-    (submit / review / apply) is mixed in from seren_memory.docket."""
+class MemoryStore(DraftMixin):
+    """Owns the chroma client and the tier collections. The draft
+    (submit / review / apply) is mixed in from seren_memory.draft."""
 
     def __init__(self, config: MemoryConfig, embedding_function: Any = None,
                  _allow_reset: bool = False):
@@ -193,18 +190,19 @@ class MemoryStore(DocketMixin):
         # configurable window before true deletion. Insurance against a
         # bad consolidation heuristic.
         self.pruned = _open("seren_pruned")
-        # Consolidator run history - one record per run_once() call (success,
-        # error, or noop). Gives 'last_consolidation_at' a durable answer
-        # and the Halls viewer enough data for an operational panel.
-        self.runs = _open("seren_consolidator_runs")
-        # Consolidator drafts - model review queue. Cluster syntheses land
-        # here awaiting model approval before committing to long-term.
-        # Verbatim peel-off and direct-promote bypass this queue (they carry
-        # explicit pre-approval signals). On approve: shorts archive to pruned,
-        # draft becomes long-term. On reject: critique stored, redraft triggered.
-        self.drafts = _open(s.draft_collection)
-        # Dockets - what the hippocampus proposes, reviewed per operation.
-        self.dockets = _open("seren_dockets")
+        # The retired in-process consolidator's queue. Never opened for
+        # writing and never created; kept reachable only so a PURGE can still
+        # scrub a leaked secret out of an old draft. Its run log
+        # (seren_consolidator_runs) is left on disk untouched.
+        # chromadb < 0.6 lists Collection objects, later versions list names
+        existing = {getattr(c, "name", c) for c in self._client.list_collections()}
+        self.legacy_drafts = (self._client.get_collection(s.draft_collection, **ef_kwargs)
+                              if s.draft_collection in existing else None)
+        # Drafts - what the hippocampus proposes, reviewed per operation.
+        # Named seren_dockets until 25 Sept 2026: rename it in place, once.
+        if "seren_dockets" in existing and "seren_drafts" not in existing:
+            self._client.get_collection("seren_dockets", **ef_kwargs).modify(name="seren_drafts")
+        self.drafts = _open("seren_drafts")
 
         # Stamp which embedder built this store (sidecar JSON in the persist
         # dir), so the next startup's guard can detect an embedder change. Only
@@ -226,7 +224,7 @@ class MemoryStore(DocketMixin):
         except Exception:  # noqa: BLE001
             pass
         # Drop collection refs so GC can collect the underlying objects.
-        for attr in ("short", "near", "long", "briefs", "pruned", "runs", "drafts", "dockets"):
+        for attr in ("short", "near", "long", "briefs", "pruned", "runs", "drafts", "drafts"):
             try:
                 delattr(self, attr)
             except AttributeError:
@@ -324,12 +322,12 @@ class MemoryStore(DocketMixin):
     def promote_short_to_long(self, entry_id: str) -> Optional[str]:
         """Move a short-term entry to long-term verbatim, immediately.
 
-        Bypasses the consolidator's clustering/synthesis. Content copied
+        Bypasses the hippocampus's clustering/synthesis. Content copied
         AS-IS, source short-term entry removed. Returns the new long-term
         ID, or None if the source doesn't exist.
 
         This is the 'I know this is durable, don't make me wait for the
-        dream cycle' escape hatch. Use sparingly - the consolidator's
+        dream cycle' escape hatch. Use sparingly - the hippocampus's
         clustering is usually the right path; this is the override.
         """
         from .models.schemas import LongTermEntry, Source
@@ -428,10 +426,10 @@ class MemoryStore(DocketMixin):
         return True
 
     def flag_long_forget(self, entry_id: str, reason: str) -> bool:
-        """Record a forget-flag on a long-term entry. Does NOT delete - the
-        consolidator decides what to do (purge if PII, demote if disputed)
-        on its next run. The flag is the user's voice; the action is the
-        consolidator's judgment."""
+        """Record a forget-flag on a long-term entry. Does NOT delete: the
+        flag is a purge request, executed by the hippocampus (/tidy with
+        purge, or /long/{id}/purge) with the cascade and a tombstone.
+        Demotion is never this route; it is a supersede operation."""
         existing = self.long.get(ids=[entry_id], include=["metadatas"])
         if not existing.get("ids"):
             return False
@@ -491,7 +489,7 @@ class MemoryStore(DocketMixin):
     def get_recent_briefs(self, limit: int = 20, include_consumed: bool = False) -> list[dict[str, Any]]:
         """Most recent N briefs by created_at. A brief is the GATE of a sleep:
         the hippocampus checks for one, drafts on it, and marks it consumed
-        once the docket it steered has landed in long-term. The default view
+        once the draft it steered has landed in long-term. The default view
         is the open briefs - what a check should see; include_consumed is the
         steering history for the viewer."""
         rows = _zip_get(self.briefs.get(include=["documents", "metadatas"]), None)
@@ -504,13 +502,13 @@ class MemoryStore(DocketMixin):
         rows = _zip_get(self.briefs.get(ids=[brief_id], include=["documents", "metadatas"]), None)
         return rows[0] if rows else None
 
-    def consume_brief(self, brief_id: str, docket_id: Optional[str] = None) -> bool:
+    def consume_brief(self, brief_id: str, draft_id: Optional[str] = None) -> bool:
         """Retire a brief: it steered its sleep and the chain has closed. Kept,
         never deleted - it is the record of what mattered that day - but no
         check for an open brief will see it again."""
         updates: dict[str, Any] = {"consumed_at": time.time()}
-        if docket_id:
-            updates["consumed_by_docket"] = docket_id
+        if draft_id:
+            updates["consumed_by_draft"] = draft_id
         return self._apply_metadata_updates(self.briefs, brief_id, updates)
 
     # ------------------------------------------------------------------
@@ -537,331 +535,6 @@ class MemoryStore(DocketMixin):
         if stale:
             self.pruned.delete(ids=stale)
         return len(stale)
-
-    # ------------------------------------------------------------------
-    #  Consolidator run history
-    # ------------------------------------------------------------------
-    def add_run(self, run: "ConsolidatorRun") -> "ConsolidatorRun":
-        """Record one consolidation pass. The document text is a short
-        human-readable summary (good for the embedding + viewer); the full
-        numbers live in metadata."""
-        summary_text = (
-            f"Consolidator run {run.status.value}: "
-            f"promoted={run.promoted}, aged_out={run.aged_out}, "
-            f"near_expired={run.near_expired}, "
-            f"completed_promoted={run.near_completed_promoted}, "
-            f"forget_handled={run.forget_flags_handled}, "
-            f"pruned_swept={run.pruned_swept}, "
-            f"drafted={run.drafted}, "
-            f"duration={run.duration_seconds:.2f}s"
-        )
-        meta = _clean_meta({
-            "started_at": run.started_at,
-            "finished_at": run.finished_at,
-            "duration_seconds": run.duration_seconds,
-            "status": run.status.value,
-            "promoted": run.promoted,
-            "drafted": run.drafted,
-            "aged_out": run.aged_out,
-            "near_expired": run.near_expired,
-            "near_completed_promoted": run.near_completed_promoted,
-            "forget_flags_handled": run.forget_flags_handled,
-            "pruned_swept": run.pruned_swept,
-            "brief_id_used": run.brief_id_used,
-            "brief_was_pulled": run.brief_was_pulled,
-            "error": run.error,
-            "counts_after": run.counts_after,
-        })
-        self.runs.add(documents=[summary_text], metadatas=[meta], ids=[run.id])
-        return run
-
-    def get_latest_run(self) -> Optional[dict[str, Any]]:
-        """Most recent run by finished_at. None if the consolidator never ran."""
-        rows = _zip_get(self.runs.get(include=["documents", "metadatas"]), None)
-        if not rows:
-            return None
-        rows.sort(key=lambda r: r["metadata"].get("finished_at", 0), reverse=True)
-        return rows[0]
-
-    def get_recent_runs(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Most recent N runs by finished_at. For the Halls viewer's run-history panel."""
-        rows = _zip_get(self.runs.get(include=["documents", "metadatas"]), None)
-        rows.sort(key=lambda r: r["metadata"].get("finished_at", 0), reverse=True)
-        return rows[:limit]
-
-    # ------------------------------------------------------------------
-    #  Consolidator drafts - HITL gate between cluster synthesis and
-    #  long-term commit. See DraftEntry docstring for the philosophy.
-    # ------------------------------------------------------------------
-    def add_draft(self, draft: DraftEntry) -> DraftEntry:
-        """Stage a synthesized cluster as a draft. Source shorts stay in
-        place - they're the evidence trail until the draft is approved
-        (then archived to pruned) or rejected (then back in the pool)."""
-        meta = _clean_meta({
-            "topic": draft.topic,
-            "evidence_count": draft.evidence_count,
-            "source_short_ids": draft.source_short_ids,  # _clean_meta JSON-encodes lists
-            "brief_id_used": draft.brief_id_used,
-            "cluster_id": draft.cluster_id or draft.id,
-            "attempt": draft.attempt,
-            "previous_draft_ids": draft.previous_draft_ids,
-            "created_at": draft.created_at,
-            "status": draft.status.value,
-            "reviewed_at": draft.reviewed_at,
-            "critique": draft.critique,
-            "long_term_id": draft.long_term_id,
-            "source": draft.source.value,
-            **draft.extra,
-        })
-        self.drafts.add(documents=[draft.content], metadatas=[meta], ids=[draft.id])
-        return draft
-
-    def _get_draft_row(self, draft_id: str) -> Optional[dict[str, Any]]:
-        """Fetch one draft by id, or None. Returns the same dict shape as
-        _zip_get rows: {id, content, metadata}."""
-        res = self.drafts.get(ids=[draft_id], include=["documents", "metadatas"])
-        rows = _zip_get(res, None)
-        return rows[0] if rows else None
-
-    def get_recent_drafts(self, limit: int = 20,
-                          status: Optional[str] = None) -> list[dict[str, Any]]:
-        """Most recent drafts by created_at, newest first. Optional status
-        filter - pass 'pending' for the review queue, 'approved',
-        'rejected', or 'requires_selection' for history."""
-        rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
-        if status:
-            rows = [r for r in rows if r["metadata"].get("status") == status]
-        # Unflatten list fields back for callers
-        for r in rows:
-            for field in ("source_short_ids", "previous_draft_ids"):
-                val = r["metadata"].get(field)
-                if isinstance(val, str):
-                    r["metadata"][field] = _maybe_json(val)
-        rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
-        return rows[:limit]
-
-    def get_drafts_by_cluster(self, cluster_id: str) -> list[dict[str, Any]]:
-        """All drafts sharing a cluster_id, ordered by attempt ascending.
-        Returns the full chain for a redraft sequence so the model can
-        compare all attempts when requires_selection is reached."""
-        rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
-        chain = [r for r in rows if r["metadata"].get("cluster_id") == cluster_id]
-        for r in chain:
-            for field in ("source_short_ids", "previous_draft_ids"):
-                val = r["metadata"].get(field)
-                if isinstance(val, str):
-                    r["metadata"][field] = _maybe_json(val)
-        chain.sort(key=lambda r: r["metadata"].get("attempt", 1))
-        return chain
-
-    def approve_draft(self, draft_id: str,
-                      note: Optional[str] = None) -> Optional[dict[str, Any]]:
-        """Commit a pending draft to long-term. Source shorts are archived
-        to the pruned tier and removed from short. The draft is marked
-        APPROVED with a forward link to the new long-term entry's id.
-
-        Returns {long_term_id, shorts_archived} on success, None if the
-        draft doesn't exist or isn't pending.
-        """
-        draft_row = self._get_draft_row(draft_id)
-        if not draft_row:
-            return None
-        if draft_row["metadata"].get("status") != DraftStatus.PENDING.value:
-            return None  # already reviewed; idempotency over re-doing
-
-        # 1. Build the long-term entry from the draft and commit it.
-        long_entry = LongTermEntry(
-            content=draft_row["content"],
-            topic=draft_row["metadata"].get("topic"),
-            evidence_count=int(draft_row["metadata"].get("evidence_count", 1) or 1),
-            source=Source.CONSOLIDATOR,
-            extra={"from_draft_id": draft_id,
-                   "cluster_id": draft_row["metadata"].get("cluster_id", draft_id)},
-        )
-        self.add_long(long_entry)
-
-        # 2. Archive source shorts to pruned, then remove from short.
-        source_ids = draft_row["metadata"].get("source_short_ids", [])
-        if isinstance(source_ids, str):
-            source_ids = _maybe_json(source_ids) or []
-        if not isinstance(source_ids, list):
-            source_ids = []
-        shorts_archived = 0
-        if source_ids:
-            existing = self.short.get(ids=source_ids, include=["documents", "metadatas"])
-            rows = _zip_get(existing, None)
-            if rows:
-                self.archive_pruned(rows)
-                self.delete_short([r["id"] for r in rows])
-                shorts_archived = len(rows)
-
-        # 3. Mark the draft itself as approved with a forward link.
-        self.drafts.update(
-            ids=[draft_id],
-            metadatas=[_clean_meta({
-                **draft_row["metadata"],
-                "status": DraftStatus.APPROVED.value,
-                "reviewed_at": time.time(),
-                "review_note": note,
-                "long_term_id": long_entry.id,
-            })],
-        )
-        return {"long_term_id": long_entry.id, "shorts_archived": shorts_archived}
-
-    def reject_draft(self, draft_id: str, critique: str) -> Optional[dict[str, Any]]:
-        """Mark a draft as rejected with the model's critique. Source shorts
-        stay in place (they'll re-cluster or be used for a redraft). Returns
-        a dict with cluster metadata the caller needs to decide whether to
-        redraft, or None if the draft was missing or already reviewed.
-
-        Returned dict keys: cluster_id, attempt, source_short_ids,
-        brief_id_used, topic, evidence_count.
-        """
-        draft_row = self._get_draft_row(draft_id)
-        if not draft_row:
-            return None
-        if draft_row["metadata"].get("status") != DraftStatus.PENDING.value:
-            return None
-        self.drafts.update(
-            ids=[draft_id],
-            metadatas=[_clean_meta({
-                **draft_row["metadata"],
-                "status": DraftStatus.REJECTED.value,
-                "reviewed_at": time.time(),
-                "critique": critique,
-            })],
-        )
-        meta = draft_row["metadata"]
-        source_ids = meta.get("source_short_ids", [])
-        if isinstance(source_ids, str):
-            source_ids = _maybe_json(source_ids) or []
-        return {
-            "cluster_id": meta.get("cluster_id", draft_id),
-            "attempt": int(meta.get("attempt", 1)),
-            "source_short_ids": source_ids if isinstance(source_ids, list) else [],
-            "brief_id_used": meta.get("brief_id_used"),
-            "topic": meta.get("topic"),
-            "evidence_count": int(meta.get("evidence_count", 1) or 1),
-        }
-
-    def mark_chain_requires_selection(self, cluster_id: str) -> None:
-        """Flip all non-terminal drafts in a chain to requires_selection status.
-        Called when the redraft attempt limit is reached. Both pending and
-        rejected drafts are flipped so the model can compare every attempt
-        and commit the best one via /drafts/{id}/select.
-        """
-        selectable = {DraftStatus.PENDING.value, DraftStatus.REJECTED.value}
-        rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
-        for r in rows:
-            if (r["metadata"].get("cluster_id") == cluster_id
-                    and r["metadata"].get("status") in selectable):
-                self.drafts.update(
-                    ids=[r["id"]],
-                    metadatas=[_clean_meta({
-                        **r["metadata"],
-                        "status": DraftStatus.REQUIRES_SELECTION.value,
-                    })],
-                )
-
-    def select_draft(self, draft_id: str,
-                     note: Optional[str] = None,
-                     edited_content: Optional[str] = None) -> Optional[dict[str, Any]]:
-        """Commit a requires_selection draft to long-term. Marks sibling
-        drafts in the chain as rejected. Source shorts archived + removed.
-
-        If edited_content is provided (non-None), the long-term entry uses
-        the edited text. The original synthesis stays in the draft's content
-        field for audit (and is also copied into the long-term entry's
-        extra dict as original_draft_content). If None, the draft commits
-        as-is.
-
-        Returns {long_term_id, shorts_archived, edited, edit_delta_chars}
-        on success, None if the draft doesn't exist or isn't in
-        requires_selection status.
-        """
-        draft_row = self._get_draft_row(draft_id)
-        if not draft_row:
-            return None
-        if draft_row["metadata"].get("status") != DraftStatus.REQUIRES_SELECTION.value:
-            return None
-
-        cluster_id = draft_row["metadata"].get("cluster_id", draft_id)
-
-        # Determine commit content. Edited text takes precedence when set.
-        # The original draft.content stays intact so we always have the
-        # "what the consolidator originally synthesized" answer; the editor's
-        # version is what lands in long-term.
-        original_content = draft_row["content"]
-        was_edited = edited_content is not None
-        commit_content = edited_content if was_edited else original_content
-        edit_delta = abs(len(commit_content) - len(original_content)) if was_edited else 0
-
-        long_extra = {
-            "from_draft_id": draft_id,
-            "cluster_id": cluster_id,
-            "selected_from_chain": True,
-        }
-        if was_edited:
-            long_extra["edited_on_select"] = True
-            long_extra["original_draft_content"] = original_content
-
-        long_entry = LongTermEntry(
-            content=commit_content,
-            topic=draft_row["metadata"].get("topic"),
-            evidence_count=int(draft_row["metadata"].get("evidence_count", 1) or 1),
-            source=Source.CONSOLIDATOR,
-            extra=long_extra,
-        )
-        self.add_long(long_entry)
-
-        source_ids = draft_row["metadata"].get("source_short_ids", [])
-        if isinstance(source_ids, str):
-            source_ids = _maybe_json(source_ids) or []
-        if not isinstance(source_ids, list):
-            source_ids = []
-        shorts_archived = 0
-        if source_ids:
-            existing = self.short.get(ids=source_ids, include=["documents", "metadatas"])
-            rows = _zip_get(existing, None)
-            if rows:
-                self.archive_pruned(rows)
-                self.delete_short([r["id"] for r in rows])
-                shorts_archived = len(rows)
-
-        # Mark the selected draft approved with forward link + edit audit.
-        new_meta = {
-            **draft_row["metadata"],
-            "status": DraftStatus.APPROVED.value,
-            "reviewed_at": time.time(),
-            "review_note": note,
-            "long_term_id": long_entry.id,
-        }
-        if was_edited:
-            new_meta["edited_content"] = edited_content
-            new_meta["edit_delta_chars"] = edit_delta
-        self.drafts.update(
-            ids=[draft_id],
-            metadatas=[_clean_meta(new_meta)],
-        )
-
-        # Mark all other requires_selection siblings as rejected (chain settled).
-        all_rows = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
-        for r in all_rows:
-            if (r["id"] != draft_id
-                    and r["metadata"].get("cluster_id") == cluster_id
-                    and r["metadata"].get("status") == DraftStatus.REQUIRES_SELECTION.value):
-                self.drafts.update(
-                    ids=[r["id"]],
-                    metadatas=[_clean_meta({
-                        **r["metadata"],
-                        "status": DraftStatus.REJECTED.value,
-                        "reviewed_at": time.time(),
-                        "critique": "not selected - sibling chosen",
-                    })],
-                )
-
-        return {"long_term_id": long_entry.id, "shorts_archived": shorts_archived,
-                "edited": was_edited, "edit_delta_chars": edit_delta}
 
     # ------------------------------------------------------------------
     #  Query - used by the unified search route
@@ -1042,9 +715,8 @@ class MemoryStore(DocketMixin):
             "near": self.near.count(),
             "long": self.long.count(),
             "briefs": self.briefs.count(),
-            "drafts": self.drafts.count(),
             "pruned": self.pruned.count(),
-            "runs": self.runs.count(),
+            "drafts": self.drafts.count(),
         }
 
     # ------------------------------------------------------------------
@@ -1118,7 +790,7 @@ class MemoryStore(DocketMixin):
         """Remove a long-term entry and everything that still holds its
         content: its satellites (a core takes its surroundings with it), the
         source short-terms in the pruned tier and in short, drafts that became
-        it, the docket operations that produced or touched it (scrubbed, not
+        it, the draft operations that produced or touched it (scrubbed, not
         deleted - the verdicts are audit), and - by default - every migration
         backup beside the store, because a backup that keeps the leaked key
         is not a backup, it is the leak. A tombstone (id, kind, reason, time,
@@ -1165,15 +837,17 @@ class MemoryStore(DocketMixin):
             r = self._long_row(i)
             if r:
                 contents.add(r["content"])
-        drafts = _zip_get(self.drafts.get(include=["documents", "metadatas"]), None)
-        dead = [d["id"] for d in drafts
-                if d["metadata"].get("long_term_id") in ids or d["content"] in contents]
-        if dead:
-            self.drafts.delete(ids=dead)
+        dead: list[str] = []
+        if self.legacy_drafts is not None:
+            olds = _zip_get(self.legacy_drafts.get(include=["documents", "metadatas"]), None)
+            dead = [d["id"] for d in olds
+                    if d["metadata"].get("long_term_id") in ids or d["content"] in contents]
+            if dead:
+                self.legacy_drafts.delete(ids=dead)
 
-        # dockets: scrub the operations, keep the verdicts
+        # drafts: scrub the operations, keep the verdicts
         scrubbed = 0
-        for d in self.list_dockets(limit=100_000):
+        for d in self.list_drafts(limit=100_000):
             changed = False
             for op in d.operations:
                 if op.long_term_id in ids or op.target_core_id in ids or op.content in contents:
@@ -1184,7 +858,7 @@ class MemoryStore(DocketMixin):
                     changed = True
             if changed:
                 d.summary = "[purged in part]"
-                self._save_docket(d)
+                self._save_draft(d)
                 scrubbed += 1
 
         self.long.delete(ids=ids)
@@ -1200,8 +874,8 @@ class MemoryStore(DocketMixin):
         tomb = {
             "id": entry_id, "kind": kind, "reason": reason, "purged_at": time.time(),
             "cascade": {"satellites": len(ids) - 1, "shorts": shorts_removed,
-                        "pruned": pruned_removed, "drafts": len(dead),
-                        "dockets_scrubbed": scrubbed, "backups_removed": removed,
+                        "pruned": pruned_removed, "legacy_drafts": len(dead),
+                        "drafts_scrubbed": scrubbed, "backups_removed": removed,
                         "backups_retained": len(backups) - removed},
         }
         with (persist / "tombstones.jsonl").open("a", encoding="utf-8") as fh:
@@ -1234,15 +908,12 @@ class MemoryStore(DocketMixin):
     #  the API without holding a chroma client.
     # ------------------------------------------------------------------
     def held_short_ids(self) -> set[str]:
-        """Short-terms a pending draft or a pending docket operation is built
+        """Short-terms a pending draft or a pending draft operation is built
         from. They are evidence under review: aging them out would leave a
         redraft with nothing to work from (the old consolidator did exactly
         that in the same run it drafted)."""
         held: set[str] = set()
-        for d in self.get_recent_drafts(limit=100_000, status=DraftStatus.PENDING.value):
-            src = d["metadata"].get("source_short_ids") or []
-            held.update(str(x) for x in (src if isinstance(src, list) else []))
-        for d in self.list_dockets(status=DocketStatus.PENDING.value, limit=100_000):
+        for d in self.list_drafts(status=DraftStatus.PENDING.value, limit=100_000):
             for op in d.operations:
                 if op.status == OpStatus.PENDING:
                     held.update(str(x) for x in op.source_short_ids)
@@ -1250,7 +921,7 @@ class MemoryStore(DocketMixin):
 
     def age_out_short(self, cutoff_seconds: float, keep_pruned: bool = True) -> int:
         """Archive-then-delete short-term entries older than cutoff that are
-        not pinned and not held by a pending draft or docket. Returns how many."""
+        not pinned and not held by a pending draft or draft. Returns how many."""
         rows = self.get_short_all(limit=None)
         now = time.time()
         held = self.held_short_ids()

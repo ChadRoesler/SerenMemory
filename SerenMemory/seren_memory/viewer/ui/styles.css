@@ -284,6 +284,15 @@ input, select {
         padding-left: 10px;
     }
 
+    /* one operation inside a hippocampus draft */
+    .entry .op {
+        margin-top: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+    }
+    .entry .op .content { font-size: 13px; }
+
 code.id {
     color: var(--faint);
     font-size: 10px;
