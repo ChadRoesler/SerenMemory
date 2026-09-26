@@ -404,6 +404,21 @@ class MemoryToolImpl:
             return {"ok": False, "error": f"no long-term entry '{memory_id}'"}
         return {"ok": True, "tombstone": tomb}
 
+    def audit_drafts(self, limit: int = 10, since: Optional[float] = None) -> dict:
+        """Every sleep's chain end to end, and how each model is doing.
+
+        chains: the brief that opened it, every attempt, each operation's
+        verdict, critique and any edit on approval, what landed. models:
+        per consolidator model (as stamped on each draft) - first-pass
+        approval rate, attempts to land, repeated denials (a critique that
+        did not take), edits on approval, chains that ended denied.
+
+        For catching drift in the small model, and for judging a model swap
+        on numbers instead of a feeling. since: epoch seconds.
+        """
+        from ..audit import build_audit
+        return build_audit(self.store, limit=limit, since=since)
+
     def get_satellites(self, core_id: str) -> dict:
         """The surroundings of a core: its supporting episodes with their
         dates, and the core it superseded. The draft around a hit."""
@@ -448,6 +463,7 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig) -> Me
     mcp.tool()(impl.get_draft)
     mcp.tool()(impl.review_draft)
     mcp.tool()(impl.get_satellites)
+    mcp.tool()(impl.audit_drafts)
     mcp.tool()(impl.purge_memory_now)
 
     return impl

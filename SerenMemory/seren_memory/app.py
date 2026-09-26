@@ -53,6 +53,7 @@ from .routes import long as long_routes
 from .routes import search as search_routes
 from .routes import drafts as draft_routes
 from .routes import tidy as tidy_routes
+from .routes import audit as audit_routes
 
 from seren_meninges import get_version
 from seren_meninges.updates import updates_payload
@@ -517,6 +518,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     app.include_router(draft_routes.router, prefix="/drafts")
     app.include_router(draft_routes.router, prefix="/dockets", deprecated=True, include_in_schema=False)
     app.include_router(tidy_routes.router)
+    app.include_router(audit_routes.router)
 
     @app.get("/tombstones")
     async def tombstones(request: Request):
