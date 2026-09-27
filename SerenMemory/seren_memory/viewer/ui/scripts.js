@@ -172,6 +172,10 @@ function draftCard(draft) {
     </div>`;
 }
 
+function renderEntries(html) {
+    $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
+}
+
 async function loadShort() {
     setHint('Working memory · ~8 day lifetime · free read/write');
     setExtraToggle(null);
