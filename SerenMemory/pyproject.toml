@@ -13,7 +13,7 @@ readme = "README.md"
 # a clean "needs a different Python" from pip. LIFT THE <3.13 the day chromadb
 # ships 3.13 support (bump the CI matrix to match in the same commit).
 requires-python = ">=3.10,<3.13"
-license = { text = "GPL-3.0-or-later" }
+license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Chad Roesler" }]
 keywords = ["llm", "memory", "vector-db", "chromadb", "consolidation", "seren"]
 
