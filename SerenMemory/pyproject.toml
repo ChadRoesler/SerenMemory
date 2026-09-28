@@ -7,12 +7,12 @@ name = "seren-memory"
 dynamic = ["version"]
 description = "Three-tier LLM memory with consolidation for Seren. The right brain - episodic, time-tiered, dreaming the durable out of the fleeting. The Halls of Memory."
 readme = "README.md"
-# Upper bound is the chromadb wall, not ours: SerenMemory itself is fine on
-# 3.13+, but chromadb's transitive deps don't build there yet (an lz4 wheel
-# build failure). Capping here turns a cryptic transitive build explosion into
-# a clean "needs a different Python" from pip. LIFT THE <3.13 the day chromadb
-# ships 3.13 support (bump the CI matrix to match in the same commit).
-requires-python = ">=3.10,<3.13"
+# No upper bound. There was a <3.13 for chromadb (an lz4 wheel build failed
+# there); lifted 27 Sept 2026 - chromadb 1.x is one abi3 wheel, lz4 and
+# onnxruntime ship 3.13 and 3.14 wheels, and the suite passes on 3.14 with
+# every extra ([st] brings torch). The CI matrix runs through 3.14. If a new
+# Python breaks chromadb again, cap it with the reason here.
+requires-python = ">=3.10"
 license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Chad Roesler" }]
 keywords = ["llm", "memory", "vector-db", "chromadb", "consolidation", "seren"]
