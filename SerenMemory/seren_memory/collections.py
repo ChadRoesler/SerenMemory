@@ -586,18 +586,34 @@ class MemoryStore(DraftMixin):
         space is guaranteed to match. Cosine here and cosine on the
         collection (rebuild.COLLECTION_METADATA): the two paths score on one
         scale, which they did not while the collection defaulted to L2."""
-        raw = col.get(include=["documents", "metadatas", "embeddings"])
+        # Reading the stored vectors needs the same HNSW segment the query just
+        # failed on: chroma 1.x raises "Error creating hnsw segment reader:
+        # Nothing found on disk" for a collection whose index has not been
+        # written yet, for .get(include=["embeddings"]) too. Seen 28 Sept 2026
+        # at ~2% of searches made right after a core landed (mem-search-flake):
+        # this fallback raised as well, the search route skipped the whole long
+        # tier, and a sleep proposed a duplicate new_core instead of an attach.
+        # Documents and metadata are plain SQLite and always readable, so when
+        # the vectors are not, re-embed the documents with the collection's EF.
+        try:
+            raw = col.get(include=["documents", "metadatas", "embeddings"])
+            # chroma 1.x hands embeddings back as a numpy array, whose truth
+            # value is an error - `or []` here raised on every entry with a
+            # vector, so the fallback this method exists for never ran.
+            embeddings = raw.get("embeddings")
+        except Exception:  # noqa: BLE001 - the index is not on disk yet
+            raw = col.get(include=["documents", "metadatas"])
+            embeddings = None
         ids = raw.get("ids") or []
         docs = raw.get("documents") or []
         metas = raw.get("metadatas") or []
-        # chroma 1.x hands embeddings back as a numpy array, whose truth value
-        # is an error - `or []` here raised on every entry with a vector, so
-        # the fallback this method exists for never ran (it 500'd instead).
-        embeddings = raw.get("embeddings")
-        if embeddings is None:
-            embeddings = []
-        if not ids or len(embeddings) == 0:
+        if not ids:
             return []
+        if embeddings is None or len(embeddings) == 0:
+            try:
+                embeddings = col._embedding_function([d or "" for d in docs])
+            except Exception:  # noqa: BLE001
+                return []
 
         # Re-embed the query through the same EF the collection uses.
         try:

@@ -25,6 +25,7 @@ recency-biased but confidence-corrected - is the point.
 """
 from __future__ import annotations
 
+import logging
 import math
 
 from fastapi import APIRouter, Body, Request
@@ -35,6 +36,7 @@ from ..models.schemas import (
 )
 
 router = APIRouter(tags=["search"])
+log = logging.getLogger("seren_memory.search")
 
 # Tier base weights. See module docstring for rationale.
 _TIER_WEIGHT = {"short": 1.0, "near": 0.9, "long": 0.8}
@@ -62,7 +64,11 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
         searched.append(tier)
         try:
             raw = store.query(tier, req.query, fetch_n)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # A tier that cannot answer is left out of the merge, but never
+            # silently: an empty long tier reads to the hippocampus as 'no
+            # existing cores' and it proposes a duplicate (mem-search-flake).
+            log.warning("search: the %s tier failed and was left out: %s: %s", tier, type(e).__name__, e)
             continue
 
         for hit in raw:
