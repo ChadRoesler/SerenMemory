@@ -131,9 +131,12 @@ class DraftMixin:
             raise DraftError("a draft needs at least one operation")
         for i, op in enumerate(d.operations):
             op.index = i
-            if op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE) and not op.target_core_id:
-                raise DraftError(f"operation {i} ({op.kind.value}) needs target_core_id")
-            if op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE):
+        for i, op in enumerate(d.operations):
+            if op.target_op is not None:
+                self._check_target_op(d, i, op)
+            elif op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE) and not op.target_core_id:
+                raise DraftError(f"operation {i} ({op.kind.value}) needs target_core_id (or target_op)")
+            if op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE) and op.target_op is None:
                 target = self._long_row(op.target_core_id)
                 if target is None:
                     raise DraftError(f"operation {i}: no long-term entry '{op.target_core_id}'")
@@ -145,6 +148,25 @@ class DraftMixin:
         self.drafts.add(documents=[d.summary or "(no summary)"],
                          metadatas=[_draft_meta(d)], ids=[d.id])
         return d
+
+    @staticmethod
+    def _check_target_op(d: Draft, i: int, op: DraftOperation) -> None:
+        """target_op: attach to (or supersede) the core ANOTHER operation in
+        this draft creates. A dream told as one new core with its details as
+        satellites could not be drafted before - the satellites had no core
+        id to name until the core was approved, so they attached to the
+        nearest wrong one (seen live 28 Sept 2026, hip-draft-deps)."""
+        t = op.target_op
+        if op.kind not in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE):
+            raise DraftError(f"operation {i}: target_op is only for attach or supersede, not {op.kind.value}")
+        if op.target_core_id:
+            raise DraftError(f"operation {i}: give target_core_id or target_op, not both")
+        if not 0 <= t < len(d.operations):
+            raise DraftError(f"operation {i}: target_op {t} is not an operation in this draft")
+        if t == i:
+            raise DraftError(f"operation {i}: target_op points at itself")
+        if d.operations[t].kind != DraftOpKind.NEW_CORE:
+            raise DraftError(f"operation {i}: target_op {t} is a {d.operations[t].kind.value}, not a new_core")
 
     def get_draft(self, draft_id: str) -> Optional[Draft]:
         rows = _zip_get(self.drafts.get(ids=[draft_id], include=["documents", "metadatas"]), None)
@@ -238,12 +260,31 @@ class DraftMixin:
                 raise DraftError(f"operation {idx}: verdict must be approve or deny")
             plan.append((idx, op, verdict, dec))
 
+        # An op on a core this draft creates lands only with, or after, that core.
+        approving = {idx for idx, _, verdict, _ in plan if verdict == "approve"}
+        for idx, op, verdict, _ in plan:
+            if verdict != "approve" or op.target_op is None:
+                continue
+            t = d.operations[op.target_op]
+            if (t.status == OpStatus.APPROVED and t.long_term_id) or op.target_op in approving:
+                continue
+            verb = "attaches to" if op.kind == DraftOpKind.ATTACH else "supersedes"
+            if t.status == OpStatus.DENIED:
+                raise DraftError(f"operation {idx} {verb} operation {t.index}'s new core, and operation "
+                                 f"{t.index} was denied, so that core does not exist; deny operation {idx}")
+            raise DraftError(f"operation {idx} {verb} operation {t.index}'s new core; approve operation "
+                             f"{t.index} too, or deny operation {idx}")
+        # the cores first, so their ids exist when the ops on them apply
+        plan.sort(key=lambda p: p[1].target_op is not None)
+
         applied: list[dict[str, Any]] = []
         try:
             for idx, op, verdict, dec in plan:
                 if verdict == "approve":
                     if dec.get("edited_content") is not None:
                         op.edited_content = str(dec["edited_content"])
+                    if op.target_op is not None:
+                        op.target_core_id = d.operations[op.target_op].long_term_id
                     result = self._apply_operation(d, op)
                     op.status = OpStatus.APPROVED
                     op.long_term_id = result.get("long_term_id")

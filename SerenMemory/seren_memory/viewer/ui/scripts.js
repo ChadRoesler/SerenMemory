@@ -154,6 +154,7 @@ function draftCard(draft) {
                       `<span class="badge status-${escapeHtml(op.status || 'pending')}">${escapeHtml(op.status || 'pending')}</span>`];
         if (op.topic) bits.push(`<span><span class="k">topic</span> ${escapeHtml(op.topic)}</span>`);
         if (op.target_core_id) bits.push(`<span><span class="k">core</span> <code class="id">${escapeHtml(String(op.target_core_id).slice(0, 8))}…</code></span>`);
+        else if (op.target_op != null) bits.push(`<span><span class="k">core</span> op ${escapeHtml(String(op.target_op))}'s new core</span>`);
         const shorts = op.source_short_ids || [];
         if (shorts.length) bits.push(`<span><span class="k">evidence</span> ${shorts.length} short${shorts.length === 1 ? '' : 's'}</span>`);
         const said = op.edited_content || op.content || '(empty)';

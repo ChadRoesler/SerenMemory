@@ -255,7 +255,10 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
 
     @app.get("/health")
     async def health():
-        return {"ok": True, "ts": time.time()}
+        # features: what a client may rely on that an older Memory lacks. The
+        # hippocampus reads it before sending target_op - an older Memory would
+        # drop the field and refuse the whole draft ("needs target_core_id").
+        return {"ok": True, "ts": time.time(), "features": ["target_op"]}
 
     # -- The Halls viewer --
     # Serves the introspection UI same-origin. This isn't just a debug tool -
