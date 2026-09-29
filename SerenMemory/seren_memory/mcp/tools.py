@@ -374,7 +374,9 @@ class MemoryToolImpl:
         Critiques should be specific - the next attempt is written from
         them. edited_content on an approval is accepted only on a terminal
         draft (the last permitted attempt); otherwise deny and let the loop
-        do its job.
+        do its job. An operation with target_op attaches to the new core
+        another operation in this draft creates: approve that one too (it
+        applies first), or deny this one.
         """
         from ..draft import DraftError
         try:

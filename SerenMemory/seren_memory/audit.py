@@ -74,7 +74,7 @@ def _brief(store, brief_id: Optional[str]) -> Optional[dict[str, Any]]:
 
 def _op(op) -> dict[str, Any]:
     return {"index": op.index, "kind": op.kind.value, "content": op.content, "topic": op.topic,
-            "target_core_id": op.target_core_id, "rationale": op.rationale,
+            "target_core_id": op.target_core_id, "target_op": op.target_op, "rationale": op.rationale,
             "source_short_ids": list(op.source_short_ids or []), "status": op.status.value,
             "critique": op.critique, "edited_content": op.edited_content,
             "long_term_id": op.long_term_id}

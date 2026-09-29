@@ -201,6 +201,8 @@ class DraftOperation(BaseModel):
     content: str = Field(default="", description="The core's statement, the satellite's episode, or the verbatim text.")
     topic: Optional[str] = Field(None)
     target_core_id: Optional[str] = Field(None, description="attach / supersede: the existing core.")
+    target_op: Optional[int] = Field(None, description="attach / supersede, instead of target_core_id: the index of a "
+                                     "new_core operation in this same draft - the core it creates once approved.")
     restated_content: Optional[str] = Field(None, description="attach: new wording for the core, if the evidence changes it.")
     source_short_ids: list[str] = Field(default_factory=list, description="The short-terms this operation consumes (archived on approval).")
     evidence_count: int = Field(default=1)
