@@ -18,7 +18,8 @@ TOOL ROSTER (organised by what they do, not API path):
 
   Core memory:
     remember                    write to short-term
-    recall                      search across tiers (the main retrieval path)
+    recall                      search across tiers (the right brain alone; a
+                                connected Corpus Callosum's `search` comes first)
     what_do_you_remember        list recent short-term (debug / reflection)
 
   Open loops (near-term):
@@ -112,9 +113,16 @@ class MemoryToolImpl:
                include_long: bool = True,
                include_superseded: bool = False,
                with_surroundings: bool = False) -> dict:
-        """Search memory for relevant context. The main retrieval path -
-        call this before answering anything that might benefit from past
-        context. Returns ranked hits across the requested tiers.
+        """Search the right brain alone - episodic memory, across the tiers
+        you ask for. Returns ranked hits.
+
+        WHEN A CORPUS CALLOSUM IS CONNECTED, ITS `search` COMES FIRST: one call
+        reaches this store AND the left brain's facts, merged and ranked, with
+        each core's satellites and context riding along - a fuller picture
+        for fewer tokens than calling here and search_loci both. Reach for
+        `recall` when you specifically want only episodic memory, or one tier
+        of it (a recent short-term, an open intent, a settled core). With no
+        callosum installed, this IS the retrieval path.
 
         Short-term is weighted highest (most recent context), long-term
         gets an evidence-count multiplier so well-established facts
