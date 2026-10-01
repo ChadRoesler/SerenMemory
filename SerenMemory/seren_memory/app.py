@@ -333,8 +333,16 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
     async def promote_short_immediately(request: Request, entry_id: str):
         """Immediately move a short-term entry to long-term verbatim,
         bypassing the consolidator cycle entirely. The 'I know this is
-        durable, don't make me wait' override. Returns 404 if not found."""
+        durable, don't make me wait' override. Returns 404 if not found, and
+        409 while a draft holds the entry: a memory under review lands by its
+        verdict there, not around it (see DraftMixin.shorts_under_review)."""
         store = request.app.state.store
+        held = store.shorts_under_review().get(entry_id)
+        if held:
+            raise HTTPException(
+                status_code=409,
+                detail=f"short-term entry '{entry_id}' is under review in draft {held}: approve or deny its "
+                       f"operation there. A memory in review is promoted by the review, not around it.")
         long_id = store.promote_short_to_long(entry_id)
         if long_id is None:
             raise HTTPException(
