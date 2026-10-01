@@ -186,6 +186,38 @@ class DraftMixin:
         chain.sort(key=lambda d: d.attempt)
         return chain
 
+    def shorts_under_review(self) -> dict[str, str]:
+        """short-term id -> the draft that holds it. A short-term is HELD while
+        an operation citing it is under review: pending in a pending draft, or
+        denied in a reviewed draft whose redraft has not arrived yet (not
+        terminal, no later attempt in the chain).
+
+        WHY: review is the gate on long-term (Design note: 'the
+        consolidator can promote whats approved, its a gated mechanism to make
+        sure that you are the one who approves your memories'). A memory that is
+        mid-review is promoted by that review; promote_memory_now on it went
+        around the gate, and left the draft citing something already landed
+        (found by a woken reviewer the same day)."""
+        held: dict[str, str] = {}
+        drafts = self.list_drafts(limit=10 ** 6)
+        for d in drafts:
+            if d.status == DraftStatus.PENDING:
+                for op in d.operations:
+                    if op.status == OpStatus.PENDING:
+                        for sid in op.source_short_ids:
+                            held.setdefault(str(sid), d.id)
+            elif d.status == DraftStatus.REVIEWED and not d.terminal:
+                denied = [op for op in d.operations if op.status == OpStatus.DENIED]
+                if not denied:
+                    continue
+                cluster = d.cluster_id or d.id
+                if any((x.cluster_id or x.id) == cluster and x.attempt > d.attempt for x in drafts):
+                    continue                               # the redraft is in; it holds what it cites
+                for op in denied:
+                    for sid in op.source_short_ids:
+                        held.setdefault(str(sid), d.id)
+        return held
+
     def close_draft(self, draft_id: str) -> Draft:
         """The hippocampus's last step: every operation decided and applied
         (or the chain ended terminal), the brief consumed - close the draft

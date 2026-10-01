@@ -298,7 +298,20 @@ class MemoryToolImpl:
         make me wait' override. The one way into long-term that is not an
         approved draft operation - direct POST /long is correctly
         forbidden; this is the agent-side escape hatch.
+
+        Not for a memory that is already under review. If a draft holds this
+        entry (an operation citing it is pending, or was denied and its
+        redraft has not come back), this refuses and names the draft: review
+        is the gate, and a memory in review lands by its verdict there
+        (review_draft), not around it. Once the draft's chain is finished the
+        entry is free again.
         """
+        held = self.store.shorts_under_review().get(short_id)
+        if held:
+            return {"ok": False, "held_by_draft": held,
+                    "error": f"short-term '{short_id}' is under review in draft {held}: approve or deny its "
+                             f"operation there (review_draft). A memory in review is promoted by the review, "
+                             f"not around it."}
         long_id = self.store.promote_short_to_long(short_id)
         if long_id is None:
             return {"ok": False, "error": f"no short-term entry '{short_id}'"}
