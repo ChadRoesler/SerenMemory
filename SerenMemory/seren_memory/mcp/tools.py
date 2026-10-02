@@ -36,6 +36,7 @@ TOOL ROSTER (organised by what they do, not API path):
     list_drafts                the review queue: the hippocampus's drafts
     get_draft                  one draft, every operation, every verdict
     review_draft               approve or deny each operation, with a critique
+    undo_restate               flag a core to get its earlier wording back
     get_satellites              a core's surroundings
     purge_memory_now            the emergency door (a flag, executed now)
 """
@@ -375,11 +376,18 @@ class MemoryToolImpl:
 
     def get_draft(self, draft_id: str) -> dict:
         """One draft with every operation, its rationale, and its verdict
-        so far. Read this before review_draft."""
-        d = self.store.get_draft(draft_id)
-        if d is None:
+        so far. Read this before review_draft.
+
+        Each attach or supersede carries target_core: the core it would
+        change, in full. An attach with restated_content carries
+        restate_check - approving it REPLACES that core's wording, so compare
+        the two. On a redraft, earlier_attempts shows every previous version
+        of the operation and the critique that sent it back. last_attempt is
+        set when nothing comes back after this one."""
+        view = self.store.review_view(draft_id)
+        if view is None:
             return {"ok": False, "error": f"no draft '{draft_id}'"}
-        return d.model_dump()
+        return view
 
     def review_draft(self, draft_id: str, decisions: list[dict],
                       note: Optional[str] = None) -> dict:
@@ -393,11 +401,25 @@ class MemoryToolImpl:
         core stays, demoted), or a verbatim core. Denying records the
         critique; the hippocampus redrafts that operation and resubmits.
         Critiques should be specific - the next attempt is written from
-        them. edited_content on an approval is accepted only on a terminal
-        draft (the last permitted attempt); otherwise deny and let the loop
-        do its job. An operation with target_op attaches to the new core
-        another operation in this draft creates: approve that one too (it
-        applies first), or deny this one.
+        them. An operation with target_op attaches to the new core another
+        operation in this draft creates: approve that one too (it applies
+        first), or deny this one.
+
+        AN ATTACH WITH restated_content REPLACES THE CORE'S WORDING. Add
+        "restate": false to attach the episode and leave the core as it is
+        (the usual right answer), or "restate": true once you have compared
+        the rewording with target_core in get_draft. With neither, a
+        rewording that would wipe the core is refused.
+
+        THE LAST ATTEMPT (terminal: true) is where you land things, not
+        where you deny them: a denial there drops the operation. Take the
+        best of the attempts, fix what is wrong, approve:
+          {"op": 0, "verdict": "approve", "edited_content": "the text as it should read"}
+          {"op": 1, "verdict": "approve", "edited_kind": "attach", "edited_target_core_id": "<core id>"}
+        edited_kind is new_core, attach, supersede or verbatim. These edits
+        are refused on any earlier attempt: there, deny and let the loop do
+        its job. Deny on the last attempt only what should not be in memory
+        at all.
         """
         from ..draft import DraftError
         try:
@@ -441,6 +463,26 @@ class MemoryToolImpl:
         """
         from ..audit import build_audit
         return build_audit(self.store, limit=limit, since=since)
+
+    def undo_restate(self, core_id: str, reason: str) -> dict:
+        """FLAG a core to get its earlier wording back, after an approved
+        attach replaced it with a rewording that turned out wrong (get_memory
+        shows the earlier wording as metadata.restated_from).
+
+        A flag, not a scalpel - the same shape as forget_memory. Nothing
+        changes now: the hippocampus executes the flag on its next tick, and
+        the replaced wording, your reason and the time stay on the core. It
+        can only return a core to words a review already approved; it is not
+        a way to edit long-term. A reason is required.
+        """
+        from ..draft import DraftError
+        try:
+            out = self.store.flag_undo_restate(core_id, reason)
+        except KeyError:
+            return {"ok": False, "error": f"no long-term entry '{core_id}'"}
+        except DraftError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, **out, "note": "Flagged. The hippocampus puts the earlier wording back on its next tick."}
 
     def get_satellites(self, core_id: str) -> dict:
         """The surroundings of a core: its supporting episodes with their
@@ -486,6 +528,7 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig) -> Me
     mcp.tool()(impl.get_draft)
     mcp.tool()(impl.review_draft)
     mcp.tool()(impl.get_satellites)
+    mcp.tool()(impl.undo_restate)
     mcp.tool()(impl.audit_drafts)
     mcp.tool()(impl.purge_memory_now)
 

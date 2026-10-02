@@ -148,6 +148,18 @@ triggered by the newer memory, never by the forget route.
 
 The flag is your voice. The purge is the hippocampus's.
 
+**A core that was reworded wrongly can go back, and that is gated too.** An
+approved `attach` may restate its core (below), and the wording it replaced
+is kept on the core as `restated_from`. If the rewording was a mistake, the
+model flags the core with the `undo_restate` MCP tool and a reason; the
+hippocampus puts the earlier wording back on its next tick, and the replaced
+text, the reason and the time stay on the core (`restate_undone`,
+`restate_undone_reason`, `restate_undone_at`). It can only return a core to
+words a review already approved. There is **no HTTP route** for it, on
+purpose: like delete, it is not something a person holding the token gets to
+do to someone's memory. The model asks; the hippocampus acts; the record
+stays.
+
 ### Emergency purge
 
 For a true "this must be gone immediately" case, `POST /long/{id}/purge`
@@ -173,13 +185,52 @@ history), `verbatim` - each reviewed on its own:
 |--------------------------------|------------|-----------------------------------------------|
 | `POST /drafts`                 | hippocampus| submit a draft                                |
 | `GET /drafts?status=pending`   | reviewer   | the queue (also the `list_drafts` MCP tool)   |
-| `GET /drafts/{id}`, `/chain`   | reviewer   | one draft with every verdict; every attempt in its chain (`get_draft`) |
+| `GET /drafts/{id}`, `/chain`   | reviewer   | one draft with every verdict; every attempt in its chain. `?review=true` (what the `get_draft` tool returns) is the reviewer's view, below |
 | `POST /drafts/{id}/review`     | reviewer   | `{"decisions": [{"op": 0, "verdict": "approve"}, {"op": 1, "verdict": "deny", "critique": "..."}]}` (`review_draft`) |
 | `POST /drafts/{id}/close`      | hippocampus | the cull: a reviewed draft whose chain has landed is closed; it leaves the reviewed queue (409 while pending) |
 | `POST /brief/{id}/consume`     | hippocampus | the brief that opened the sleep is retired once the chain lands; `GET /brief` shows open briefs only unless `include_consumed=true` |
 | `GET /long/{id}/satellites`    | anyone     | a core's surroundings                         |
-| `POST /tidy`                   | hippocampus| age out, maintain near-term, sweep, purge flagged |
+| `POST /tidy`                   | hippocampus| age out, maintain near-term, sweep, and execute the flags: purge what was flagged, put back the wording of cores flagged with `undo_restate` |
 | `POST /long/{id}/purge`        | hippocampus, or the model in an emergency | execute a purge with the cascade; `GET /tombstones` |
+
+**Reviewing.** Each operation gets its own verdict. A denial needs a
+critique, and the hippocampus redrafts from it, up to its `max_attempts`.
+
+- **The reviewer's view.** `get_draft` puts what has to be compared in front
+  of the reviewer: `target_core` (the core an `attach` or `supersede` would
+  change, in full), `restate_check` on an attach that carries a rewording, and
+  on a redraft `earlier_attempts` - every previous version of the operation
+  with the critique that sent it back.
+- **A restate cannot wipe a core.** Approving an attach with
+  `restated_content` *replaces* the core's wording. A rewording that is just
+  the episode's own text, or that keeps under half of the core's words, is
+  refused and nothing is applied. Add `"restate": false` to the decision to
+  attach the episode and leave the core's wording alone (the usual right
+  answer), or `"restate": true` once you have compared the two and want it.
+  On 1 Oct 2026 two cores were overwritten with their own satellites this
+  way; that is why the check exists.
+- **The last attempt is where things land.** A draft marked `terminal: true`
+  is the last one in its chain: an operation denied there is dropped, and its
+  memory stays in short-term for a later sleep. So the reviewer takes the best
+  version from `earlier_attempts`, fixes what is still wrong, and approves.
+  Only on a terminal draft, an approval may carry `edited_content` (the
+  text), `edited_kind` and `edited_target_core_id` (the wrong kind of
+  operation, or aimed at the wrong core) and `edited_restated_content`. What
+  was drafted is kept on the operation as `review_edits`. Deny there only
+  what should not be in memory at all.
+
+```json
+{"decisions": [
+  {"op": 0, "verdict": "approve"},
+  {"op": 1, "verdict": "approve", "restate": false},
+  {"op": 2, "verdict": "approve", "edited_kind": "attach", "edited_target_core_id": "<core id>"},
+  {"op": 3, "verdict": "deny", "critique": "a duplicate of core <id>"}
+]}
+```
+
+`GET /health` lists `features` (`target_op`, `restate_guard`, `redraft_of`,
+`terminal_edits`), so a hippocampus can tell what the Memory it talks to
+understands.
 
 Long-term is a core and its surroundings: recall returns cores; satellites
 (`kind: satellite`, `core_id`) and superseded cores come back only when asked

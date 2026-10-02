@@ -7,6 +7,7 @@ applies. See seren_memory.draft for the shape and the reasons.
     POST /drafts                 - submit a draft (the hippocampus)
     GET  /drafts?status=pending  - the review queue (newest first)
     GET  /drafts/{id}            - one draft with every operation's verdict
+                                   (?review=true: beside the cores it would change)
     GET  /drafts/{id}/chain      - every attempt in the draft's chain
     POST /drafts/{id}/review     - {"decisions": [{"op": 0, "verdict": "approve"},
                                                    {"op": 1, "verdict": "deny", "critique": "..."}]}
@@ -46,8 +47,15 @@ async def list_drafts(request: Request, status: Optional[str] = None, limit: int
 
 
 @router.get("/{draft_id}")
-async def get_draft(request: Request, draft_id: str):
+async def get_draft(request: Request, draft_id: str, review: bool = False):
+    """review=true: the reviewer's view - each operation beside the core it
+    would change, restatements checked, earlier attempts with their critiques."""
     store = request.app.state.store
+    if review:
+        view = store.review_view(draft_id)
+        if view is None:
+            raise HTTPException(404, f"no draft '{draft_id}'")
+        return view
     d = store.get_draft(draft_id)
     if d is None:
         raise HTTPException(404, f"no draft '{draft_id}'")
