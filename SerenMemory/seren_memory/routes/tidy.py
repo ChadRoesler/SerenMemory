@@ -8,8 +8,9 @@ housekeeping the in-process consolidator used to do in its own thread:
               not pinned: archived to pruned, then removed
     near      completed intents become a long-term record; expired ones drop
     sweep     pruned entries past consolidator.pruned_safety_days are deleted
-    purge     every long-term entry carrying a forget flag is purged with the
-              cascade and a tombstone
+    purge     the flags are executed: every long-term entry carrying a forget
+              flag is purged with the cascade and a tombstone, and every core
+              flagged to get its earlier wording back gets it (undo-restate)
 
 Each is opt-in per call so a caller can run one without the rest. Nothing
 here drafts or judges - that is the hippocampus's side of the line.
@@ -43,4 +44,12 @@ async def tidy(request: Request, body: dict = Body(default={})):
             if t:
                 tombs.append(t)
         report["purged"] = tombs
+        restored = []
+        for row in store.flagged_restates():
+            try:
+                restored.append(store.undo_restate(row["id"]))
+            except Exception as e:  # noqa: BLE001 - one bad flag does not stop the tidy
+                restored.append({"id": row["id"], "error": str(e)})
+        if restored:
+            report["restored"] = restored
     return {"ok": True, **report}

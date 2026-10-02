@@ -207,11 +207,15 @@ class DraftOperation(BaseModel):
     source_short_ids: list[str] = Field(default_factory=list, description="The short-terms this operation consumes (archived on approval).")
     evidence_count: int = Field(default=1)
     rationale: Optional[str] = Field(None, description="The small model's why - shown to the reviewer.")
+    redraft_of: Optional[int] = Field(None, description="On a redraft: the index of the denied operation in the previous "
+                                      "attempt that this one replaces - how a reviewer sees every version of it.")
     # review
     status: OpStatus = Field(default=OpStatus.PENDING)
     critique: Optional[str] = Field(None, description="On deny: what to fix.")
     note: Optional[str] = Field(None)
     edited_content: Optional[str] = Field(None, description="On a terminal draft only: the reviewer's revision, applied instead of content.")
+    review_edits: dict[str, Any] = Field(default_factory=dict, description="What the reviewer changed on approval "
+                                         "(kind, target, restate): the drafted values, kept for the audit.")
     long_term_id: Optional[str] = Field(None, description="What this operation became or touched.")
     reviewed_at: Optional[float] = Field(None)
 

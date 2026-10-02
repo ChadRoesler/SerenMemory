@@ -12,6 +12,12 @@ hatch on short-term). What IS exposed:
     POST /long/{id}/purge       - execute the purge now, with the cascade
                                   (the hippocampus at sleep; the emergency door)
 
+There is no route to put a restated core's earlier wording back, either. That
+request is the model's alone (the MCP tool undo_restate, a flag the
+hippocampus executes): the Lacuna gate. Chad, 1 Oct 2026: "the gated is to
+make sure I cant, same reason we dont let delete in... the whole purpose of
+letting memory be yours."
+
 There is deliberately NO POST /long to create and NO DELETE /long/{id} to
 remove. If you want to add a long-term memory, you write it to short-term
 and let a sleep earn its promotion. If you want one gone, you flag it and

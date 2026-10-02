@@ -35,8 +35,35 @@ WHO DOES WHAT
     to the hippocampus's tend loop, which resubmits a new draft in the
     same chain (cluster_id, attempt, previous_draft_ids). The last
     permitted attempt is submitted with terminal=true, and only then may
-    an approval carry edited_content - the editor's release valve, never
-    the loop's shortcut.
+    an approval carry edits (edited_content, edited_kind,
+    edited_target_core_id, edited_restated_content) - the editor's release
+    valve, never the loop's shortcut. At the last attempt the reviewer
+    takes the best of the bunch, edits as needed and approves (Chad's map
+    of the cycle, 1 Oct 2026): a denial there drops the operation.
+
+A RESTATE CANNOT WIPE A CORE
+    An attach may carry restated_content: new wording for the core.
+    Approving it REPLACES the core's text. On 1 Oct 2026 the small model put
+    the episode's own text there, a woken reviewer approved without
+    comparing, and two cores were overwritten with their satellites. So the
+    review checks it (restate_problem): text that is the episode itself, or
+    that drops most of the core, is refused. The reviewer approves with
+    "restate": false to attach the episode and leave the core's wording
+    alone, or "restate": true having compared them.
+
+THE WAY BACK IS GATED TOO
+    A core that was restated wrongly can go back to its earlier wording, but
+    not by a call that rewrites it on the spot: that would be the scalpel
+    the no-delete rule refuses (Chad, 1 Oct 2026: "the restore needs to be a
+    little gated... this is a call that lives next to the no delete rule").
+    And it is the model's call, not a person's: there is no HTTP route for
+    it, only the MCP tool - "the gated is to make sure I cant, same reason
+    we dont let delete in... the whole purpose of letting memory be yours."
+    It works the way forget does. flag_undo_restate records a request with a
+    reason; the hippocampus's tick executes it (/tidy with purge - the step
+    that executes flags); the wording that was replaced, the reason and the
+    time stay on the core. The only text it can write is text a review
+    already approved for that core.
 
 FORGET IS NOT HERE. A purge is a separate path (MemoryStore.purge_long):
     a person's flag, executed with a tombstone and a cascade. Nothing in a
@@ -44,6 +71,7 @@ FORGET IS NOT HERE. A purge is a separate path (MemoryStore.purge_long):
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Optional
 
@@ -54,6 +82,35 @@ from .models.schemas import (
 
 class DraftError(ValueError):
     """A review that cannot be applied: bad verdict, unknown op, wrong state."""
+
+
+_WORD = re.compile(r"[a-z0-9']+")
+RESTATE_KEEP = 0.5          # the share of the core's words a restatement must still carry
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in _WORD.findall((text or "").lower()) if len(w) >= 4}
+
+
+def restate_problem(core: str, restated: str, episode: str = "") -> Optional[str]:
+    """Why this restated_content must not replace this core's wording, or None
+    when it reads as the core reworded. A restatement is the WHOLE core said
+    again with the new detail merged in. Two things it is not: the episode's
+    own text (the satellite), and something that drops most of what the core
+    says."""
+    r, c = (restated or "").strip(), (core or "").strip()
+    if not r or r == c:
+        return None
+    if episode and r == episode.strip():
+        return "is the episode's own text, not the core reworded"
+    cw = _words(c)
+    if cw:
+        kept = len(cw & _words(r)) / len(cw)
+        if kept < RESTATE_KEEP:
+            return f"keeps only {round(kept * 100)}% of the core's words"
+    if len(r) < 0.5 * len(c):
+        return "is less than half the length of the core it replaces"
+    return None
 
 
 def _maybe_json(v: Any) -> Any:
@@ -251,8 +308,17 @@ class DraftMixin:
         Approved operations are applied immediately (long-term changes,
         source shorts archived). Denied ones record the critique for the
         hippocampus to redraft. An operation already decided is refused
-        (idempotency over re-doing). edited_content is honoured only on a
-        terminal draft.
+        (idempotency over re-doing).
+
+        On a terminal draft only, an approval may carry the reviewer's own
+        fixes: edited_content (the text), edited_kind, edited_target_core_id
+        (the wrong kind, or aimed at the wrong core), edited_restated_content.
+
+        On any draft, an approved attach may carry "restate": false - attach
+        the episode, leave the core's wording alone - or "restate": true -
+        the reviewer compared the rewording with the core and wants it. With
+        neither, a rewording that would wipe the core is refused (see
+        restate_problem).
         """
         d = self.get_draft(draft_id)
         if d is None:
@@ -285,6 +351,7 @@ class DraftMixin:
                                           "deny with a critique and let the hippocampus redraft")
                     if not str(edited).strip():
                         raise DraftError("edited_content must be non-empty; omit it to apply as-is")
+                dec = {**dec, "_final": self._final_shape(d, idx, op, dec)}
             elif verdict == "deny":
                 if not str(dec.get("critique") or "").strip():
                     raise DraftError(f"operation {idx}: a critique is required to deny")
@@ -315,6 +382,7 @@ class DraftMixin:
                 if verdict == "approve":
                     if dec.get("edited_content") is not None:
                         op.edited_content = str(dec["edited_content"])
+                    self._take_final_shape(op, dec["_final"])
                     if op.target_op is not None:
                         op.target_core_id = d.operations[op.target_op].long_term_id
                     result = self._apply_operation(d, op)
@@ -343,6 +411,117 @@ class DraftMixin:
             "pending": sum(1 for op in d.operations if op.status == OpStatus.PENDING),
             "results": applied,
         }
+
+    # -- the shape an approval lands in ----------------------------------------
+    def _final_shape(self, d: Draft, idx: int, op: DraftOperation, dec: dict[str, Any]) -> dict[str, Any]:
+        """What an approved operation will be once the reviewer's fixes are
+        in: its kind, target and restatement. Checked here, before anything
+        is applied, so a refused decision changes nothing."""
+        ek, et, er = dec.get("edited_kind"), dec.get("edited_target_core_id"), dec.get("edited_restated_content")
+        if (ek is not None or et is not None or er is not None) and not d.terminal:
+            raise DraftError(f"operation {idx}: edited_kind, edited_target_core_id and edited_restated_content are "
+                             "only allowed on a terminal draft; deny with a critique and let the hippocampus redraft")
+        kind = op.kind
+        if ek is not None:
+            try:
+                kind = DraftOpKind(str(ek).strip().lower())
+            except ValueError:
+                raise DraftError(f"operation {idx}: edited_kind must be one of "
+                                 f"{', '.join(k.value for k in DraftOpKind)}")
+        target, target_op = op.target_core_id, op.target_op
+        if kind in (DraftOpKind.NEW_CORE, DraftOpKind.VERBATIM):
+            target, target_op = None, None
+        elif et is not None:
+            target, target_op = str(et).strip(), None
+        core_text: Optional[str] = None
+        if kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE):
+            if target_op is not None:
+                t = d.operations[target_op]
+                core_text = t.edited_content if t.edited_content is not None else t.content
+            else:
+                if not target:
+                    raise DraftError(f"operation {idx}: a {kind.value} needs a core; give edited_target_core_id")
+                row = self._long_row(target)
+                if row is None:
+                    raise DraftError(f"operation {idx}: no long-term entry '{target}'")
+                if row["metadata"].get("kind", "core") != "core":
+                    raise DraftError(f"operation {idx}: '{target}' is a satellite, not a core")
+                core_text = row["content"]
+        content = dec.get("edited_content") if dec.get("edited_content") is not None else op.content
+        if kind != DraftOpKind.ATTACH and not str(content or "").strip():
+            raise DraftError(f"operation {idx}: a {kind.value} needs content; give edited_content")
+        restated = (str(er) if er is not None else op.restated_content) if kind == DraftOpKind.ATTACH else None
+        restated = (restated or "").strip() or None
+        choice = dec.get("restate")
+        if choice is False:
+            restated = None
+        if kind == DraftOpKind.ATTACH and not restated and not str(content or "").strip():
+            raise DraftError(f"operation {idx}: an attach with no episode text and no rewording does nothing; "
+                             "give edited_content, or deny it")
+        if restated and choice is not True:
+            why = restate_problem(core_text or "", restated, str(content or ""))
+            if why:
+                raise DraftError(
+                    f"operation {idx}: approving this would REPLACE the wording of core {target or 'in this draft'} "
+                    f"with text that {why}. Approve with \"restate\": false to attach the episode and keep the "
+                    f"core's wording, or with \"restate\": true if you have compared the two and want the "
+                    f"rewording, or deny it.")
+        return {"kind": kind, "target_core_id": target, "target_op": target_op, "restated_content": restated}
+
+    @staticmethod
+    def _take_final_shape(op: DraftOperation, final: dict[str, Any]) -> None:
+        """Put the checked shape on the operation; what was drafted is kept
+        in review_edits for the audit."""
+        for field in ("kind", "target_core_id", "target_op", "restated_content"):
+            was, now = getattr(op, field), final[field]
+            if was != now:
+                op.review_edits[field] = was.value if isinstance(was, DraftOpKind) else was
+                setattr(op, field, now)
+
+    # -- what the reviewer needs in front of them ------------------------------
+    def review_view(self, draft_id: str) -> Optional[dict[str, Any]]:
+        """A draft as its reviewer should see it: each operation beside the
+        core it would change, a restatement already checked against that
+        core, and - on a redraft - every earlier version of the operation
+        with the critique that sent it back. On the last attempt the reviewer
+        takes the best of these, edits as needed and approves."""
+        d = self.get_draft(draft_id)
+        if d is None:
+            return None
+        chain = {x.attempt: x for x in self.draft_chain(d.cluster_id or d.id)}
+        out = d.model_dump()
+        for op, view in zip(d.operations, out["operations"]):
+            core_text = None
+            if op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE):
+                if op.target_op is not None and 0 <= op.target_op < len(d.operations):
+                    core_text = d.operations[op.target_op].content
+                    view["target_core"] = {"op": op.target_op, "content": core_text}
+                elif op.target_core_id:
+                    row = self._long_row(op.target_core_id)
+                    core_text = row["content"] if row else None
+                    view["target_core"] = {"id": op.target_core_id, "content": core_text,
+                                           "gone": row is None}
+            if op.kind == DraftOpKind.ATTACH and (op.restated_content or "").strip() and op.status == OpStatus.PENDING:
+                why = restate_problem(core_text or "", op.restated_content or "", op.content)
+                view["restate_check"] = (
+                    f"REFUSED as it stands: the rewording {why}. Approve with \"restate\": false to keep the "
+                    f"core's wording." if why else
+                    "approving REPLACES target_core's wording with restated_content: compare them first")
+            earlier, at, ref = [], d.attempt - 1, op.redraft_of
+            while ref is not None and at in chain and 0 <= ref < len(chain[at].operations):
+                prev = chain[at].operations[ref]
+                earlier.append({"attempt": at, "kind": prev.kind.value, "target_core_id": prev.target_core_id,
+                                "content": prev.content, "critique": prev.critique})
+                at, ref = at - 1, prev.redraft_of
+            if earlier:
+                view["earlier_attempts"] = earlier
+        if d.terminal and d.status == DraftStatus.PENDING:
+            out["last_attempt"] = (
+                "This is the last attempt: an operation denied now is dropped and its memory stays in "
+                "short-term. Land each one - approve it, or approve it with your fixes (edited_content, "
+                "edited_kind, edited_target_core_id, \"restate\": false), taking the best wording from "
+                "earlier_attempts. Deny only what should not be in memory at all.")
+        return out
 
     # -- apply ----------------------------------------------------------------
     def _long_row(self, entry_id: str) -> Optional[dict[str, Any]]:
@@ -429,10 +608,58 @@ class DraftMixin:
     def _restate_long(self, entry_id: str, new_content: str, meta: dict[str, Any]) -> None:
         """Replace a core's wording. The distilled retrieval key is re-embedded
         the way a live write embeds it; the old wording is kept in metadata."""
-        from .collections import _retrieval_text
         prior = meta.get("restated_from")
         meta["restated_from"] = prior if prior else self._long_row(entry_id)["content"]
         meta["restated_at"] = time.time()
+        self._write_long_text(entry_id, new_content, meta)
+
+    def _earlier_wording(self, entry_id: str) -> tuple[dict[str, Any], str]:
+        row = self._long_row(entry_id)
+        if row is None:
+            raise KeyError(entry_id)
+        prior = str(row["metadata"].get("restated_from") or "").strip()
+        if not prior or prior == row["content"].strip():
+            raise DraftError(f"core '{entry_id}' has no earlier wording to return to")
+        return row, prior
+
+    def flag_undo_restate(self, entry_id: str, reason: str) -> dict[str, Any]:
+        """Ask for a core's earlier wording back (metadata.restated_from: what
+        it said before a restate replaced it - the FIRST wording, if it was
+        restated more than once). A request, not the act: the hippocampus's
+        tick executes it. A reason is required and is kept."""
+        if not (reason or "").strip():
+            raise DraftError("a reason is required to ask for a core's earlier wording back")
+        row, prior = self._earlier_wording(entry_id)
+        meta = dict(row["metadata"])
+        meta["undo_restate_flag"] = reason.strip()
+        self.long.update(ids=[entry_id], metadatas=[_clean_meta(meta)])
+        return {"id": entry_id, "flagged_reason": reason.strip(), "will_read": prior, "reads_now": row["content"]}
+
+    def flagged_restates(self) -> list[dict[str, Any]]:
+        return [r for r in self.get_long_all() if r["metadata"].get("undo_restate_flag")]
+
+    def undo_restate(self, entry_id: str) -> dict[str, Any]:
+        """Execute a flagged request: the earlier wording goes back, and the
+        wording it replaces, the reason and the time stay on the core
+        (restate_undone, restate_undone_reason, restate_undone_at). Refused
+        without a flag - there is no unflagged way to rewrite a core. The
+        replaced text is usually still there as the satellite the same
+        approval attached."""
+        row, prior = self._earlier_wording(entry_id)
+        meta = dict(row["metadata"])
+        reason = str(meta.get("undo_restate_flag") or "").strip()
+        if not reason:
+            raise DraftError(f"core '{entry_id}' is not flagged; flag it with a reason first")
+        meta["restate_undone"] = row["content"]
+        meta["restate_undone_reason"] = reason
+        meta["restate_undone_at"] = time.time()
+        meta["undo_restate_flag"] = ""                     # done; chroma merges metadata, so cleared, not dropped
+        meta["restated_from"] = prior                      # equal to the content again: nothing left to undo
+        self._write_long_text(entry_id, prior, meta)
+        return {"id": entry_id, "reason": reason, "restored_at": meta["restate_undone_at"]}
+
+    def _write_long_text(self, entry_id: str, new_content: str, meta: dict[str, Any]) -> None:
+        from .collections import _retrieval_text
         try:
             vec = self.long._embedding_function([_retrieval_text(new_content, meta.get("topic"))])[0]
             self.long.update(ids=[entry_id], documents=[new_content],
