@@ -94,3 +94,18 @@ def test_a_later_attempt_that_no_longer_cites_it_frees_it(client):
     nxt = _draft(client, other, attempt=2, cluster_id=did, previous_draft_ids=[did])
     assert client.app.state.store.shorts_under_review() == {other: nxt}
     assert client.post(f"/short/{sid}/promote").status_code == 200
+
+
+def test_a_consumed_short_term_can_still_be_read_from_the_archive(client):
+    """3 Oct 2026: a fragment archived by a core that carried half of it; the
+    reviewer could not read the rest back. Now get_by_id reaches the pruned
+    archive (tier 'pruned'); recall still does not."""
+    sid = _short(client, "the user's backup model, and an unrelated second subject: a small smile after, like punctuation.")
+    did = _draft(client, sid)
+    r = client.post(f"/drafts/{did}/review", json={"decisions": [{"op": 0, "verdict": "approve"}]})
+    assert r.status_code == 200
+    store = client.app.state.store
+    row = store.get_by_id(sid)
+    assert row and row["tier"] == "pruned" and "the second subject" in row["content"] and row["metadata"].get("pruned_at")
+    hits = client.post("/search", json={"query": "the second subject small smile punctuation", "n_results": 5}).json()["hits"]
+    assert sid not in {h["id"] for h in hits}, "archived: not recalled"

@@ -220,10 +220,16 @@ class MemoryToolImpl:
         around it, instead of re-searching and hoping it ranks again. This is
         the right-brain twin of Loci's get_fact: exact lookup by handle, not
         ranked similarity. Returns {ok: false} if no recall tier holds that id.
+
+        A short-term that an approved draft operation consumed is not gone
+        at once: it sits in the pruned archive for pruned_safety_days and
+        comes back here as tier "pruned" (recall does not see it). If an
+        operation landed holding only part of a fragment, this is how to
+        read the rest and write it back with remember.
         """
         row = self.store.get_by_id(memory_id)
         if row is None:
-            return {"ok": False, "error": f"no memory '{memory_id}' in short/near/long"}
+            return {"ok": False, "error": f"no memory '{memory_id}' in short/near/long, nor in the pruned archive"}
         return {
             "ok": True,
             "id": row["id"],

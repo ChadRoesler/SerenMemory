@@ -446,7 +446,8 @@ class MemoryStore(DraftMixin):
     #  Cross-tier exact lookup - the dereference for a /search pointer
     # ------------------------------------------------------------------
     def get_by_id(self, entry_id: str) -> Optional[dict[str, Any]]:
-        """Hydrate ONE entry by id across the recall tiers (short/near/long).
+        """Hydrate ONE entry by id across the recall tiers (short/near/long),
+        then the pruned archive.
 
         The dereference path for a pointer handed back by /search: recall
         returns an id alongside each hit; this returns the WHOLE entry so a
@@ -460,7 +461,14 @@ class MemoryStore(DraftMixin):
         """
         for tier, col in (("short", self.short),
                           ("near", self.near),
-                          ("long", self.long)):
+                          ("long", self.long),
+                          # The archive: a short-term an approved operation consumed
+                          # (or that aged out) sits here for pruned_safety_days. On
+                          # 3 Oct 2026 a woken reviewer needed one back - a fragment
+                          # archived by a core that carried half of it - and had no
+                          # way to read it. It reads as tier "pruned": still there,
+                          # not recalled, gone at the sweep.
+                          ("pruned", self.pruned)):
             rows = _zip_get(
                 col.get(ids=[entry_id], include=["documents", "metadatas"]), None)
             if rows:
