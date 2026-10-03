@@ -20,6 +20,17 @@ THE RANKING MODEL (this is where the memory hierarchy becomes behavior):
     so a long-term fact seen 10 times beats a one-off short-term match.
     A fact you've confirmed over and over SHOULD outrank a passing mention.
 
+A CORE IS AS NEAR AS ITS NEAREST SATELLITE (2 Oct 2026). Recall returns
+cores, and satellites were simply dropped from the rows the vector search
+returned. But a satellite is an episode - dated, concrete, worded the way a
+question is worded - so it is often the closest row in the store, and the
+core it hangs under came back nowhere: the long tier fetched 2n rows, found
+them full of one subject's own episodes, and threw them all away. (Seen on
+the hippocampus's side the same day: a pile about a well-recorded subject
+was shown none of its cores.) Now a satellite hit counts for its core: the
+core takes the satellite's distance when that is the better one, and the
+hit carries `matched_via` - the episode that found it.
+
 The weights are tunable (config could expose them later). The shape -
 recency-biased but confidence-corrected - is the point.
 """
@@ -47,6 +58,7 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
     store = request.app.state.store
     searched: list[str] = []
     all_hits: list[SearchHit] = []
+    via: dict[str, dict] = {}                  # core id -> the nearest satellite of it that matched
 
     # Over-fetch from each tier (n_results * 2) so the merge has enough
     # candidates to rank meaningfully, then trim to n_results at the end.
@@ -77,6 +89,12 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
             # Long-term filtering: satellites are the surroundings, not the
             # answer, and superseded cores are history - both off unless asked.
             if tier == "long" and not req.include_satellites and meta.get("kind") == "satellite":
+                cid = str(meta.get("core_id") or "")
+                if cid:
+                    prev = via.get(cid)
+                    if prev is None or hit["distance"] < prev["raw_distance"]:
+                        via[cid] = {"id": hit["id"], "content": hit["content"],
+                                    "created_at": meta.get("created_at"), "raw_distance": round(hit["distance"], 6)}
                 continue
             if tier == "long" and not req.include_superseded:
                 if meta.get("superseded_by"):
@@ -107,6 +125,10 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
                 metadata=meta,
             ))
 
+    # A core is as near as its nearest satellite (module docstring).
+    if via:
+        _lift_cores_by_satellite(store, all_hits, via, include_superseded=req.include_superseded)
+
     # Merge + rank + trim.
     all_hits.sort(key=lambda h: h.score, reverse=True)
     top = all_hits[:req.n_results]
@@ -116,6 +138,44 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
         hits=top,
         searched_tiers=searched,
     )
+
+
+def _long_score(distance: float, meta: dict) -> float:
+    base = 1.0 / (1.0 + max(distance, 0.0))
+    score = base * _TIER_WEIGHT["long"]
+    ev = meta.get("evidence_count", 1)
+    if isinstance(ev, (int, float)) and ev > 0:
+        score *= (1.0 + math.log(ev) * 0.15)
+    return round(score, 6)
+
+
+def _lift_cores_by_satellite(store, all_hits: list[SearchHit], via: dict[str, dict], *,
+                             include_superseded: bool) -> None:
+    """For every satellite the vector search returned: its core takes the
+    satellite's distance when that is the better one, and says which episode
+    found it. A core the search did not return at all is fetched and added;
+    a superseded core stays history unless asked for."""
+    present = {h.id: h for h in all_hits if h.tier == "long"}
+    for cid, sat in via.items():
+        h = present.get(cid)
+        if h is not None:
+            if sat["raw_distance"] < h.raw_distance:
+                h.raw_distance = sat["raw_distance"]
+                h.score = _long_score(sat["raw_distance"], h.metadata)
+                h.matched_via = sat
+            continue
+        row = store.get_by_id(cid)
+        if row is None or row.get("tier") != "long":
+            continue
+        meta = row.get("metadata") or {}
+        if meta.get("kind", "core") != "core":
+            continue
+        if meta.get("superseded_by") and not include_superseded:
+            continue
+        all_hits.append(SearchHit(
+            tier="long", content=row.get("content") or "", topic=meta.get("topic"),
+            score=_long_score(sat["raw_distance"], meta), raw_distance=sat["raw_distance"],
+            id=cid, metadata=meta, matched_via=sat))
 
 
 def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: int = 3) -> None:
@@ -148,6 +208,11 @@ def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: 
         }
         if inline:
             out["recent"] = [{"id": i, "content": doc, "created_at": ts} for ts, i, doc in mine[:recent]]
+            if h.matched_via:
+                # the episode that found this core rides first: it is the reason the hit is here
+                rest = [r for r in out["recent"] if r["id"] != h.matched_via.get("id")]
+                out["recent"] = [{"id": h.matched_via["id"], "content": h.matched_via.get("content"),
+                                  "created_at": h.matched_via.get("created_at")}] + rest[: max(0, recent - 1)]
             if sup and sup in by_id:
                 out["supersedes_entry"] = {"id": sup, "content": by_id[sup][0],
                                            "created_at": by_id[sup][1].get("created_at")}
