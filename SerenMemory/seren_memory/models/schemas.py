@@ -296,6 +296,10 @@ class SearchHit(BaseModel):
     # plus "recent": [{id, content, created_at}] (newest first, a few) and
     # "supersedes_entry" when the search asked with_surroundings.
     surroundings: Optional[dict[str, Any]] = None
+    # When a core is in the packet because one of its SATELLITES matched the
+    # query (a core is as near as its nearest episode): that satellite - id,
+    # content, created_at, raw_distance - so the hit says why it is here.
+    matched_via: Optional[dict[str, Any]] = None
 
 
 class SearchResponse(BaseModel):
