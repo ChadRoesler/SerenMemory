@@ -225,6 +225,30 @@ input, select {
     .chip.noise { color: var(--danger); border-color: var(--danger); }
     .chip.intent { color: var(--near); border-color: var(--near); }
 
+/* a core's surroundings, opened from under the core */
+.entry details.sats {
+    margin-top: 10px;
+    border-top: 1px dashed var(--line, #2c2c3a);
+    padding-top: 8px;
+}
+    .entry details.sats > summary {
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--long);
+        user-select: none;
+    }
+        .entry details.sats > summary:hover { text-decoration: underline; }
+    .entry .sat {
+        margin: 8px 0 0 14px;
+        padding: 8px 10px;
+        border-left: 2px solid var(--long);
+        background: rgba(255, 255, 255, 0.025);
+        border-radius: 0 4px 4px 0;
+    }
+        .entry .sat .content { font-size: 13px; }
+        .entry .sat.was { border-left-color: var(--danger); opacity: 0.85; }
+.badge.satellite { color: var(--long); border-color: var(--long); }
+
 .entry .chip-row {
     margin-top: 7px;
 }

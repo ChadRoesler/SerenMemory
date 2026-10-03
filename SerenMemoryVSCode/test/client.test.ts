@@ -123,6 +123,22 @@ describe("listDrafts", () => {
   });
 });
 
+// -- releaseVerbatim ----------------------------------------------------------
+
+describe("releaseVerbatim", () => {
+  it("POSTs /short/:id/release, and keeps the pin only when asked", async () => {
+    mockFetch(200, { ok: true, verbatim: false, pinned: false });
+    await makeClient().releaseVerbatim("s 1");
+    let [url, init] = lastFetch();
+    expect(url).toBe("http://localhost:7420/short/s%201/release");
+    expect(init.method).toBe("POST");
+    mockFetch(200, { ok: true, verbatim: false, pinned: true });
+    await makeClient().releaseVerbatim("s1", true);
+    [url] = lastFetch();
+    expect(url).toBe("http://localhost:7420/short/s1/release?keep_pinned=true");
+  });
+});
+
 // -- getDraft -----------------------------------------------------------------
 
 describe("getDraft", () => {
@@ -130,7 +146,8 @@ describe("getDraft", () => {
     mockFetch(200, { id: "draft-1", operations: [], terminal: false });
     const result = await makeClient().getDraft("draft-1");
     const [url, init] = lastFetch();
-    expect(url).toBe("http://localhost:7420/drafts/draft-1");
+    // the reviewer's view: target_core, restate_check, earlier_attempts
+    expect(url).toBe("http://localhost:7420/drafts/draft-1?review=true");
     expect(init.method).toBe("GET");
     expect(result).toEqual({ id: "draft-1", operations: [], terminal: false });
   });
@@ -226,6 +243,36 @@ describe("checkDecisions", () => {
         { op: 0, verdict: "deny", critique: "no" },
       ])
     ).toThrow(/decided twice/);
+  });
+
+  it("keeps restate, in either direction", () => {
+    // 1 Oct 2026: an attach's restated_content replaced two cores. restate
+    // is how a reviewer says "attach it, leave the core's words alone" - and
+    // this function used to strip it before the request went out.
+    expect(checkDecisions([{ op: 0, verdict: "approve", restate: false }])).toEqual([
+      { op: 0, verdict: "approve", restate: false },
+    ]);
+    expect(checkDecisions([{ op: 0, verdict: "approve", restate: true }])).toEqual([
+      { op: 0, verdict: "approve", restate: true },
+    ]);
+  });
+
+  it("keeps the last-attempt edits", () => {
+    expect(
+      checkDecisions([
+        { op: 1, verdict: "approve", edited_kind: "attach", edited_target_core_id: " abc123 ", edited_restated_content: "" },
+      ])
+    ).toEqual([{ op: 1, verdict: "approve", edited_kind: "attach", edited_target_core_id: "abc123" }]);
+  });
+
+  it("rejects an unknown edited_kind before anything is sent", () => {
+    expect(() => checkDecisions([{ op: 0, verdict: "approve", edited_kind: "sideways" as any }])).toThrow(/edited_kind/);
+  });
+
+  it("does not carry approve-only fields on a deny", () => {
+    expect(checkDecisions([{ op: 0, verdict: "deny", critique: "no", restate: false, edited_kind: "attach" }])).toEqual([
+      { op: 0, verdict: "deny", critique: "no" },
+    ]);
   });
 
   it("drops a critique on an approve", () => {

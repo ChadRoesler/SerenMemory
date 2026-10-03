@@ -165,6 +165,30 @@ export class PreserveVerbatimTool implements vscode.LanguageModelTool<ShortIdInp
   }
 }
 
+// -- seren_memory_release_verbatim ------------------------------------------
+
+interface ReleaseVerbatimInput {
+  short_id: string;
+  keep_pinned?: boolean;
+}
+
+export class ReleaseVerbatimTool implements vscode.LanguageModelTool<ReleaseVerbatimInput> {
+  constructor(private readonly client: SerenClient) {}
+
+  async invoke(
+    options: vscode.LanguageModelToolInvocationOptions<ReleaseVerbatimInput>,
+    token: vscode.CancellationToken
+  ): Promise<vscode.LanguageModelToolResult> {
+    try {
+      const result = await this.client.releaseVerbatim(
+        options.input.short_id, options.input.keep_pinned === true, signalFromToken(token));
+      return json(result);
+    } catch (e) {
+      return err(e);
+    }
+  }
+}
+
 // -- seren_memory_promote_now -----------------------------------------------
 
 export class PromoteNowTool implements vscode.LanguageModelTool<ShortIdInput> {
