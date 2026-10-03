@@ -124,6 +124,13 @@ export class SerenClient {
     return this.post(`/short/${encodeURIComponent(shortId)}/preserve`, undefined, signal);
   }
 
+  /** Take the verbatim mark back off: the next sleep drafts the entry like
+   *  any other. The pin that came with the mark goes too unless keepPinned. */
+  async releaseVerbatim(shortId: string, keepPinned: boolean = false, signal?: AbortSignal): Promise<unknown> {
+    const qs = keepPinned ? "?keep_pinned=true" : "";
+    return this.post(`/short/${encodeURIComponent(shortId)}/release${qs}`, undefined, signal);
+  }
+
   async promoteNow(shortId: string, signal?: AbortSignal): Promise<unknown> {
     return this.post(`/short/${encodeURIComponent(shortId)}/promote`, undefined, signal);
   }
@@ -178,8 +185,21 @@ export class SerenClient {
   //   /drafts/{id}/review      takes { decisions: [{op, verdict, critique?,
   //                            edited_content?}], note? }. verdict is
   //                            approve | deny (NOT approved/denied); a deny
-  //                            needs a critique; edited_content only on a
-  //                            terminal draft. 409 on re-deciding an op.
+  //                            needs a critique. 409 on re-deciding an op.
+  //                            On an approve: restate (boolean, any draft) -
+  //                            an attach carrying restated_content REPLACES
+  //                            its core's wording; false attaches and keeps
+  //                            the core's words, true says "I compared them".
+  //                            With neither, a rewording that would wipe the
+  //                            core is refused (400). edited_content,
+  //                            edited_kind, edited_target_core_id and
+  //                            edited_restated_content only on a terminal
+  //                            draft (400 otherwise).
+  //   /drafts/{id}?review=true the reviewer's view: target_core beside each
+  //                            attach/supersede, restate_check, and
+  //                            earlier_attempts with their critiques. An
+  //                            older Memory ignores the flag and returns the
+  //                            plain draft.
 
   async listDrafts(status?: string, limit?: number, signal?: AbortSignal): Promise<unknown> {
     const params = new URLSearchParams();
@@ -190,7 +210,7 @@ export class SerenClient {
   }
 
   async getDraft(draftId: string, signal?: AbortSignal): Promise<unknown> {
-    return this.get(`/drafts/${encodeURIComponent(draftId)}`, signal);
+    return this.get(`/drafts/${encodeURIComponent(draftId)}?review=true`, signal);
   }
 
   /** Approve or deny operations, one verdict each. Approved operations are
@@ -215,8 +235,16 @@ export interface DraftDecision {
   op: number;
   verdict: "approve" | "deny";
   critique?: string;
+  /** approve, any draft: false = attach, keep the core's wording; true = the rewording was compared and is wanted. */
+  restate?: boolean;
+  /** approve, terminal drafts only: the reviewer's own fixes. */
   edited_content?: string;
+  edited_kind?: "new_core" | "attach" | "supersede" | "verbatim";
+  edited_target_core_id?: string;
+  edited_restated_content?: string;
 }
+
+const EDIT_KINDS = ["new_core", "attach", "supersede", "verbatim"];
 
 /** Validate decisions the way the server will, and strip empty optional
  *  fields so they aren't sent. Throws on the first bad one, before any
@@ -245,6 +273,21 @@ export function checkDecisions(decisions: DraftDecision[]): DraftDecision[] {
       // ops, see reviewDraft); treat it as "no edit" rather than send it.
       if (d.edited_content !== undefined && d.edited_content.trim() !== "") {
         out.edited_content = d.edited_content;
+      }
+      // These were silently dropped before 0.4.0, so a reviewer here could
+      // neither keep a core's wording nor land a last attempt with a fix.
+      if (typeof d.restate === "boolean") out.restate = d.restate;
+      if (d.edited_kind !== undefined) {
+        if (!EDIT_KINDS.includes(d.edited_kind)) {
+          throw new Error(`operation ${d.op}: edited_kind must be one of ${EDIT_KINDS.join(", ")}`);
+        }
+        out.edited_kind = d.edited_kind;
+      }
+      if (d.edited_target_core_id !== undefined && d.edited_target_core_id.trim() !== "") {
+        out.edited_target_core_id = d.edited_target_core_id.trim();
+      }
+      if (d.edited_restated_content !== undefined && d.edited_restated_content.trim() !== "") {
+        out.edited_restated_content = d.edited_restated_content;
       }
     } else {
       throw new Error(`operation ${d.op}: verdict must be approve or deny`);

@@ -126,6 +126,24 @@ class UpdatesConfig(BaseModel):
     allow_prerelease: bool = False
 
 
+class BackupConfig(BaseModel):
+    """Snapshots of what this service keeps (seren_sinew.stores): a copy of
+    the store plus a plain export, taken on the service's own schedule so a
+    standalone install is covered with nothing else running. GET /stores says
+    what is kept; POST /stores/snapshot takes one now."""
+    enabled: bool = True
+    # Where snapshots go. Blank = a `backups` folder beside the store. Point
+    # it at another disk: a copy on the same disk survives a bad migration or
+    # a bug, not a dead disk.
+    dir: str = ""
+    # A snapshot whenever the newest is older than this. 0 = never on its own
+    # (something else - a person, Lodestar - asks for them).
+    every_hours: float = 24.0
+    # The newest keep_daily are kept, then one a week for keep_weekly weeks.
+    keep_daily: int = 14
+    keep_weekly: int = 8
+
+
 class MemoryConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
@@ -133,6 +151,13 @@ class MemoryConfig(BaseModel):
     consolidator: ConsolidatorConfig = Field(default_factory=ConsolidatorConfig)
     tls: TlsConfig = Field(default_factory=TlsConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
+
+    def resolved_backup_dir(self) -> Path:
+        """Where snapshots go: backup.dir, or `backups` beside the store."""
+        if self.backup.dir.strip():
+            return Path(os.path.expanduser(self.backup.dir)).resolve()
+        return self.resolved_persist_dir().parent / "backups"
 
     def resolved_persist_dir(self) -> Path:
         """Expand ~ and return an absolute Path, creating it if needed."""

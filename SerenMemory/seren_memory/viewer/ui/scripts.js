@@ -107,8 +107,55 @@ function entryCard(tier, content, meta, opts = {}) {
             ${badges.join(' ')}
             ${metaBits.join('')}
         </div>
+        ${opts.under || ''}
     </div>`;
 }
+
+// A core's surroundings, under the core: the satellites (the dated episodes
+// that stand behind it) and, when it was reworded, what it said before. They
+// were in the store all along and nowhere in this window (Design note:
+// 'click a long term, it expands and shows the satellites under it').
+function satelliteRow(s) {
+    const m = s.metadata || {};
+    const when = m.created_at ?? m.last_confirmed;
+    const bits = [`<span class="badge satellite">satellite</span>`];
+    if (when != null) bits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(when))}</span>`);
+    if (m.evidence_count != null) bits.push(`<span><span class="k">evidence</span> ${escapeHtml(m.evidence_count)}</span>`);
+    bits.push(`<code class="id">${escapeHtml(s.id)}</code>`);
+    return `<div class="sat"><div class="content">${escapeHtml(s.content)}</div><div class="meta">${bits.join(' ')}</div></div>`;
+}
+
+function earlierWording(meta) {
+    // restated_from equal to the content means a restate was undone: nothing earlier to show.
+    const was = meta.restate_undone || '';
+    if (!was) return '';
+    return `<div class="sat was"><div class="content">${escapeHtml(was)}</div><div class="meta">
+        <span class="badge superseded">reworded, then put back</span>
+        ${meta.restate_undone_reason ? `<span><span class="k">why</span> ${escapeHtml(meta.restate_undone_reason)}</span>` : ''}</div></div>`;
+}
+
+function surroundingsBlock(coreId, meta, sats, lazyCount) {
+    // sats given = render them; lazyCount given = fetch on first open (search hits)
+    const n = sats ? sats.length : (lazyCount || 0);
+    const earlier = earlierWording(meta);
+    if (!n && !earlier) return '';
+    const label = `${n} satellite${n === 1 ? '' : 's'}${earlier ? ' · an earlier wording' : ''}`;
+    const body = sats ? sats.map(satelliteRow).join('') + earlier
+                      : `<div class="sat-slot" data-core="${escapeHtml(coreId)}"><div class="empty">loading…</div></div>${earlier}`;
+    return `<details class="sats"${sats ? '' : ' data-lazy="1"'}><summary>${label}</summary>${body}</details>`;
+}
+
+// search hits: the satellites are fetched the first time a core is opened
+document.addEventListener('toggle', async (ev) => {
+    const d = ev.target;
+    if (!d.matches || !d.matches('details.sats[data-lazy]') || !d.open) return;
+    d.removeAttribute('data-lazy');
+    const slot = d.querySelector('.sat-slot');
+    try {
+        const data = await api(`/long/${encodeURIComponent(slot.dataset.core)}/satellites`);
+        slot.innerHTML = (data.satellites || []).map(satelliteRow).join('') || `<div class="empty">none</div>`;
+    } catch (e) { slot.innerHTML = `<div class="empty">could not load: ${escapeHtml(e.message)}</div>`; }
+}, true);
 
 function briefCard(brief) {
     const meta = brief.metadata || {};
@@ -200,8 +247,21 @@ async function loadLong() {
     await loadLongInner($('extra-toggle').checked);
 }
 async function loadLongInner(includeSuperseded) {
-    const data = await api(`/long?include_superseded=${includeSuperseded ? 'true' : 'false'}`);
-    renderEntries((data.entries || []).map(e => entryCard('long', e.content, e.metadata || {}, { id: e.id })).join(''));
+    // One call brings the satellites along; they are grouped under their cores here.
+    const data = await api(`/long?include_satellites=true&include_superseded=${includeSuperseded ? 'true' : 'false'}`);
+    const rows = data.entries || [];
+    const byCore = {};
+    for (const e of rows) {
+        const m = e.metadata || {};
+        if (m.kind === 'satellite' && m.core_id) (byCore[m.core_id] = byCore[m.core_id] || []).push(e);
+    }
+    for (const k in byCore) byCore[k].sort((a, b) => ((a.metadata || {}).created_at || 0) - ((b.metadata || {}).created_at || 0));
+    const cores = rows.filter(e => (e.metadata || {}).kind !== 'satellite');
+    const withSats = cores.filter(e => byCore[e.id]).length;
+    setHint(`Consolidated knowledge · gated (consolidator writes only) · no scalpel · ${cores.length} cores, ` +
+            `${withSats} with satellites: open one to see what stands behind it`);
+    renderEntries(cores.map(e => entryCard('long', e.content, e.metadata || {},
+        { id: e.id, under: surroundingsBlock(e.id, e.metadata || {}, byCore[e.id] || [], 0) })).join(''));
 }
 
 async function loadBriefs() {
@@ -237,7 +297,12 @@ async function doSearch() {
     try {
         clearError();
         const data = await api('/search', { method: 'POST', body: JSON.stringify(body) });
-        const html = (data.hits || []).map(h => entryCard(h.tier, h.content, h.metadata || {}, { id: h.id, score: h.score })).join('');
+        const html = (data.hits || []).map(h => {
+            const m = h.metadata || {};
+            const n = ((h.surroundings || m.surroundings || {}).satellites) || 0;
+            const under = h.tier === 'long' ? surroundingsBlock(h.id, m, null, n) : '';
+            return entryCard(h.tier, h.content, m, { id: h.id, score: h.score, under });
+        }).join('');
         renderEntries(html || `<div class="empty">no hits for "${escapeHtml(query)}"</div>`);
     } catch (e) { showError(e.message); }
 }

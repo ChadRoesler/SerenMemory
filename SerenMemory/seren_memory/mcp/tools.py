@@ -28,6 +28,7 @@ TOOL ROSTER (organised by what they do, not API path):
 
   Agency surface:
     preserve_memory_verbatim    mark a short entry for verbatim peel-off
+    release_memory_verbatim     take that mark back off
     promote_memory_now          immediate verbatim promotion to long-term
     forget_memory               the Lacuna gate on long-term
 
@@ -293,6 +294,24 @@ class MemoryToolImpl:
             return {"ok": False, "error": f"no short-term entry '{short_id}'"}
         return {"ok": True, "id": short_id, "verbatim": True, "pinned": True}
 
+    def release_memory_verbatim(self, short_id: str, keep_pinned: bool = False) -> dict:
+        """Take the verbatim mark back off a short-term entry - you marked
+        it word for word and have changed your mind. The next sleep then
+        drafts it like any other memory instead of proposing it verbatim.
+
+        The pin that came with the mark is removed too, so the entry ages
+        normally again; keep_pinned=true leaves it pinned. Only the mark
+        changes: the entry and its text stay as they are. The mark is yours
+        to give (preserve_memory_verbatim) and yours to take back.
+        """
+        row = self.store.get_by_id(short_id)
+        if row is None or row.get("tier") != "short":
+            return {"ok": False, "error": f"no short-term entry '{short_id}'"}
+        if not (row.get("metadata") or {}).get("verbatim"):
+            return {"ok": False, "error": f"short-term '{short_id}' is not marked verbatim"}
+        self.store.update_short_metadata(short_id, {"verbatim": None, **({} if keep_pinned else {"pinned": None})})
+        return {"ok": True, "id": short_id, "verbatim": False, "pinned": bool(keep_pinned)}
+
     def promote_memory_now(self, short_id: str) -> dict:
         """Immediately move a short-term entry to long-term verbatim,
         skipping the sleep and its draft. 'I know this is durable, don't
@@ -518,6 +537,7 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig) -> Me
 
     # Agency surface
     mcp.tool()(impl.preserve_memory_verbatim)
+    mcp.tool()(impl.release_memory_verbatim)
     mcp.tool()(impl.promote_memory_now)
     mcp.tool()(impl.forget_memory)
 

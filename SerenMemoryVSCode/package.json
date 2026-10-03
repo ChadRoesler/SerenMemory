@@ -2,7 +2,7 @@
   "name": "seren-memory",
   "displayName": "Seren Memory",
   "description": "Gives GitHub Copilot and the user access to the SerenMemory store - search, write, brief, and review the hippocampus's drafts.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "ChadRoesler",
   "repository": {
     "type": "git",
@@ -228,6 +228,35 @@
         }
       },
       {
+        "name": "seren_memory_release_verbatim",
+        "tags": [
+          "seren",
+          "memory",
+          "agency"
+        ],
+        "toolReferenceName": "serenReleaseVerbatim",
+        "displayName": "Release Verbatim Mark",
+        "userDescription": "Take the verbatim mark back off a short-term entry.",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Take the verbatim mark back off a short-term entry you marked with seren_memory_preserve_verbatim and have changed your mind about. The next sleep then drafts it like any other memory instead of proposing it word for word. The pin that came with the mark is removed too (keep_pinned=true leaves it). Only the mark changes; the entry and its text stay. Fails if the entry is not marked.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "short_id": {
+              "type": "string",
+              "description": "ID of the short-term entry to un-mark."
+            },
+            "keep_pinned": {
+              "type": "boolean",
+              "description": "Leave the entry pinned (default false: the pin goes with the mark)."
+            }
+          },
+          "required": [
+            "short_id"
+          ]
+        }
+      },
+      {
         "name": "seren_memory_promote_now",
         "tags": [
           "seren",
@@ -352,7 +381,7 @@
         "displayName": "Get Draft",
         "userDescription": "Show one draft with every operation and its verdict.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "One draft with every operation (index, kind, content, topic, target_core_id, rationale) and its verdict so far (status, critique). Also shows cluster_id, attempt, and terminal - terminal=true marks the last permitted attempt in the chain, the only time an approval may carry edited_content. Read this before seren_memory_review_draft.",
+        "modelDescription": "One draft with every operation (index, kind, content, topic, target_core_id, rationale) and its verdict so far (status, critique). Each attach or supersede carries target_core: the core it would change, in full. An attach with restated_content carries restate_check - approving it REPLACES that core's wording, so compare the two. On a redraft, earlier_attempts shows every previous version of the operation with the critique that sent it back. terminal=true marks the last permitted attempt in the chain (last_attempt says so): nothing comes back after it. Read this before seren_memory_review_draft.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -377,7 +406,7 @@
         "displayName": "Review Draft",
         "userDescription": "Approve or deny each operation in a draft.",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Approve or deny a draft's operations, one verdict each. Approving APPLIES the operation now: a new core, a satellite attached to a core (and the core's evidence grows), a supersession (the old core stays, demoted), or a verbatim core. Denying records the critique; the hippocampus redrafts that operation and resubmits it as the next attempt in the chain. A deny needs a critique, and CRITIQUES SHOULD BE SPECIFIC - 'conflates X with Y; separate them' beats 'wrong vibe' - the next attempt is written from them. edited_content on an approval is accepted only on a terminal draft (the last permitted attempt); otherwise deny and let the loop do its job. An operation already decided cannot be decided again (409).",
+        "modelDescription": "Approve or deny a draft's operations, one verdict each. Approving APPLIES the operation now: a new core, a satellite attached to a core (and the core's evidence grows), a supersession (the old core stays, demoted), or a verbatim core. Denying records the critique; the hippocampus redrafts that operation and resubmits it as the next attempt in the chain. A deny needs a critique, and CRITIQUES SHOULD BE SPECIFIC and are followed to the letter: give the wording you want, name the right core by its full id, say which kind it should be. AN ATTACH WITH restated_content REPLACES ITS CORE'S WORDING: add restate=false to attach the episode and leave the core as it is (the usual right answer), or restate=true once you have compared the rewording with target_core; with neither, a rewording that would wipe the core is refused. THE LAST ATTEMPT (terminal=true) is where you land things: a denial there drops the operation. Take the best version from earlier_attempts, fix what is wrong with edited_content, edited_kind or edited_target_core_id, and approve; deny only what should not be in memory at all. Those edits are refused on any earlier attempt. An operation already decided cannot be decided again (409).",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -407,9 +436,26 @@
                     "type": "string",
                     "description": "Required on deny: what to fix. Be concrete - the redraft is written from it."
                   },
+                  "restate": {
+                    "type": "boolean",
+                    "description": "On approve of an attach that carries restated_content: false attaches the episode and keeps the core's wording (the usual right answer); true applies the rewording, once you have compared it with target_core."
+                  },
                   "edited_content": {
                     "type": "string",
                     "description": "On approve, terminal drafts only: your revision, applied instead of the operation's content."
+                  },
+                  "edited_kind": {
+                    "type": "string",
+                    "enum": ["new_core", "attach", "supersede", "verbatim"],
+                    "description": "On approve, terminal drafts only: the kind the operation should have been."
+                  },
+                  "edited_target_core_id": {
+                    "type": "string",
+                    "description": "On approve, terminal drafts only: the full id of the core an attach or supersede belongs on."
+                  },
+                  "edited_restated_content": {
+                    "type": "string",
+                    "description": "On approve, terminal drafts only: your own rewording of the target core - the WHOLE core said again with the new detail merged in."
                   }
                 },
                 "required": [

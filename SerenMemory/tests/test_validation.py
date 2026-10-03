@@ -100,3 +100,15 @@ def test_brief_empty_body_is_422(client):
 def test_post_long_directly_is_405(client):
     r = client.post("/long", json={"content": "should not work"})
     assert r.status_code == 405
+
+
+def test_the_verbatim_mark_can_be_taken_back_over_http(make_client):
+    from seren_memory.config import ConsolidatorConfig, MemoryConfig
+    client = make_client(MemoryConfig(consolidator=ConsolidatorConfig(enabled=False)))
+    sid = client.post("/short", json={"content": "word for word", "topic": "t"}).json()["id"]
+    assert client.post(f"/short/{sid}/release").status_code == 409, "not marked"
+    assert client.post(f"/short/{sid}/preserve").status_code == 200
+    assert client.post(f"/short/{sid}/release").json() == {"ok": True, "id": sid, "verbatim": False, "pinned": False}
+    meta = client.app.state.store.get_by_id(sid)["metadata"]
+    assert not meta.get("verbatim") and not meta.get("pinned")
+    assert client.post("/short/nope/release").status_code == 404

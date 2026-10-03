@@ -83,6 +83,7 @@ Once the service is running, Copilot can use these tools automatically. You can 
 | Tool | Reference | What it does |
 |------|-----------|-------------|
 | **Preserve Verbatim** | `#serenPreserveVerbatim` | Flag a short-term entry so the hippocampus drafts it as a verbatim operation, exact wording kept, instead of synthesising. Use for quotes, specs, or anything where the precise words matter. |
+| **Release Verbatim** | `#serenReleaseVerbatim` | Take the verbatim mark back off a short-term entry. The next sleep drafts it like any other memory. Needs SerenMemory 4.9 or later. |
 | **Promote Now** | `#serenPromoteNow` | Immediately move a short-term entry to long-term, skipping the hippocampus and draft review. Use when "remember this forever" is explicit. |
 | **Forget Long-Term** | `#serenForgetLong` | Flag a long-term entry for purging. The hippocampus executes the purge on its next tick and leaves a tombstone (id and reason, never the content). Not for corrections - a corrected fact is a new memory that a draft supersedes the old one with. |
 | **Complete Intent** | `#serenCompleteIntent` | Mark a near-term intent as done. At the next sleep it leaves the open loops and becomes a long-term record. |
@@ -105,8 +106,15 @@ After a sleep the hippocampus submits a **draft**: a list of operations on long-
 | Tool | Reference | What it does |
 |------|-----------|-------------|
 | **List Drafts** | `#serenListDrafts` | The review queue. Filter by status: `pending` (default), `reviewed`, `closed`, or `all`. |
-| **Get Draft** | `#serenGetDraft` | One draft with every operation, its rationale, and its verdict so far. Read it before reviewing. |
+| **Get Draft** | `#serenGetDraft` | One draft with every operation, its rationale, and its verdict so far - and, beside each attach or supersede, the core it would change, plus every earlier attempt with its critique. Read it before reviewing. |
 | **Review Draft** | `#serenReviewDraft` | Approve or deny each operation. Approving applies it to long-term now. Denying needs a critique; the hippocampus redrafts that operation and resubmits it as the next attempt, so be specific ("conflates X with Y; separate them" beats "wrong vibe"). On the last permitted attempt (`terminal: true`) an approval may carry `edited_content`. |
+
+Two things a reviewer needs to know (SerenMemory 4.9 or later):
+
+- **An attach can reword its core.** If the operation carries `restated_content`, approving it replaces the core's wording. Approve with `restate: false` to attach the episode and keep the core's words. A rewording that would wipe the core is refused unless you pass `restate: true`.
+- **The last attempt is where things land.** On a draft marked `terminal`, a denial drops the operation. Approve it with your own fixes instead: `edited_content`, `edited_kind`, `edited_target_core_id`.
+
+One thing this extension cannot do, by design: put a reworded core's earlier wording back. That request has no HTTP route; it is the model's own, over MCP (`undo_restate`).
 
 ---
 

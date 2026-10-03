@@ -26,6 +26,7 @@ ENDPOINTS:
     POST /brief                 - submit a daily brief (opens the hippocampus's next sleep)
     GET  /brief                 - list recent briefs (debug / viewer)
     POST /short/{id}/preserve   - mark for verbatim promotion (next cycle)
+    POST /short/{id}/release    - take that mark back off
     POST /short/{id}/promote    - immediate verbatim promotion (skip cycle)
     POST /drafts, GET /drafts, GET /drafts/{id}, GET /drafts/{id}/chain,
     POST /drafts/{id}/review, POST /drafts/{id}/close
@@ -153,6 +154,14 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         print(f"[seren-memory] store ready at {cfg.resolved_persist_dir()}")
         print(f"[seren-memory] tiers: {store.counts()}")
 
+        # Snapshots, on this service's own schedule (seren_sinew.stores).
+        _snap_task = None
+        if app.state.stores is not None and cfg.backup.every_hours > 0:
+            import asyncio
+            from seren_sinew.stores import snapshot_loop
+            _snap_task = asyncio.create_task(snapshot_loop(lambda: app.state.stores, cfg.backup.every_hours))
+            print(f"[seren-memory] snapshots every {cfg.backup.every_hours:g}h into {app.state.stores.root}")
+
         # -- Optional MCP server --
         # Mounted ONLY if the [mcp] extras are installed. The import is
         # inside the try block so a missing `mcp` package falls back to
@@ -190,6 +199,8 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             yield
 
         # -- Shutdown --
+        if _snap_task is not None:
+            _snap_task.cancel()
         # Release the ChromaDB client so SQLite handles are closed cleanly.
         try:
             app.state.store.close()
@@ -252,6 +263,45 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                 getattr(request.app.state, "updates", None),
                 distribution="seren-memory", installed=APP_VERSION),
         }
+
+    # -- What this service keeps, and snapshots of it (seren_sinew.stores) --
+    # Declared here so the routes exist even in safe-mode: a snapshot of the
+    # raw store is exactly what you want before an embedder migration.
+    from seren_sinew.stores import Store, StoreKeeper, add_store_routes
+
+    def _memory_export() -> dict:
+        """Text and metadata, tier by tier: readable, and independent of the
+        embedder - the vectors are derived and any embedder can rebuild them."""
+        store = getattr(app.state, "store", None)
+        if store is None:
+            return {}
+        out = {}
+        for name in ("short", "near", "long", "briefs", "pruned", "drafts"):
+            col = getattr(store, name, None)
+            if col is None:
+                continue
+            got = col.get(include=["documents", "metadatas"])
+            out[f"{name}.jsonl"] = [
+                {"id": i, "content": d, "metadata": m}
+                for i, d, m in zip(got.get("ids") or [], got.get("documents") or [], got.get("metadatas") or [])]
+        out["tombstones.jsonl"] = store.list_tombstones()
+        return out
+
+    def _memory_extra() -> dict:
+        store = getattr(app.state, "store", None)
+        # the name, not None: a snapshot has to say which embedder built its vectors
+        return {"version": APP_VERSION, "embedder": cfg.storage.embedding_model or "all-MiniLM-L6-v2 (default)",
+                "counts": store.counts() if store is not None else None,
+                "safe_mode": bool(_safe_mode["active"])}
+
+    app.state.stores = StoreKeeper(
+        "seren-memory",
+        lambda: [Store("memory", "chroma", str(cfg.resolved_persist_dir()),
+                       "every tier: short, near, long (cores and satellites), briefs, drafts, pruned, tombstones")],
+        cfg.resolved_backup_dir(), export=_memory_export, extra=_memory_extra,
+        keep_daily=cfg.backup.keep_daily, keep_weekly=cfg.backup.keep_weekly,
+        log=lambda m: print(f"[seren-memory] {m}")) if cfg.backup.enabled else None
+    add_store_routes(app, lambda: app.state.stores)
 
     @app.get("/health")
     async def health():
@@ -328,6 +378,22 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                 status_code=404,
                 detail=f"short-term entry '{entry_id}' not found")
         return {"ok": True, "id": entry_id, "verbatim": True, "pinned": True}
+
+    @app.post("/short/{entry_id}/release")
+    async def release_short_verbatim(request: Request, entry_id: str):
+        """Take the verbatim mark back off a short-term entry: the next sleep
+        treats it like any other memory. The pin that came with the mark goes
+        too, unless ?keep_pinned=true. 404 if not found, 409 if it is not
+        marked. Short-term is free read/write; this is not a long-term edit."""
+        store = request.app.state.store
+        row = store.get_by_id(entry_id)
+        if row is None or row.get("tier") != "short":
+            raise HTTPException(status_code=404, detail=f"short-term entry '{entry_id}' not found")
+        if not (row.get("metadata") or {}).get("verbatim"):
+            raise HTTPException(status_code=409, detail=f"short-term entry '{entry_id}' is not marked verbatim")
+        keep = str(request.query_params.get("keep_pinned", "")).lower() in ("1", "true", "yes")
+        store.update_short_metadata(entry_id, {"verbatim": None, **({} if keep else {"pinned": None})})
+        return {"ok": True, "id": entry_id, "verbatim": False, "pinned": bool(keep)}
 
     @app.post("/short/{entry_id}/promote")
     async def promote_short_immediately(request: Request, entry_id: str):

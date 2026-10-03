@@ -200,6 +200,24 @@ def test_preserve_memory_verbatim_flags_entry(mcp_impl):
     assert r["pinned"] is True
 
 
+def test_release_memory_verbatim_takes_the_mark_back(mcp_impl):
+    """The mark is the model's to give and to take back (Design note:
+    'its yours so if you wanna unmark a verbatim, thats your call')."""
+    sid = mcp_impl.remember(content="a promise, word for word", topic="quotes")["id"]
+    assert mcp_impl.release_memory_verbatim(short_id=sid)["ok"] is False, "not marked: nothing to take back"
+    mcp_impl.preserve_memory_verbatim(short_id=sid)
+    r = mcp_impl.release_memory_verbatim(short_id=sid)
+    assert r == {"ok": True, "id": sid, "verbatim": False, "pinned": False}
+    got = mcp_impl.get_memory(sid)
+    assert got["content"] == "a promise, word for word", "only the mark changes"
+    assert not got["metadata"].get("verbatim") and not got["metadata"].get("pinned")
+    mcp_impl.preserve_memory_verbatim(short_id=sid)
+    assert mcp_impl.release_memory_verbatim(short_id=sid, keep_pinned=True)["pinned"] is True
+    got = mcp_impl.get_memory(sid)
+    assert not got["metadata"].get("verbatim") and got["metadata"].get("pinned") is True
+    assert mcp_impl.release_memory_verbatim(short_id="missing")["ok"] is False
+
+
 def test_preserve_memory_verbatim_missing_id_returns_error(mcp_impl):
     r = mcp_impl.preserve_memory_verbatim(short_id="missing")
     assert r["ok"] is False
