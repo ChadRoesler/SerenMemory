@@ -294,11 +294,55 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                 "counts": store.counts() if store is not None else None,
                 "safe_mode": bool(_safe_mode["active"])}
 
+    def _memory_check(restored, manifest, snapshot_dir) -> dict:
+        """A rehearsal's look at a restored COPY (seren_sinew.stores
+        rehearse_restore): open it as a MemoryStore, count every tier against
+        the manifest and the export, replay the tombstones the LIVE store has
+        on the copy (what a purge removed since the snapshot must not come
+        back), and ask it one question so the vector index is read. The live
+        store is only read for its tombstone list."""
+        from .collections import MemoryStore
+        live = getattr(app.state, "store", None)
+        ef = embedding_function or getattr(getattr(live, "long", None), "_embedding_function", None)
+        cfg2 = cfg.model_copy(deep=True)
+        cfg2.storage.persist_dir = str(restored["memory"])
+        st = MemoryStore(cfg2, embedding_function=ef, _allow_reset=True)
+        problems: list[str] = []
+        try:
+            counts = st.counts()
+            for name, n in (manifest.get("exports") or {}).items():
+                tier = name.removesuffix(".jsonl")
+                if tier in counts and counts[tier] != n:
+                    problems.append(f"{tier}: the export has {n} rows, the restored store holds {counts[tier]}")
+            tombs = live.list_tombstones() if live is not None else st.list_tombstones()
+            replayed = []
+            for t in tombs:
+                tid = str(t.get("id") or "")
+                if tid and st._long_row(tid) is not None:
+                    st.purge_long(tid, "rehearsal: replaying a tombstone", purge_backups=False)
+                    replayed.append(tid)
+            after = st.counts()
+            search = "nothing in long-term to ask"
+            if after.get("long"):
+                got = st.long.query(query_texts=["rehearsal"], n_results=1, include=[])
+                search = "ok" if (got.get("ids") or [[]])[0] else "no answer"
+                if search != "ok":
+                    problems.append("the restored long-term index did not answer a query")
+            return {"counts": counts, "tombstones_known": len(tombs), "tombstones_replayed": replayed,
+                    "after_replay": after, "search": search, "problems": problems}
+        finally:
+            client = getattr(st, "_client", None)
+            st.close()
+            try:                                            # chroma keeps the copy's files open until its client is closed
+                client.close()
+            except Exception:  # noqa: BLE001 - an older chroma: the scratch is swept at the next rehearsal
+                pass
+
     app.state.stores = StoreKeeper(
         "seren-memory",
         lambda: [Store("memory", "chroma", str(cfg.resolved_persist_dir()),
                        "every tier: short, near, long (cores and satellites), briefs, drafts, pruned, tombstones")],
-        cfg.resolved_backup_dir(), export=_memory_export, extra=_memory_extra,
+        cfg.resolved_backup_dir(), export=_memory_export, extra=_memory_extra, check=_memory_check,
         keep_daily=cfg.backup.keep_daily, keep_weekly=cfg.backup.keep_weekly,
         log=lambda m: print(f"[seren-memory] {m}")) if cfg.backup.enabled else None
     add_store_routes(app, lambda: app.state.stores)

@@ -101,3 +101,38 @@ def test_no_route_restores_or_deletes_a_snapshot(client):
         assert client.post(path).status_code in (404, 405)
         assert client.delete(path).status_code in (404, 405)
     assert client.get("/stores/snapshots").json()["count"] == 1
+
+
+def test_a_rehearsal_restores_a_copy_and_replays_the_tombstones_on_it(client):
+    """3 Oct 2026, the user: 'backups are useless if you can't validate them'. A
+    dry run: the snapshot is opened as a store somewhere else, and what was
+    purged AFTER it was taken is purged from the copy."""
+    kept = _core(client, "the user's lantern promise.")
+    leak = _core(client, "a leaked key")
+    sid = client.post("/stores/snapshot").json()["snapshot"]["id"]
+    client.post(f"/long/{leak}/purge", json={"reason": "a secret", "purge_backups": False})
+    client.post("/short", json={"content": "written after the snapshot"})
+
+    r = client.post(f"/stores/snapshots/{sid}/rehearse")
+    assert r.status_code == 200, r.text
+    rep = r.json()
+    assert rep["ok"] and rep["dry_run"] and rep["verified"] and rep["live_store_touched"] is False, rep
+    chk = rep["check"]
+    assert chk["counts"]["long"] == 2 and chk["tombstones_replayed"] == [leak] and chk["after_replay"]["long"] == 1
+    assert chk["search"] == "ok" and "a leaked key" not in r.text
+    assert any(s["file"].endswith("chroma.sqlite3") and s["integrity"] == "ok" for s in rep["sqlite"])
+    # the live store is as it was: the kept core, the later short-term, and no leak
+    store = client.app.state.store
+    assert store.get_by_id(kept) and store.get_by_id(leak) is None and store.counts()["short"] == 1
+    assert len(store.list_tombstones()) == 1, "the rehearsal's replay wrote no tombstone on the live store"
+    root = Path(client.get("/stores").json()["snapshots"]["dir"])
+    assert not [p for p in (root / ".rehearsal").iterdir()] and client.get("/stores/snapshots").json()["count"] == 1
+
+
+def test_a_sent_snapshot_is_rehearsed_too(client):
+    from seren_sinew.stores import pack_snapshot
+    _core(client, "the user's lantern promise.")
+    snap = client.post("/stores/snapshot").json()["snapshot"]
+    r = client.post("/stores/rehearse", content=pack_snapshot(Path(snap["path"])))
+    assert r.status_code == 200 and r.json()["ok"] and r.json()["source"] == "sent", r.text
+    assert r.json()["check"]["counts"]["long"] == 1 and client.get("/stores/snapshots").json()["count"] == 1
