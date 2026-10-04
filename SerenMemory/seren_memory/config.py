@@ -142,6 +142,13 @@ class BackupConfig(BaseModel):
     # The newest keep_daily are kept, then one a week for keep_weekly weeks.
     keep_daily: int = 14
     keep_weekly: int = 8
+    # THE RESTORE. A snapshot folder (or its .tar.gz) to put back at startup,
+    # and why. Only into an EMPTY store: a store that holds anything is never
+    # overwritten, and the key is then passed by with a line in the log. There
+    # is no route and no tool for this, on purpose - it is these two keys and
+    # a restart. See seren_sinew.stores.restore_at_startup.
+    restore_from: str = ""
+    restore_reason: str = ""
 
 
 class MemoryConfig(BaseModel):

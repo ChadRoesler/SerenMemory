@@ -125,6 +125,11 @@ def main() -> None:
     # Embedder guard: if the store was built with a different embedder than the
     # config now asks for (and has data), boot safe-mode instead of corrupting
     # recall. mismatch is the dict the migration modal needs; None = normal.
+    # A restore, when the config asks for one (backup.restore_from +
+    # restore_reason): into an empty store only, and BEFORE the guard below
+    # reads the store's stamp. Refused = the service does not start.
+    from .restore import restore_if_asked
+    restore_if_asked(cfg)
     mismatch = _check_embedder_guard(cfg)
     app = create_app(cfg, embedder_mismatch=mismatch,
                      config_path=args.config)

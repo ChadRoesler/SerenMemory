@@ -151,6 +151,10 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         store = MemoryStore(cfg, embedding_function=embedding_function,
                             _allow_reset=_allow_store_reset)
         app.state.store = store
+        # A restore leaves the tombstones it must replay; nothing pending is
+        # the usual case and costs one missing-file check.
+        from .restore import replay_tombstones
+        replay_tombstones(cfg, store)
         print(f"[seren-memory] store ready at {cfg.resolved_persist_dir()}")
         print(f"[seren-memory] tiers: {store.counts()}")
 
