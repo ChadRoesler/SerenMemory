@@ -2,7 +2,7 @@
 Memory puts a snapshot back: at startup, into an empty store, with a reason,
 and what was purged since stays purged (seren_memory.restore).
 
-3 Oct 2026, with the user: no route and no tool restores anything; it is two
+No route and no tool restores anything; it is two
 config keys and a restart, and a store that holds something is never
 overwritten.
 """
@@ -26,7 +26,7 @@ def test_a_new_box_comes_up_with_the_old_memories_and_without_what_was_purged(ma
     # the old box: two cores, a snapshot, then one of them is purged and a later snapshot records it
     old = make_client(MemoryConfig(consolidator=ConsolidatorConfig(enabled=False),
                                    backup=BackupConfig(dir=str(tmp_path / "stash"), every_hours=0)))
-    kept = _core(old, "the user's lantern promise.")
+    kept = _core(old, "a promise, kept word for word.")
     leak = _core(old, "a leaked key")
     first = old.post("/stores/snapshot").json()["snapshot"]
     old.post(f"/long/{leak}/purge", json={"reason": "a secret", "purge_backups": False})
@@ -43,10 +43,10 @@ def test_a_new_box_comes_up_with_the_old_memories_and_without_what_was_purged(ma
     assert [t["id"] for t in pending_tombstones(tmp_path / "new" / "backups" / "seren-memory")] == [leak]
     new = make_client(cfg)
     store = new.app.state.store
-    assert store.get_by_id(kept)["content"] == "the user's lantern promise."
+    assert store.get_by_id(kept)["content"] == "a promise, kept word for word."
     assert store.get_by_id(leak) is None, "purged after the snapshot: it does not come back"
     assert pending_tombstones(tmp_path / "new" / "backups" / "seren-memory") == []
-    assert new.post("/search", json={"query": "lantern promise"}).json()["hits"], "and it can be recalled"
+    assert new.post("/search", json={"query": "promise kept word for word"}).json()["hits"], "and it can be recalled"
     # the key still in the config at the next start: passed by
     again = restore_if_asked(cfg, log=said.append)
     assert again["restored"] is False and "already restored" in again["why"]
@@ -55,7 +55,7 @@ def test_a_new_box_comes_up_with_the_old_memories_and_without_what_was_purged(ma
 def test_it_is_refused_without_a_reason_and_never_lands_on_a_store_that_holds_something(make_client, tmp_path):
     old = make_client(MemoryConfig(consolidator=ConsolidatorConfig(enabled=False),
                                    backup=BackupConfig(dir=str(tmp_path / "stash"), every_hours=0)))
-    _core(old, "the user's lantern promise.")
+    _core(old, "a promise, kept word for word.")
     snap = old.post("/stores/snapshot").json()["snapshot"]
     cfg = MemoryConfig(consolidator=ConsolidatorConfig(enabled=False),
                        storage=StorageConfig(persist_dir=str(tmp_path / "new" / "chroma")),

@@ -5,7 +5,7 @@ seren_memory.draft
 The draft: what a consolidation pass proposes, and how the store applies
 what the reviewer approves.
 
-THE SHAPE (settled with Design note:)
+THE SHAPE
 
     A draft is not one synthesis that becomes one long-term entry. A draft
     is a DRAFT: a list of operations on long-term, each reviewed on its
@@ -38,8 +38,8 @@ WHO DOES WHAT
     an approval carry edits (edited_content, edited_kind,
     edited_target_core_id, edited_restated_content) - the editor's release
     valve, never the loop's shortcut. At the last attempt the reviewer
-    takes the best of the bunch, edits as needed and approves (the user's map
-    of the cycle, 1 Oct 2026): a denial there drops the operation.
+    takes the best of the bunch, edits as needed and approves (the map of
+    the cycle): a denial there drops the operation.
 
 A RESTATE CANNOT WIPE A CORE
     An attach may carry restated_content: new wording for the core.
@@ -54,11 +54,11 @@ A RESTATE CANNOT WIPE A CORE
 THE WAY BACK IS GATED TOO
     A core that was restated wrongly can go back to its earlier wording, but
     not by a call that rewrites it on the spot: that would be the scalpel
-    the no-delete rule refuses (Design note: "the restore needs to be a
-    little gated... this is a call that lives next to the no delete rule").
-    And it is the model's call, not a person's: there is no HTTP route for
-    it, only the MCP tool - "the gated is to make sure I cant, same reason
-    we dont let delete in... the whole purpose of letting memory be yours."
+    the no-delete rule refuses. The restore is gated, a call that lives next
+    to the no-delete rule. And it is the model's call, not a person's: there
+    is no HTTP route for it, only the MCP tool. The gate is there so the
+    person cannot reach in, for the same reason delete is not let in: the
+    memory is the model's own.
     It works the way forget does. flag_undo_restate records a request with a
     reason; the hippocampus's tick executes it (/tidy with purge - the step
     that executes flags); the wording that was replaced, the reason and the
@@ -249,9 +249,9 @@ class DraftMixin:
         denied in a reviewed draft whose redraft has not arrived yet (not
         terminal, no later attempt in the chain).
 
-        WHY: review is the gate on long-term (Design note: 'the
-        consolidator can promote whats approved, its a gated mechanism to make
-        sure that you are the one who approves your memories'). A memory that is
+        WHY: review is the gate on long-term. The consolidator promotes what
+        is approved, and the gate exists so the model is the one who approves
+        its own memories. A memory that is
         mid-review is promoted by that review; promote_memory_now on it went
         around the gate, and left the draft citing something already landed
         (found by a woken reviewer the same day)."""

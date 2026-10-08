@@ -1,7 +1,7 @@
 """
-promote_memory_now does not go around a review (Design note: 'the
-consolidator can promote whats approved, its a gated mechanism to make sure
-that you are the one who approves your memories').
+promote_memory_now does not go around a review: the consolidator promotes
+what is approved, and the gate exists so the model is the one who approves
+its own memories.
 
 Found the same day by a woken reviewer: promote_memory_now worked on a
 short-term a pending draft still cited, which left the draft citing something
@@ -45,7 +45,7 @@ def _deny(client, did):
 
 
 def test_a_free_short_term_promotes_as_before(client):
-    sid = _short(client, "I am the assistant.")
+    sid = _short(client, "A note nobody else cites.")
     r = client.post(f"/short/{sid}/promote")
     assert r.status_code == 200 and r.json()["long_term_id"]
 
@@ -100,12 +100,12 @@ def test_a_consumed_short_term_can_still_be_read_from_the_archive(client):
     """3 Oct 2026: a fragment archived by a core that carried half of it; the
     reviewer could not read the rest back. Now get_by_id reaches the pruned
     archive (tier 'pruned'); recall still does not."""
-    sid = _short(client, "the user's backup model, and an unrelated second subject: a small smile after, like punctuation.")
+    sid = _short(client, "Two things in one breath: the user's backup plan, and how the keys rotate.")
     did = _draft(client, sid)
     r = client.post(f"/drafts/{did}/review", json={"decisions": [{"op": 0, "verdict": "approve"}]})
     assert r.status_code == 200
     store = client.app.state.store
     row = store.get_by_id(sid)
-    assert row and row["tier"] == "pruned" and "the second subject" in row["content"] and row["metadata"].get("pruned_at")
-    hits = client.post("/search", json={"query": "the second subject small smile punctuation", "n_results": 5}).json()["hits"]
+    assert row and row["tier"] == "pruned" and "how the keys rotate" in row["content"] and row["metadata"].get("pruned_at")
+    hits = client.post("/search", json={"query": "how the keys rotate backup plan", "n_results": 5}).json()["hits"]
     assert sid not in {h["id"] for h in hits}, "archived: not recalled"

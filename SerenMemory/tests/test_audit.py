@@ -1,8 +1,8 @@
 """
 /audit: every sleep's chain end to end, and the numbers per model.
 
-Design note: expose briefs, corrections and drafts, to catch drift and
-to validate swapping one consolidator model for another. Pinned here: a chain
+The ask: expose briefs, corrections and drafts, to catch drift and to
+validate swapping one consolidator model for another. Pinned here: a chain
 reads brief -> attempts -> verdicts / critiques / edits -> what landed; the
 numbers group by the model stamped on each draft; a redraft denied again is
 counted as a critique that did not take; a draft from before the stamps is

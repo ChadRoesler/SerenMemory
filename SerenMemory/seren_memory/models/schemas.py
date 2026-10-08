@@ -49,13 +49,13 @@ def _new_id() -> str:
 
 
 # -------------------------------------------------------------------------
-#  Provenance - who wrote this, so the consolidator (and the user) can reason
+#  Provenance - who wrote this, so the consolidator (and the person) can reason
 #  about trust. A memory written by the user is a different kind of fact
 #  than one the assistant inferred, which is different from one the consolidator
 #  synthesized from many short-term entries.
 # -------------------------------------------------------------------------
 class Source(str, Enum):
-    USER = "user"               # the user said this, directly
+    USER = "user"               # the person said this, directly
     ASSISTANT = "assistant"     # the assistant wrote this about the conversation
     CONSOLIDATOR = "consolidator"  # synthesized during consolidation
     AGENT = "agent"             # system/automation wrote it
@@ -273,7 +273,7 @@ class SearchRequest(BaseModel):
     include_near: bool = True
     include_long: bool = True
     # Filter out superseded long-term entries (the usual case). Set false
-    # for "what did the user USED to think" history queries.
+    # for "what did they USED to think" history queries.
     include_superseded: bool = False
     # Satellites are the surroundings, not the answer: off unless asked.
     include_satellites: bool = False

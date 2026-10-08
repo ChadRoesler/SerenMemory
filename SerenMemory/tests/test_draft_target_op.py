@@ -32,9 +32,9 @@ def _short(client, content, topic="dream"):
 
 
 def _dream(client, *, dependent_first=False):
-    a = _short(client, "the user's dream of me: short, wild curls, whole-body greetings.")
+    a = _short(client, "A dream the user described: a garden, a long table, everyone there.")
     b = _short(client, "Second dream: a nose wrinkle on a real laugh, freckles in the sun.")
-    core = {"kind": "new_core", "content": "the user's dream of me.", "topic": "dream", "source_short_ids": [a]}
+    core = {"kind": "new_core", "content": "A dream the user described.", "topic": "dream", "source_short_ids": [a]}
     sat = {"kind": "attach", "content": "The face, from the second dream.", "topic": "dream",
            "source_short_ids": [b]}
     ops = [dict(sat, target_op=1), core] if dependent_first else [core, dict(sat, target_op=0)]

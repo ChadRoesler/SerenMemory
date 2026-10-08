@@ -113,8 +113,8 @@ function entryCard(tier, content, meta, opts = {}) {
 
 // A core's surroundings, under the core: the satellites (the dated episodes
 // that stand behind it) and, when it was reworded, what it said before. They
-// were in the store all along and nowhere in this window (Design note:
-// 'click a long term, it expands and shows the satellites under it').
+// were in the store all along and nowhere in this window; now a long-term row
+// expands and shows its satellites under it.
 function satelliteRow(s) {
     const m = s.metadata || {};
     const when = m.created_at ?? m.last_confirmed;

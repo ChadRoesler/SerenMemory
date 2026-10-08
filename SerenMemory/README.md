@@ -75,7 +75,7 @@ it); the installer's `--st` flag does that.
 # Stash a working-memory item
 curl -X POST localhost:7420/short \
   -H 'content-type: application/json' \
-  -d '{"content": "the user prefers absolute paths over tildes", "topic": "config"}'
+  -d '{"content": "The user prefers absolute paths over tildes", "topic": "config"}'
 
 # Note an open loop for later
 curl -X POST localhost:7420/near \
@@ -91,7 +91,7 @@ curl -X POST localhost:7420/search \
 # Submit a daily brief (it opens the hippocampus's next sleep)
 curl -X POST localhost:7420/brief \
   -H 'content-type: application/json' \
-  -d '{"summary": "Worked on the wipe script. the user was tired.",
+  -d '{"summary": "Worked on the wipe script. Late night, short session.",
        "promote_hints": ["wipe script"], "completed_intents": []}'
 ```
 

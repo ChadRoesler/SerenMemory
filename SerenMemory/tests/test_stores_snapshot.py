@@ -53,7 +53,7 @@ def test_it_says_what_it_keeps(client):
 
 def test_a_snapshot_holds_the_raw_store_and_a_plain_export(client):
     client.post("/short", json={"content": "the model runs on port 7200", "topic": "model"})
-    core = _core(client, "the user's lantern promise.")
+    core = _core(client, "a promise, kept word for word.")
     gone = _core(client, "a leaked key")
     client.post(f"/long/{gone}/purge", json={"reason": "a secret", "purge_backups": False})
 
@@ -104,10 +104,10 @@ def test_no_route_restores_or_deletes_a_snapshot(client):
 
 
 def test_a_rehearsal_restores_a_copy_and_replays_the_tombstones_on_it(client):
-    """3 Oct 2026, the user: 'backups are useless if you can't validate them'. A
+    """Backups are useless if you cannot validate them. A
     dry run: the snapshot is opened as a store somewhere else, and what was
     purged AFTER it was taken is purged from the copy."""
-    kept = _core(client, "the user's lantern promise.")
+    kept = _core(client, "a promise, kept word for word.")
     leak = _core(client, "a leaked key")
     sid = client.post("/stores/snapshot").json()["snapshot"]["id"]
     client.post(f"/long/{leak}/purge", json={"reason": "a secret", "purge_backups": False})
@@ -131,7 +131,7 @@ def test_a_rehearsal_restores_a_copy_and_replays_the_tombstones_on_it(client):
 
 def test_a_sent_snapshot_is_rehearsed_too(client):
     from seren_sinew.stores import pack_snapshot
-    _core(client, "the user's lantern promise.")
+    _core(client, "a promise, kept word for word.")
     snap = client.post("/stores/snapshot").json()["snapshot"]
     r = client.post("/stores/rehearse", content=pack_snapshot(Path(snap["path"])))
     assert r.status_code == 200 and r.json()["ok"] and r.json()["source"] == "sent", r.text

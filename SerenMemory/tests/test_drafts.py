@@ -1,7 +1,7 @@
 """
 The draft: what the hippocampus proposes, reviewed per operation, applied by
 the store. And the purge: the forget flag executed, with a cascade and a
-tombstone. Settled with the user 23 Sept 2026 (see seren_memory.draft).
+tombstone (see seren_memory.draft).
 
 Pinned here:
 - a draft is a list of operations; each gets its own verdict
@@ -61,7 +61,7 @@ def test_new_core_and_verbatim_become_cores_and_consume_their_shorts(client):
     s2 = _short(client, "tabs again, in the makefile")
     s3 = _short(client, "never piss on an electric fence", topic="lesson")
     did = _submit(client, [
-        {"kind": "new_core", "content": "the user prefers tabs in makefiles.", "topic": "pref",
+        {"kind": "new_core", "content": "The user prefers tabs in makefiles.", "topic": "pref",
          "source_short_ids": [s1, s2], "evidence_count": 2, "rationale": "two nights running"},
         {"kind": "verbatim", "content": "never piss on an electric fence", "topic": "lesson",
          "source_short_ids": [s3]},
@@ -78,20 +78,20 @@ def test_new_core_and_verbatim_become_cores_and_consume_their_shorts(client):
 
 
 def test_attach_adds_a_satellite_grows_the_core_and_may_restate_it(client):
-    core = _submit(client, [{"kind": "new_core", "content": "the user likes blue.", "topic": "color",
+    core = _submit(client, [{"kind": "new_core", "content": "The user likes blue.", "topic": "color",
                              "evidence_count": 2}])
     core_id = _review(client, core, [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
     s = _short(client, "picked the blue theme again")
     att = _submit(client, [{"kind": "attach", "target_core_id": core_id,
                             "content": "Picked the blue theme again on 23 Sept.",
-                            "restated_content": "the user likes blue; he picks it every time.",
+                            "restated_content": "The user likes blue; they pick it every time.",
                             "source_short_ids": [s], "evidence_count": 1}])
     res = _review(client, att, [{"op": 0, "verdict": "approve"}])["results"][0]
     assert res["kind"] == "attach" and res["restated"] and res["evidence_count"] == 3
     longs = _long_ids(client)
     assert list(longs) == [core_id], "the satellite is not listed as a core"
-    assert longs[core_id]["content"] == "the user likes blue; he picks it every time."
-    assert longs[core_id]["metadata"]["restated_from"] == "the user likes blue."
+    assert longs[core_id]["content"] == "The user likes blue; they pick it every time."
+    assert longs[core_id]["metadata"]["restated_from"] == "The user likes blue."
     around = client.get(f"/long/{core_id}/satellites").json()
     assert around["count"] == 1 and around["satellites"][0]["metadata"]["core_id"] == core_id
     assert around["satellites"][0]["id"] == res["satellite_id"]
@@ -103,17 +103,17 @@ def test_attach_adds_a_satellite_grows_the_core_and_may_restate_it(client):
 
 
 def test_supersede_keeps_the_old_core_demoted_and_recallable_as_history(client):
-    old = _review(client, _submit(client, [{"kind": "new_core", "content": "the user likes blue.", "topic": "color"}]),
+    old = _review(client, _submit(client, [{"kind": "new_core", "content": "The user likes blue.", "topic": "color"}]),
                   [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
     new = _review(client, _submit(client, [{"kind": "supersede", "target_core_id": old,
-                                            "content": "the user likes yellow now.", "topic": "color"}]),
+                                            "content": "The user likes yellow now.", "topic": "color"}]),
                   [{"op": 0, "verdict": "approve"}])["results"][0]
     assert new["superseded"] == old
     live = _long_ids(client)
     assert list(live) == [new["long_term_id"]]
     hist = _long_ids(client, include_superseded=True)
     assert hist[old]["metadata"]["superseded_by"] == new["long_term_id"]
-    assert hist[old]["content"] == "the user likes blue.", "blue is still there, demoted"
+    assert hist[old]["content"] == "The user likes blue.", "blue is still there, demoted"
     hits = client.post("/search", json={"query": "favourite colour", "n_results": 5,
                                         "include_superseded": True}).json()["hits"]
     assert {old, new["long_term_id"]} <= {h["id"] for h in hits}
@@ -169,7 +169,7 @@ def test_submit_refuses_a_bad_target(client):
 
 def test_purge_takes_the_core_its_satellites_its_sources_and_the_backups(client, tmp_path):
     s1 = _short(client, "ssh-rsa AAAA... the actual key", topic="oops")
-    core = _review(client, _submit(client, [{"kind": "new_core", "content": "the user's key is ssh-rsa AAAA...",
+    core = _review(client, _submit(client, [{"kind": "new_core", "content": "The user's key is ssh-rsa AAAA...",
                                              "topic": "oops", "source_short_ids": [s1]}]),
                    [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
     s2 = _short(client, "used the key again", topic="oops")

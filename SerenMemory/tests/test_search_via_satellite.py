@@ -40,7 +40,7 @@ def _search(client, q, **kw):
 
 
 def test_an_episode_brings_its_core(client):
-    core = _core(client, "the user makes board games.")
+    core = _core(client, "The user makes board games.")
     sat = _attach(client, core, "Dice Race is a push-your-luck dice race styled as an 8-bit platformer, with cheat codes.")
     for _ in range(6):                                       # other cores, so the fetch window is crowded
         _core(client, "An unrelated note about the weather and the garden.")
@@ -55,7 +55,7 @@ def test_an_episode_brings_its_core(client):
 
 
 def test_a_core_already_there_takes_the_better_distance(client):
-    core = _core(client, "the user designs board games as a hobby.")
+    core = _core(client, "The user designs board games as a hobby.")
     sat = _attach(client, core, "Four Floor Slumlord is themed on Kowloon Walled City: blind bids, a 3x3 grid, polyomino rooms.")
     hits = _search(client, "Kowloon Walled City blind bids polyomino rooms")
     got = next(h for h in hits if h["id"] == core)
@@ -66,7 +66,7 @@ def test_a_core_already_there_takes_the_better_distance(client):
 
 
 def test_with_surroundings_the_matching_episode_rides_first(client):
-    core = _core(client, "the user's KDM campaign stories.")
+    core = _core(client, "The user's tabletop campaign stories.")
     _attach(client, core, "Lion in heat: the tank's head exploded.")
     _attach(client, core, "When the world turned to Feet: all four survivors insane, they bit the stone feet.")
     _attach(client, core, "Smell World is still owed.")
@@ -81,9 +81,9 @@ def test_with_surroundings_the_matching_episode_rides_first(client):
 
 
 def test_a_superseded_core_is_not_lifted_unless_asked(client):
-    old = _core(client, "the user likes blue.")
+    old = _core(client, "The user likes blue.")
     sat = _attach(client, old, "He painted the whole minis cabinet cobalt blue in March.")
-    did = client.post("/drafts", json={"operations": [{"kind": "supersede", "content": "the user likes yellow now.", "topic": "t", "target_core_id": old}]}).json()["id"]
+    did = client.post("/drafts", json={"operations": [{"kind": "supersede", "content": "The user likes yellow now.", "topic": "t", "target_core_id": old}]}).json()["id"]
     client.post(f"/drafts/{did}/review", json={"decisions": [{"op": 0, "verdict": "approve"}]})
     ids = [h["id"] for h in _search(client, "painted the minis cabinet cobalt blue in March")]
     assert old not in ids and sat not in ids

@@ -1,9 +1,9 @@
 """
 The audit: every sleep's chain, end to end, and how each model did.
 
-Design note: "being able to expose briefs, corrections, and drafts...
-to help catch any drift that may occur or any issues or validation if
-swapping out consolidators." Everything was already kept - the brief (kept
+The ask: expose briefs, corrections and drafts, to catch drift as it happens
+and to validate swapping one consolidator model for another. Everything was
+already kept - the brief (kept
 as history once consumed), every attempt in a chain, each operation's verdict
 and critique, whether the reviewer rewrote it at the terminal, what it became
 in long-term - but it could only be read one draft at a time.

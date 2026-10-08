@@ -53,7 +53,7 @@ def _core(client, content, topic="color"):
 
 
 def test_the_fallback_ranks_without_the_stored_vectors(client):
-    near = _core(client, "the user likes blue.")
+    near = _core(client, "The user likes blue.")
     _core(client, "The Orin Nano is the hardware floor.", topic="hardware")
     store = client.app.state.store
     store.long = IndexNotOnDisk(store.long)
@@ -65,7 +65,7 @@ def test_the_fallback_ranks_without_the_stored_vectors(client):
 
 
 def test_the_search_route_still_returns_the_core(client):
-    core = _core(client, "the user likes blue.")
+    core = _core(client, "The user likes blue.")
     store = client.app.state.store
     store.long = IndexNotOnDisk(store.long)
 

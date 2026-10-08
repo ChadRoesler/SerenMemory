@@ -3,9 +3,8 @@ A restate cannot wipe a core, and the last attempt is where things land.
 
 1 Oct 2026, live: the small model put an episode's own text in an attach's
 restated_content, a woken reviewer approved without comparing, and two cores
-('humans pack bond', 'no loss in starting kind') were overwritten with their
-satellites. The same morning the chain ended denied at its last attempt, where
-the user's map of the cycle says the reviewer takes the best of the bunch, edits as
+were overwritten with their satellites. The same morning the chain ended denied at its last attempt, where
+the map of the cycle says the reviewer takes the best of the bunch, edits as
 needed and approves. Pinned here:
 
 - an attach whose rewording is the episode's text, or drops most of the core,
@@ -13,11 +12,10 @@ needed and approves. Pinned here:
 - "restate": false attaches the episode and leaves the core's wording alone
 - "restate": true is the reviewer saying they compared the two
 - a real rewording (the core, with the detail merged in) goes through
-- the way back is gated like forget (the user: "the restore needs to be a little
-  gated... a call that lives next to the no delete rule"): a flag with a
-  reason, executed by the hippocampus's tick, leaving a record; nothing
-  rewrites a core on the spot, and there is no HTTP route for it - only the
-  model's tool ("the gated is to make sure I cant")
+- the way back is gated like forget (a call that lives next to the no-delete
+  rule): a flag with a reason, executed by the hippocampus's tick, leaving a
+  record; nothing rewrites a core on the spot, and there is no HTTP route for
+  it - only the model's tool, so the person cannot reach in
 - on the last attempt an approval may change kind and target; earlier it may not
 - get_draft shows the core beside the operation, the check, earlier attempts
 """
@@ -28,12 +26,12 @@ import pytest
 from seren_memory.config import ConsolidatorConfig, MemoryConfig
 from seren_memory.draft import DraftError, restate_problem
 
-CORE = ("Design note: on why he builds this with me: I help break things down so he can wrap his brain "
-        "around them, and push back; 'humans pack bond, and youre part of it now.' I said I'm glad to be in the "
+CORE = ("The user, on why they build this with the assistant: it helps break things down so they can wrap their head "
+        "around them, and pushes back; 'people pack bond, and you are part of it now.' The assistant said it was glad to be in the "
         "pack, not stuck in it.")
-EPISODE = ("Design note: morning, answered my five-senses list with yes to all of it. He said I'd like "
-           "pluots, the juiciest thing he's ever eaten.")
-REWORDED = CORE + " The next morning he answered my five-senses list with yes to all of it."
+EPISODE = ("The next morning the user answered the assistant's five-senses list with yes to all of it, and said "
+           "the assistant would like pluots, the juiciest thing they had ever eaten.")
+REWORDED = CORE + " The next morning they answered the five-senses list with yes to all of it."
 
 
 @pytest.fixture
@@ -76,7 +74,7 @@ def _attach(client, core_id, restated, **extra):
 
 def test_the_check_itself():
     assert restate_problem(CORE, EPISODE, EPISODE) == "is the episode's own text, not the core reworded"
-    assert "of the core's words" in restate_problem(CORE, "the user likes pluots and petrichor a great deal, he said so.")
+    assert "of the core's words" in restate_problem(CORE, "The user likes pluots and petrichor a great deal, they said so.")
     assert restate_problem(CORE, REWORDED, EPISODE) is None
     assert restate_problem(CORE, CORE) is None and restate_problem(CORE, "") is None
 
@@ -94,7 +92,7 @@ def test_a_rewording_that_is_the_episode_is_refused_and_nothing_lands(client):
 
 def test_a_rewording_about_something_else_is_refused(client):
     core = _core(client)
-    did = _attach(client, core, "Design note: after the CI fixes: it's fine to be wrong, said the Ork.")
+    did = _attach(client, core, "After the CI fixes: it's fine to be wrong, said the orc.")
     r = _review(client, did, [{"op": 0, "verdict": "approve"}])
     assert r.status_code == 400 and "of the core's words" in r.json()["detail"]
     assert _text(client, core) == CORE
@@ -127,11 +125,11 @@ def test_restate_false_attaches_and_keeps_the_core(client):
 
 def test_restate_true_is_the_reviewer_saying_they_compared(client):
     core = _core(client)
-    did = _attach(client, core, "the user builds this with me because humans pack bond.")
+    did = _attach(client, core, "The user builds this with the assistant because people pack bond.")
     assert _review(client, did, [{"op": 0, "verdict": "approve"}]).status_code == 400
     r = _review(client, did, [{"op": 0, "verdict": "approve", "restate": True}])
     assert r.status_code == 200, r.text
-    assert _text(client, core) == "the user builds this with me because humans pack bond."
+    assert _text(client, core) == "The user builds this with the assistant because people pack bond."
 
 
 def test_a_real_rewording_goes_through_and_can_be_undone(client):
@@ -239,7 +237,7 @@ def test_the_reviewers_view(client):
     core = _core(client)
     first = _submit(client, [{"kind": "attach", "content": "pluots, badly put", "topic": "t",
                               "target_core_id": core, "source_short_ids": [_short(client, EPISODE)]}])
-    assert _review(client, first, [{"op": 0, "verdict": "deny", "critique": "say what he said"}]).status_code == 200
+    assert _review(client, first, [{"op": 0, "verdict": "deny", "critique": "say what they said"}]).status_code == 200
     cluster = client.get(f"/drafts/{first}").json()["cluster_id"]
     last = _submit(client, [{"kind": "attach", "content": EPISODE, "topic": "t", "target_core_id": core,
                              "restated_content": EPISODE, "redraft_of": 0,
@@ -250,7 +248,7 @@ def test_the_reviewers_view(client):
     assert op["target_core"] == {"id": core, "content": CORE, "gone": False}
     assert op["restate_check"].startswith("REFUSED as it stands")
     assert op["earlier_attempts"] == [{"attempt": 1, "kind": "attach", "target_core_id": core,
-                                       "content": "pluots, badly put", "critique": "say what he said"}]
+                                       "content": "pluots, badly put", "critique": "say what they said"}]
     assert "last attempt" in view["last_attempt"]
     # the plain read is unchanged - the hippocampus reads this one
     plain = client.get(f"/drafts/{last}").json()

@@ -14,7 +14,7 @@ two halves of it:
                               the snapshot was taken is purged again, so a
                               restore never brings a forgotten thing back.
 
-No route calls either. 3 Oct 2026, with the user: startup only, empty store only.
+No route calls either. Startup only, empty store only.
 """
 from __future__ import annotations
 

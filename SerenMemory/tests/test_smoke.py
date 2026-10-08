@@ -31,7 +31,7 @@ def test_root_and_health(client):
 
 
 def test_short_term_write_read_delete(client):
-    r = client.post("/short", json={"content": "the user prefers absolute paths", "topic": "config"})
+    r = client.post("/short", json={"content": "The user prefers absolute paths", "topic": "config"})
     assert r.json()["ok"]
     eid = r.json()["id"]
 
@@ -95,7 +95,7 @@ def _core(client, content, topic):
 
 def test_an_approved_draft_lands_in_long_term(client):
     before = client.get("/long").json()["count"]
-    lid = _core(client, "the user mentioned liking the color yellow", "preferences")
+    lid = _core(client, "The user mentioned liking the color yellow", "preferences")
     assert lid
     assert client.get("/long").json()["count"] > before
 

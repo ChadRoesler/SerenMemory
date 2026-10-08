@@ -201,8 +201,8 @@ def test_preserve_memory_verbatim_flags_entry(mcp_impl):
 
 
 def test_release_memory_verbatim_takes_the_mark_back(mcp_impl):
-    """The mark is the model's to give and to take back (Design note:
-    'its yours so if you wanna unmark a verbatim, thats your call')."""
+    """The mark is the model's to give and to take back: the memory is its own,
+    so unmarking a verbatim is its call."""
     sid = mcp_impl.remember(content="a promise, word for word", topic="quotes")["id"]
     assert mcp_impl.release_memory_verbatim(short_id=sid)["ok"] is False, "not marked: nothing to take back"
     mcp_impl.preserve_memory_verbatim(short_id=sid)
