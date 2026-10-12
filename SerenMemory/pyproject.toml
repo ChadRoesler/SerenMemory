@@ -30,11 +30,11 @@ dependencies = [
     # function says so by name when it is missing. Until 2026-09-23 it was a
     # core dep so the knob would "just work", which cost every default
     # install a resident torch on an 8 GB box that never called it.
-    "seren-meninges>=2.4.0,<3",
+    "seren-meninges>=2.4.0,<6",
     # Shared request logging - one copy across the family (SerenSinew). Mounted
     # outermost (before auth) so even safe-mode 503s and 401s get logged.
     # -> memory-requests.log.
-    "seren-sinew>=1.10.0,<2",  # 1.10.0: seren_sinew.stores with the rehearsal and restore_at_startup
+    "seren-sinew>=1.10.0,<6",  # 1.10.0: seren_sinew.stores with the rehearsal and restore_at_startup
 ]
 
 [project.optional-dependencies]
