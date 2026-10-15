@@ -18,6 +18,9 @@ What's here:
 """
 from __future__ import annotations
 
+import re
+import zlib
+
 import pytest
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from fastapi.testclient import TestClient
@@ -97,8 +100,13 @@ class FakeEmbedder(EmbeddingFunction):
         out = []
         for text in input:
             vec = [0.0] * self._DIM
-            for tok in text.lower().split():
-                vec[hash(tok) % self._DIM] += 1.0
+            # Words, not whitespace runs ("blue." is "blue"), and a hash that
+            # is the same in every process: hash() is salted per run
+            # (PYTHONHASHSEED), so which words shared a bucket - and so which
+            # entry ranked first - changed run to run. That failed the v5.1.1
+            # release (test_the_fallback_ranks_without_the_stored_vectors).
+            for tok in re.findall(r"[a-z0-9]+", text.lower()):
+                vec[zlib.crc32(tok.encode("utf-8")) % self._DIM] += 1.0
             # normalize so cosine distance behaves
             mag = sum(v * v for v in vec) ** 0.5 or 1.0
             out.append([v / mag for v in vec])
