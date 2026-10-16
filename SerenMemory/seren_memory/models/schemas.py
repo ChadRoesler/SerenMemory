@@ -265,6 +265,15 @@ class DailyBrief(BaseModel):
 # -------------------------------------------------------------------------
 #  Unified search - query across all three tiers, ranked.
 # -------------------------------------------------------------------------
+class EideticCreate(BaseModel):
+    """Input shape for POST /memory/{id}/eidetic: where the picture is now
+    (a path under eidetic.sources, or a URL under one of its prefixes) and
+    a line about it. The row it becomes rides on the entry's metadata under
+    `eidetic`: {digest, bytes, mime, caption, source, kept_at, file}."""
+    source: str
+    caption: Optional[str] = None
+
+
 class SearchRequest(BaseModel):
     query: str
     n_results: int = Field(default=5, ge=1, le=50)

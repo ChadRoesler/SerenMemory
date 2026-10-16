@@ -125,11 +125,14 @@ def _retrieval_text(content: str, topic: Optional[str],
 
 class MemoryStore(DraftMixin):
     """Owns the chroma client and the tier collections. The draft
-    (submit / review / apply) is mixed in from seren_memory.draft."""
+    (submit / review / apply) is mixed in from seren_memory.draft.
+    `eidetic` is the blob store the pictures kept with entries live in
+    (seren_sinew.blobs.BlobStore); None = this store keeps none."""
 
     def __init__(self, config: MemoryConfig, embedding_function: Any = None,
-                 _allow_reset: bool = False):
+                 _allow_reset: bool = False, eidetic: Any = None):
         self._config = config
+        self.eidetic = eidetic
         persist = str(config.resolved_persist_dir())
 
         # anonymized_telemetry=False: we're a local homelab tool, no phoning
@@ -265,7 +268,126 @@ class MemoryStore(DraftMixin):
     def delete_short(self, ids: list[str]) -> None:
         if ids:
             self.short.delete(ids=ids)
-    
+            self.sweep_eidetic()
+
+    # ------------------------------------------------------------------
+    #  Eidetic - pictures kept with entries (seren_sinew.blobs). The rows
+    #  ride in metadata under "eidetic" (a JSON list: chroma's one way to
+    #  hold a list); the bytes sit in the eidetic folder under their hash (an eidetic memory is one you can still see).
+    #  Whatever an entry becomes - promoted, drafted into a core, archived
+    #  to pruned - carries them (see promote_short_to_long, draft.py), and
+    #  the bytes go when no entry in any tier names them (sweep_eidetic).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def eidetic_in(meta: dict[str, Any]) -> list[dict[str, Any]]:
+        """The eidetic picture rows on an entry's metadata (decoded or not)."""
+        rows = _maybe_json(meta.get("eidetic")) if meta else None
+        return [r for r in rows if isinstance(r, dict) and r.get("digest")] if isinstance(rows, list) else []
+
+    @staticmethod
+    def merge_eidetic(*lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The union, by digest, first seen first."""
+        seen: dict[str, dict[str, Any]] = {}
+        for rows in lists:
+            for r in rows or []:
+                if isinstance(r, dict) and r.get("digest") and r["digest"] not in seen:
+                    seen[r["digest"]] = r
+        return list(seen.values())
+
+    def _tier_col(self, tier: str) -> Any:
+        return {"short": self.short, "near": self.near, "long": self.long, "pruned": self.pruned}[tier]
+
+    def keep_with(self, entry_id: str, src: Any, caption: Optional[str] = None,
+                  source: Optional[str] = None) -> Optional[dict[str, Any]]:
+        """Keep a picture with an entry in short, near or long: the bytes
+        into the blob store, the row onto the entry. None when no recall
+        tier holds that id (a pruned entry is on its way out: not here).
+        Raises what the blob store raises (BlobTooLarge, BlobStoreFull) and
+        ValueError for bytes that are not something Memory keeps - before
+        anything is written."""
+        if self.eidetic is None:
+            raise ValueError("this store keeps no pictures (eidetic.enabled is off)")
+        from seren_sinew.blobs import file_name, head_of, kind_kept
+        row = self.get_by_id(entry_id)
+        if row is None or row["tier"] == "pruned":
+            return None
+        mime = kind_kept(head_of(src))
+        if mime is None:
+            raise ValueError("not a picture, clip, sound or PDF by its first bytes - words are the memory itself, "
+                             "and nothing here trusts a filename")
+        blob = self.eidetic.put(src)
+        k = {"digest": blob.digest, "bytes": blob.bytes, "mime": mime, "caption": (caption or "").strip() or None,
+             "source": (source or "").strip() or None, "kept_at": time.time(),
+             "file": file_name("eidetic", blob.digest, mime)}
+        k = {kk: v for kk, v in k.items() if v is not None}
+        rows = [r for r in self.eidetic_in(row["metadata"]) if r.get("digest") != blob.digest] + [k]
+        self._apply_metadata_updates(self._tier_col(row["tier"]), entry_id, {"eidetic": rows})
+        return k
+
+    def drop_from(self, entry_id: str, digest: str) -> bool:
+        """Take one picture off an entry. The bytes go too when no entry in
+        any tier names them. True when the row was there."""
+        row = self.get_by_id(entry_id)
+        if row is None:
+            return False
+        rows = self.eidetic_in(row["metadata"])
+        kept = [r for r in rows if r.get("digest") != digest]
+        if len(kept) == len(rows):
+            return False
+        self._apply_metadata_updates(self._tier_col(row["tier"]), entry_id,
+                                     {"eidetic": kept if kept else None})
+        self.sweep_eidetic()
+        return True
+
+    def open_eidetic(self, entry_id: str, digest: str):
+        """(row, open file) for a picture an entry keeps, or None. The bytes
+        are only ever handed out through an entry that keeps them."""
+        if self.eidetic is None:
+            return None
+        row = self.get_by_id(entry_id)
+        if row is None:
+            return None
+        k = next((r for r in self.eidetic_in(row["metadata"]) if r.get("digest") == digest), None)
+        if k is None or not self.eidetic.has(digest):
+            return None
+        return k, self.eidetic.open(digest)
+
+    def referenced_digests(self) -> set[str]:
+        """Every digest an entry in any tier names (pruned included: an
+        archived short keeps its pictures until it is swept)."""
+        out: set[str] = set()
+        for col in (self.short, self.near, self.long, self.pruned):
+            for r in _zip_get(col.get(include=["metadatas"]), None):
+                out.update(k["digest"] for k in self.eidetic_in(r["metadata"]))
+        return out
+
+    def sweep_eidetic(self, grace: float = 3600.0) -> list[str]:
+        """Remove the bytes no entry names any more (after a grace period, so
+        a picture whose row is on its way is not swept from under it)."""
+        if self.eidetic is None:
+            return []
+        return self.eidetic.sweep(self.referenced_digests(), grace=grace)
+
+    def eidetic_totals(self) -> dict[str, int]:
+        """How many rows name a picture, across the recall tiers, and how
+        much disk the folder takes. Content-blind."""
+        n = 0
+        for col in (self.short, self.near, self.long):
+            for r in _zip_get(col.get(include=["metadatas"]), None):
+                n += len(self.eidetic_in(r["metadata"]))
+        return {"count": n, "bytes": self.eidetic.total_bytes() if self.eidetic is not None else 0}
+
+    def sources_eidetic(self, ids: list[str]) -> list[dict[str, Any]]:
+        """The pictures a set of short-terms carry (in short, or already
+        archived to pruned): what a core made from them inherits."""
+        if not ids:
+            return []
+        found: list[list[dict[str, Any]]] = []
+        for col in (self.short, self.pruned):
+            for r in _zip_get(col.get(ids=list(ids), include=["metadatas"]), None):
+                found.append(self.eidetic_in(r["metadata"]))
+        return self.merge_eidetic(*found)
+
     def update_short_metadata(self, entry_id: str, updates: dict[str, Any]) -> bool:
         """Update metadata on a short-term entry. Returns True if found.
 
@@ -336,12 +458,15 @@ class MemoryStore(DraftMixin):
             return None
         content = existing["documents"][0]
         meta = dict(existing["metadatas"][0]) if existing.get("metadatas") else {}
+        extra: dict[str, Any] = {"promoted_directly": True, "original_short_id": entry_id}
+        if self.eidetic_in(meta):
+            extra["eidetic"] = self.eidetic_in(meta)          # the pictures go with it
         long_entry = LongTermEntry(
             content=content,
             topic=meta.get("topic"),
             evidence_count=1,
             source=Source.CONSOLIDATOR,
-            extra={"promoted_directly": True, "original_short_id": entry_id},
+            extra=extra,
         )
         self.add_long(long_entry)
         self.short.delete(ids=[entry_id])
@@ -377,6 +502,7 @@ class MemoryStore(DraftMixin):
     def delete_near(self, ids: list[str]) -> None:
         if ids:
             self.near.delete(ids=ids)
+            self.sweep_eidetic()
 
     # ------------------------------------------------------------------
     #  LongTerm - writes are consolidator-only by convention (the route
@@ -542,6 +668,7 @@ class MemoryStore(DraftMixin):
                  if now - r["metadata"].get("pruned_at", now) > older_than_seconds]
         if stale:
             self.pruned.delete(ids=stale)
+            self.sweep_eidetic()
         return len(stale)
 
     # ------------------------------------------------------------------
@@ -580,7 +707,7 @@ class MemoryStore(DraftMixin):
                     "id": ids[i],
                     "content": docs[i],
                     "metadata": meta,
-                    "distance": dists[i],
+                    "distance": float(dists[i]),
                 })
             return hits
         except Exception:  # noqa: BLE001
@@ -651,7 +778,10 @@ class MemoryStore(DraftMixin):
                 "id": ids[i],
                 "content": docs[i],
                 "metadata": meta,
-                "distance": dist,
+                # a plain float: numpy's float32 is what _cosine_dist hands
+                # back, and a route cannot serialise it (the flake behind
+                # "Unable to serialize unknown type: numpy.float32")
+                "distance": float(dist),
             })
         return hits
 
@@ -886,6 +1016,7 @@ class MemoryStore(DraftMixin):
                 scrubbed += 1
 
         self.long.delete(ids=ids)
+        swept = self.sweep_eidetic(grace=0)             # a purged picture goes now, not in an hour
 
         persist = self._config.resolved_persist_dir()
         backups = sorted(p for p in persist.parent.glob(persist.name + "_*") if p.is_dir())
@@ -900,7 +1031,7 @@ class MemoryStore(DraftMixin):
             "cascade": {"satellites": len(ids) - 1, "shorts": shorts_removed,
                         "pruned": pruned_removed, "legacy_drafts": len(dead),
                         "drafts_scrubbed": scrubbed, "backups_removed": removed,
-                        "backups_retained": len(backups) - removed},
+                        "backups_retained": len(backups) - removed, "eidetic": len(swept)},
         }
         with (persist / "tombstones.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(_json.dumps(tomb) + "\n")
@@ -973,7 +1104,8 @@ class MemoryStore(DraftMixin):
                 self.add_long(LongTermEntry(
                     content=f"Completed intent: {r['content']}",
                     topic="completed_intents", evidence_count=1,
-                    source=Source.CONSOLIDATOR))
+                    source=Source.CONSOLIDATOR,
+                    extra={"eidetic": self.eidetic_in(meta)} if self.eidetic_in(meta) else {}))
                 completed_ids.append(r["id"])
                 continue
             exp = meta.get("expires_at")

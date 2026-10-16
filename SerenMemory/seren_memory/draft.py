@@ -546,6 +546,10 @@ class DraftMixin:
         if op.edited_content is not None:
             base_extra["edited_on_review"] = True
             base_extra["original_op_content"] = op.content
+        # the pictures the source episodes carry: what is made from them keeps them
+        inherited = self.sources_eidetic(list(op.source_short_ids))
+        if inherited:
+            base_extra["eidetic"] = inherited
 
         if op.kind == DraftOpKind.NEW_CORE:
             entry = LongTermEntry(content=content, topic=op.topic, kind="core",
@@ -575,10 +579,12 @@ class DraftMixin:
                                     source=Source.CONSOLIDATOR, extra=base_extra)
                 self.add_long(sat)
                 sat_id = sat.id
-            # the core grows: evidence, freshness, and possibly its wording
+            # the core grows: evidence, freshness, its pictures, and possibly its wording
             meta = dict(core["metadata"])
             meta["evidence_count"] = int(meta.get("evidence_count", 1) or 1) + max(1, op.evidence_count)
             meta["last_confirmed"] = time.time()
+            if inherited:
+                meta["eidetic"] = self.merge_eidetic(self.eidetic_in(meta), inherited)
             restated = op.restated_content
             if restated and restated.strip() and restated.strip() != core["content"]:
                 self._restate_long(op.target_core_id, restated.strip(), meta)
@@ -593,10 +599,13 @@ class DraftMixin:
             old = self._long_row(op.target_core_id)
             if old is None:
                 raise DraftError(f"core '{op.target_core_id}' is gone")
+            # the old core's pictures come forward with the new one; the old keeps its own
+            carried = self.merge_eidetic(self.eidetic_in(old["metadata"]), inherited)
             entry = LongTermEntry(content=content, topic=op.topic or old["metadata"].get("topic"),
                                   kind="core", evidence_count=max(1, op.evidence_count),
                                   source=Source.CONSOLIDATOR,
-                                  extra={**base_extra, "supersedes": op.target_core_id})
+                                  extra={**base_extra, "supersedes": op.target_core_id,
+                                         **({"eidetic": carried} if carried else {})})
             self.add_long(entry)
             self.supersede_long(op.target_core_id, entry.id)
             archived = self._archive_sources(op.source_short_ids)

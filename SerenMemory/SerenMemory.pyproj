@@ -49,6 +49,7 @@
     <Compile Include="tests\test_brief.py" />
     <Compile Include="tests\test_drafts.py" />
     <Compile Include="tests\test_embedder.py" />
+    <Compile Include="tests\test_eidetic.py" />
     <Compile Include="tests\test_mcp_endpoint.py" />
     <Compile Include="tests\test_mcp_fallback.py" />
     <Compile Include="tests\test_mcp_mount.py" />

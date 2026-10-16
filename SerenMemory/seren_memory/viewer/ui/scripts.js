@@ -56,6 +56,7 @@ function loadOverview(root) {
     const tiers = root.tiers || {};
     const stat = (label, n, cls) =>
         `<div class="stat ${cls}"><div class="big">${n ?? '?'}</div><div class="lbl">${label}</div></div>`;
+    const eid = root.eidetic || null;
     const statsHtml = [
         stat('short-term', tiers.short, 'tier-short'),
         stat('near-term',  tiers.near,  'tier-near'),
@@ -63,6 +64,7 @@ function loadOverview(root) {
         stat('briefs',     tiers.briefs ?? '?', 'tier-brief'),
         stat('drafts',     tiers.drafts ?? '?', 'tier-draft'),
         tiers.pruned != null ? stat('pruned', tiers.pruned, '') : '',
+        eid ? stat('eidetic pictures', `${eid.count}<span class="sub">${human(eid.bytes)}</span>`, 'tier-eidetic') : '',
     ].join('');
 
     const metaRows = [
@@ -73,7 +75,82 @@ function loadOverview(root) {
 
     $('overview-section').innerHTML = `
         <div class="stat-row">${statsHtml}</div>
-        <div class="overview-meta">${metaRows}</div>`;
+        <div class="overview-meta">${metaRows}</div>
+        <h3 class="group-h">Backups</h3>
+        <div class="backups" id="backups"><div class="empty">Loading…</div></div>`;
+    loadBackups();
+}
+
+// ----------------------------------------------------------------------
+// Eidetic: the pictures kept with an entry (an eidetic memory is one you can
+// still see). A picture can't ride in an <img src>: the browser sends no
+// bearer with it, so each thumbnail is fetched through the token (apiBlob)
+// and shown from an object URL. Still pictures are shown; a clip, a sound or
+// a PDF is a chip saying what it is and how big. 15 Oct 2026.
+// ----------------------------------------------------------------------
+const STILL = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+async function apiBlob(path) {
+    const headers = {};
+    const tok = getToken();
+    if (tok) headers['Authorization'] = 'Bearer ' + tok;
+    const res = await fetch(path, { headers });
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    return URL.createObjectURL(await res.blob());
+}
+function human(n) {
+    n = Number(n || 0);
+    for (const u of ['B', 'KB', 'MB', 'GB']) { if (n < 1024 || u === 'GB') return (u === 'B' ? n : n.toFixed(1)) + ' ' + u; n /= 1024; }
+}
+function eideticStrip(id, meta) {
+    let rows = meta.eidetic;
+    if (typeof rows === 'string') { try { rows = JSON.parse(rows); } catch (_) { rows = []; } }
+    if (!Array.isArray(rows) || !rows.length || !id) return '';
+    return `<div class="figs">` + rows.map(k => {
+        const title = escapeHtml(k.caption || k.file || '');
+        if (STILL.has(k.mime)) {
+            return `<figure class="fig" title="${title}"><img alt="${title}" data-fig="/memory/${encodeURIComponent(id)}/eidetic/${encodeURIComponent(k.digest)}"><figcaption>${title}</figcaption></figure>`;
+        }
+        return `<span class="fig chip" title="${title}">${escapeHtml((k.mime || 'file').split('/')[0])} · ${human(k.bytes)}</span>`;
+    }).join('') + `</div>`;
+}
+function hydrateFigures(root) {
+    root.querySelectorAll('img[data-fig]').forEach(async img => {
+        const path = img.dataset.fig;
+        img.removeAttribute('data-fig');
+        try { img.src = await apiBlob(path); img.classList.add('ready'); }
+        catch (e) { img.replaceWith(Object.assign(document.createElement('span'), { className: 'fig chip', textContent: 'picture missing' })); }
+    });
+}
+
+// ----------------------------------------------------------------------
+// Backups: the same panel on every Seren viewer. Reads /stores
+// (seren_sinew.stores): what is kept, the snapshots, when a Lodestar last
+// pulled, how the last rehearsal went. Counts and times only. Kept parallel
+// with Loci's and Margin's copy on purpose: fix one, fix all.
+// ----------------------------------------------------------------------
+function renderBackups(el, d) {
+    if (!d || !d.ok) { el.innerHTML = `<div class="empty">this service keeps no snapshots (backup.enabled is off)</div>`; return; }
+    const s = d.snapshots || {};
+    const ago = (ts) => relAge(Date.now() - ts * 1000);
+    const latest = s.latest ? `${escapeHtml(s.latest.id)} · ${ago(s.latest.created_at)} · ${escapeHtml(s.latest.reason || '')}` : 'none yet';
+    const pull = s.last_pull ? `${ago(s.last_pull.created_at)} (${escapeHtml(s.last_pull.id)})` : 'never from this box';
+    const r = d.last_rehearsal;
+    const reh = r ? `<span class="${r.ok ? 'ok' : 'bad'}">${r.ok ? 'ok' : 'FAILED'}</span> · ${ago(r.at)} · ${escapeHtml(r.snapshot)} (${escapeHtml(r.source)}${r.problems ? `, ${r.problems} problem${r.problems === 1 ? '' : 's'}` : ''})`
+                  : 'none since this process started';
+    const stores = (d.stores || []).map(st =>
+        `<div class="row"><span class="k">${escapeHtml(st.name)}</span><span class="v">${escapeHtml(st.kind)} · ${human(st.bytes)}${st.backed_up ? '' : ' · not copied'}${st.exists ? '' : ' · nothing on disk yet'}</span></div>`).join('');
+    el.innerHTML = `
+      <div class="row"><span class="k">snapshots</span><span class="v">${s.count ?? 0} kept · newest ${s.keep_daily} daily, then one a week for ${s.keep_weekly} weeks</span></div>
+      <div class="row"><span class="k">newest</span><span class="v">${latest}</span></div>
+      <div class="row"><span class="k">last pull</span><span class="v">${pull}</span></div>
+      <div class="row"><span class="k">last rehearsal</span><span class="v">${reh}</span></div>
+      ${stores}`;
+}
+async function loadBackups() {
+    const el = $('backups');
+    if (!el) return;
+    try { renderBackups(el, await api('/stores')); }
+    catch (e) { el.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
 }
 
 function entryCard(tier, content, meta, opts = {}) {
@@ -103,6 +180,7 @@ function entryCard(tier, content, meta, opts = {}) {
     return `
     <div class="entry ${tier}">
         <div class="content">${escapeHtml(content)}</div>
+        ${eideticStrip(opts.id, meta)}
         <div class="meta">
             ${badges.join(' ')}
             ${metaBits.join('')}
@@ -122,7 +200,7 @@ function satelliteRow(s) {
     if (when != null) bits.push(`<span><span class="k">when</span> ${escapeHtml(fmtTs(when))}</span>`);
     if (m.evidence_count != null) bits.push(`<span><span class="k">evidence</span> ${escapeHtml(m.evidence_count)}</span>`);
     bits.push(`<code class="id">${escapeHtml(s.id)}</code>`);
-    return `<div class="sat"><div class="content">${escapeHtml(s.content)}</div><div class="meta">${bits.join(' ')}</div></div>`;
+    return `<div class="sat"><div class="content">${escapeHtml(s.content)}</div>${eideticStrip(s.id, m)}<div class="meta">${bits.join(' ')}</div></div>`;
 }
 
 function earlierWording(meta) {
@@ -154,6 +232,7 @@ document.addEventListener('toggle', async (ev) => {
     try {
         const data = await api(`/long/${encodeURIComponent(slot.dataset.core)}/satellites`);
         slot.innerHTML = (data.satellites || []).map(satelliteRow).join('') || `<div class="empty">none</div>`;
+        hydrateFigures(slot);
     } catch (e) { slot.innerHTML = `<div class="empty">could not load: ${escapeHtml(e.message)}</div>`; }
 }, true);
 
@@ -222,6 +301,7 @@ function draftCard(draft) {
 
 function renderEntries(html) {
     $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
+    hydrateFigures($('entries'));
 }
 
 async function loadShort() {

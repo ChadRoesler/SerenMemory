@@ -34,7 +34,7 @@ dependencies = [
     # Shared request logging - one copy across the family (SerenSinew). Mounted
     # outermost (before auth) so even safe-mode 503s and 401s get logged.
     # -> memory-requests.log.
-    "seren-sinew>=1.10.0,<6",  # 1.10.0: seren_sinew.stores with the rehearsal and restore_at_startup
+    "seren-sinew>=5.2.0,<6",  # 5.2.0: seren_sinew.blobs and the `blobs` store kind (keepsakes); 1.10.0: stores, rehearsal, restore_at_startup
 ]
 
 [project.optional-dependencies]

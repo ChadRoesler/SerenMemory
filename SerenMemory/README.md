@@ -99,6 +99,38 @@ Full endpoint list is in `seren_memory/app.py`'s module docstring.
 
 ---
 
+## Eidetic: pictures kept with memories
+
+A picture can *be* the memory: what was drawn at 3 a.m., what the screen
+showed. `remember(..., keep=[...])` keeps one as the entry is written,
+`keep_with_memory` adds one to an entry in any recall tier, `look_at_memory`
+hands them back as image content, `drop_from_memory` takes one off. The
+bytes go in a `eidetic/` folder beside the store under their sha256 and
+nothing else (`seren_sinew.blobs`); the row (caption, source, type) rides on
+the entry's metadata under `eidetic`. Both are in the same snapshot, the
+folder hardlinked from the previous one.
+
+The pictures go where the entry goes. Promoted by hand, they move to the
+core. Drafted by the hippocampus, a core made from several episodes carries
+the union of their pictures; a satellite carries its own, and the core it
+attaches to grows them; a superseding core takes the old core's forward
+while the old keeps its own. Archived to pruned, they wait out the safety
+window with the entry. The bytes are swept only when no entry in any tier
+names them, and a purge sweeps at once.
+
+Where an eidetic picture may be taken **from** is the `eidetic:` block's to say:
+folders on this box (the Workbench gallery `make_image` saves to) and URL
+prefixes. Nothing listed means nothing can be kept, and the refusal says so.
+
+```yaml
+eidetic:
+  sources:
+    - ~/seren/stores/workbench/gallery
+    - https://
+```
+
+---
+
 ## How recall ranking works
 
 `/search` hits all three tiers in parallel, then merges by a weighted

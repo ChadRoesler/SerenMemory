@@ -43,11 +43,11 @@ from contextlib import asynccontextmanager, AsyncExitStack
 from typing import Optional
 
 from fastapi import FastAPI, Body, Request, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 
 from .config import MemoryConfig, load_config
 from .collections import MemoryStore
-from .models.schemas import DailyBrief
+from .models.schemas import DailyBrief, EideticCreate
 from .routes import short as short_routes
 from .routes import near as near_routes
 from .routes import long as long_routes
@@ -148,8 +148,9 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             yield
             print("[seren-memory] shut down (safe-mode)")
             return
+        from .restore import eidetic_store
         store = MemoryStore(cfg, embedding_function=embedding_function,
-                            _allow_reset=_allow_store_reset)
+                            _allow_reset=_allow_store_reset, eidetic=eidetic_store(cfg))
         app.state.store = store
         # A restore leaves the tombstones it must replay; nothing pending is
         # the usual case and costs one missing-file check.
@@ -259,6 +260,9 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             "service": "SerenMemory",
             "version": APP_VERSION,
             "tiers": store.counts(),
+            # the pictures kept with entries: how many rows name one, and the
+            # folder's size. A count and a size - the viewer's overview stat.
+            "eidetic": store.eidetic_totals(),
             "embedding_model": cfg.storage.embedding_model or "all-MiniLM-L6-v2 (default)",
             # Consolidation is SerenHippocampus's; this process only applies
             # the drafts the main model approves.
@@ -296,6 +300,7 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         # the name, not None: a snapshot has to say which embedder built its vectors
         return {"version": APP_VERSION, "embedder": cfg.storage.embedding_model or "all-MiniLM-L6-v2 (default)",
                 "counts": store.counts() if store is not None else None,
+                "eidetic": store.eidetic_totals() if store is not None else None,
                 "safe_mode": bool(_safe_mode["active"])}
 
     def _memory_check(restored, manifest, snapshot_dir) -> dict:
@@ -305,15 +310,22 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         on the copy (what a purge removed since the snapshot must not come
         back), and ask it one question so the vector index is read. The live
         store is only read for its tombstone list."""
+        from seren_sinew.blobs import BlobStore
+
         from .collections import MemoryStore
         live = getattr(app.state, "store", None)
         ef = embedding_function or getattr(getattr(live, "long", None), "_embedding_function", None)
         cfg2 = cfg.model_copy(deep=True)
         cfg2.storage.persist_dir = str(restored["memory"])
-        st = MemoryStore(cfg2, embedding_function=ef, _allow_reset=True)
+        st = MemoryStore(cfg2, embedding_function=ef, _allow_reset=True,
+                         eidetic=BlobStore(restored["eidetic"]) if "eidetic" in restored else None)
         problems: list[str] = []
         try:
             counts = st.counts()
+            named = st.referenced_digests()
+            lost = [d for d in named if st.eidetic is None or not st.eidetic.has(d)]
+            if lost:
+                problems.append(f"{len(lost)} of the {len(named)} eidetic picture(s) the entries name are not in the copy")
             for name, n in (manifest.get("exports") or {}).items():
                 tier = name.removesuffix(".jsonl")
                 if tier in counts and counts[tier] != n:
@@ -342,12 +354,11 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             except Exception:  # noqa: BLE001 - an older chroma: the scratch is swept at the next rehearsal
                 pass
 
+    from .restore import declared_stores
     app.state.stores = StoreKeeper(
-        "seren-memory",
-        lambda: [Store("memory", "chroma", str(cfg.resolved_persist_dir()),
-                       "every tier: short, near, long (cores and satellites), briefs, drafts, pruned, tombstones")],
+        "seren-memory", lambda: declared_stores(cfg),
         cfg.resolved_backup_dir(), export=_memory_export, extra=_memory_extra, check=_memory_check,
-        keep_daily=cfg.backup.keep_daily, keep_weekly=cfg.backup.keep_weekly,
+        keep_daily=cfg.backup.keep_daily, keep_weekly=cfg.backup.keep_weekly, compress=cfg.backup.compress,
         log=lambda m: print(f"[seren-memory] {m}")) if cfg.backup.enabled else None
     add_store_routes(app, lambda: app.state.stores)
 
@@ -617,6 +628,50 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         if row is None:
             raise HTTPException(404, f"no memory '{entry_id}' in short/near/long")
         return {"ok": True, **row}
+
+    # -- Eidetic: pictures kept with entries (seren_sinew.blobs) --
+    @app.post("/memory/{entry_id}/eidetic")
+    async def keep_with_memory(request: Request, entry_id: str, body: EideticCreate = Body(...)):
+        """Keep a picture with an entry in short, near or long. `source` is a
+        path or URL under eidetic.sources. 404 with no such entry, 400 when
+        it may not be taken from there or is not something Memory keeps."""
+        from seren_sinew.blobs import BlobStoreFull, BlobTooLarge, SourceRefused, fetch
+        store = request.app.state.store
+        ks = request.app.state.config.eidetic
+        try:
+            data = await asyncio.to_thread(fetch, body.source, ks.sources, ks.max_bytes)
+            k = await asyncio.to_thread(store.keep_with, entry_id, data, body.caption, body.source)
+        except (SourceRefused, BlobTooLarge, BlobStoreFull, ValueError) as e:
+            raise HTTPException(400, str(e))
+        if k is None:
+            raise HTTPException(404, f"no memory '{entry_id}' in short/near/long")
+        return {"ok": True, "id": entry_id, "eidetic": k}
+
+    @app.get("/memory/{entry_id}/eidetic/{digest}")
+    async def get_eidetic(request: Request, entry_id: str, digest: str):
+        """One picture's bytes, served as what they are and nothing more:
+        nosniff, a sandbox CSP, inline under the picture's own name. Only
+        through an entry that keeps it."""
+        got = request.app.state.store.open_eidetic(entry_id, digest)
+        if got is None:
+            raise HTTPException(404, f"no eidetic '{digest}' on memory '{entry_id}'")
+        k, fh = got
+
+        def body():
+            with fh:
+                while chunk := fh.read(1 << 20):
+                    yield chunk
+        return StreamingResponse(body(), media_type=k.get("mime") or "application/octet-stream", headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'; img-src data:; media-src data:",
+            "Content-Disposition": f'inline; filename="{k.get("file", digest)}"',
+            "Content-Length": str(k.get("bytes", "")), "Cache-Control": "private, max-age=86400"})
+
+    @app.delete("/memory/{entry_id}/eidetic/{digest}")
+    async def drop_from_memory(request: Request, entry_id: str, digest: str):
+        if not request.app.state.store.drop_from(entry_id, digest):
+            raise HTTPException(404, f"no eidetic '{digest}' on memory '{entry_id}'")
+        return {"ok": True, "id": entry_id, "digest": digest, "dropped": True}
 
     # -- Distill reconcile (re-embed existing entries onto the distilled key) --
     @app.post("/reconcile/distill")

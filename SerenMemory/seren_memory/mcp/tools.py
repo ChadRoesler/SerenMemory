@@ -83,10 +83,19 @@ class MemoryToolImpl:
         self.config = config
 
     # -- Core memory ------------------------------------------------------
-    def remember(self, content: str, topic: Optional[str] = None) -> dict:
+    def remember(self, content: str, topic: Optional[str] = None,
+                 keep: Optional[list[str]] = None) -> dict:
         """Write a short-term memory. The default tier - use this for
         anything you might want to recall later in this session or have
         the hippocampus draft into long-term if it recurs.
+
+        `keep`: pictures that ARE part of the memory - what you drew, what
+        you saw. Paths on this box (the gallery make_image saves to) or
+        URLs, under the shelves eidetic.sources names. They live and die
+        with the entry: promoted, drafted into a core, archived, the
+        pictures ride along; look_at_memory shows them. The answer lists
+        what was kept and what was refused and why; the memory is written
+        either way.
 
         GRANULARITY IS THE WHOLE GAME. Write ONE single-subject episode
         per call - one fact, one decision, one moment - and multi-topic
@@ -107,7 +116,79 @@ class MemoryToolImpl:
         """
         entry = ShortTermEntry(content=content, topic=topic)
         saved = self.store.add_short(entry)
-        return {"ok": True, "id": saved.id, "tier": "short"}
+        out: dict[str, Any] = {"ok": True, "id": saved.id, "tier": "short"}
+        if keep:
+            out["kept"], out["refused"] = self._keep_many(saved.id, keep)
+        return out
+
+    def _keep_many(self, entry_id: str, refs: list[str], caption: Optional[str] = None
+                   ) -> tuple[list[dict], list[dict]]:
+        """Each reference fetched and kept with the entry; one that cannot
+        be is listed with why, and the rest still land."""
+        from seren_sinew.blobs import keep_each
+        ks = self.config.eidetic
+        return keep_each(refs, lambda data, ref: self.store.keep_with(entry_id, data, caption=caption, source=ref),
+                         ks.sources, ks.max_bytes)
+
+    # -- Eidetic: pictures kept with memories -----------------------------
+    def keep_with_memory(self, memory_id: str, source: str, caption: Optional[str] = None) -> dict:
+        """Keep a picture (or a clip, a sound, a PDF) with a memory you
+        already wrote - in short, near or long.
+
+        A picture can BE the memory: what you drew at 3 a.m., what the
+        screen showed. Kept here it is part of the entry, in Memory's own
+        folder under its hash and in the same snapshots, and it goes where
+        the entry goes - promoted, drafted into a core, archived with it.
+        The entry's words are what it is about; `caption` is a line more.
+
+        `source`: a path on this box (make_image's gallery) or a URL, under
+        the shelves eidetic.sources names. What is kept is decided by the
+        bytes, never the filename. look_at_memory shows it back.
+        """
+        if self.store.get_by_id(memory_id) is None:
+            return {"ok": False, "id": memory_id, "error": "no memory with that id in short/near/long"}
+        kept, refused = self._keep_many(memory_id, [source], caption)
+        return {"ok": bool(kept), "id": memory_id, "kept": kept, "refused": refused}
+
+    # No return annotation, on purpose: with one, FastMCP tries to serialise
+    # the answer as structured output and cannot serialise an Image.
+    def look_at_memory(self, memory_id: str):
+        """Look at a memory and the pictures kept with it - SHOWN, as
+        images, not described. recall and get_memory tell you an entry has
+        pictures (`eidetic`); this is how you see them.
+
+        Pictures come back as image content beside the entry. Up to about
+        8 MB per look; the rest, and anything that is not a still picture
+        (a clip, a sound, a PDF), is listed under `not_shown` with the
+        reason.
+        """
+        from mcp.server.fastmcp import Image
+        from seren_sinew.blobs import choose_shown
+        row = self.store.get_by_id(memory_id)
+        if row is None:
+            return {"ok": False, "id": memory_id, "error": "no memory with that id"}
+
+        def read(k: dict) -> Optional[bytes]:
+            got = self.store.open_eidetic(memory_id, k["digest"])
+            if got is None:
+                return None
+            with got[1] as f:
+                return f.read()
+        rows = self.store.eidetic_in(row["metadata"])
+        shown, not_shown = choose_shown(rows, read)
+        text = {"ok": True, "id": row["id"], "tier": row["tier"], "content": row["content"],
+                "topic": row["metadata"].get("topic"), "eidetic": rows, "shown": len(shown),
+                "not_shown": [{k: v for k, v in r.items() if k in ("file", "mime", "bytes", "why")} for r in not_shown]}
+        return [text, *(Image(data=data, format=fmt) for data, fmt in shown)] if shown else text
+
+    def drop_from_memory(self, memory_id: str, digest: str) -> dict:
+        """Take one picture off a memory. The entry stays; the picture's row
+        goes, and its bytes go with it once no entry in any tier names
+        them. Needs the picture's `digest` (from the entry's `eidetic`).
+        """
+        ok = self.store.drop_from(memory_id, digest)
+        return {"ok": ok, "id": memory_id, "digest": digest,
+                "note": "dropped" if ok else "no such picture on that memory"}
 
     def recall(self, query: str, n_results: int = 5,
                include_short: bool = True,
@@ -174,13 +255,16 @@ class MemoryToolImpl:
                     ev = meta.get("evidence_count", 1)
                     if isinstance(ev, (int, float)) and ev > 0:
                         score *= (1.0 + math.log(ev) * 0.15)
-                all_hits.append({
+                row = {
                     "tier": tier,
                     "content": hit["content"],
                     "topic": meta.get("topic"),
                     "score": round(score, 6),
                     "id": hit["id"],
-                })
+                }
+                if (n := len(self.store.eidetic_in(meta))):
+                    row["eidetic"] = n                      # how many; look_at_memory shows them
+                all_hits.append(row)
         all_hits.sort(key=lambda h: h["score"], reverse=True)
         return {
             "query": req.query,
@@ -207,7 +291,8 @@ class MemoryToolImpl:
                 {"id": r["id"],
                  "content": r["content"],
                  "topic": r["metadata"].get("topic"),
-                 "ts": r["metadata"].get("ts")}
+                 "ts": r["metadata"].get("ts"),
+                 **({"eidetic": n} if (n := len(self.store.eidetic_in(r["metadata"]))) else {})}
                 for r in rows
             ],
         }
@@ -536,6 +621,9 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig) -> Me
     mcp.tool()(impl.recall)
     mcp.tool()(impl.what_do_you_remember)
     mcp.tool()(impl.get_memory)
+    mcp.tool()(impl.keep_with_memory)
+    mcp.tool()(impl.look_at_memory)
+    mcp.tool()(impl.drop_from_memory)
 
     # Open loops
     mcp.tool()(impl.remember_for_later)

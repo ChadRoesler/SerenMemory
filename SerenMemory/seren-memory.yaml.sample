@@ -90,3 +90,24 @@ updates:
   check_interval_hours: 6      # cached; never checked per-request
   allow_prerelease: false      # true would offer you e.g. 2.0.0rc1
   # index_url: "https://pypi.org/pypi/{distribution}/json"   # private index?
+
+# ── Eidetic: pictures kept with memories (seren_sinew.blobs) ───────────
+#
+# remember's `keep` and keep_with_memory keep a picture, a clip, a sound or a
+# PDF WITH an entry: a picture can BE the memory. The bytes go in `eidetic`
+# beside the store under their hash, the row on the entry, both in the same
+# snapshot; the pictures go where the entry goes (promoted, drafted into a
+# core, archived with it). `sources` names where one may be taken from:
+# folders on this box, and URL prefixes. Nothing listed = nothing can be
+# kept, and the tool says so.
+# eidetic:
+#   enabled: true
+#   dir: ""                    # blank = `eidetic` beside the store
+#   max_bytes: 268435456       # one eidetic (256 MB)
+#   max_total: 34359738368     # the folder (32 GB)
+#   sources:
+#     - ~/seren/stores/workbench/gallery     # where make_image saves
+#     - https://                              # anything over TLS
+#
+# backup.compress: gz | xz | none - how an archive is compressed when a
+# Lodestar pulls one.

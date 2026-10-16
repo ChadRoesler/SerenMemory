@@ -187,7 +187,7 @@ def test_purge_takes_the_core_its_satellites_its_sources_and_the_backups(client,
     assert r.status_code == 200, r.text
     tomb = r.json()["tombstone"]
     assert tomb["cascade"] == {"satellites": 1, "shorts": 0, "pruned": 2, "legacy_drafts": 0,
-                               "drafts_scrubbed": 2, "backups_removed": 1, "backups_retained": 0}
+                               "drafts_scrubbed": 2, "backups_removed": 1, "backups_retained": 0, "eidetic": 0}
     assert "ssh-rsa" not in json.dumps(tomb), "a tombstone never carries content"
     assert not fake_backup.exists()
     assert _long_ids(client, include_satellites=True) == {}

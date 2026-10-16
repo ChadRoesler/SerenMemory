@@ -29,14 +29,37 @@ def _receipts(cfg: MemoryConfig):
     return cfg.resolved_backup_dir() / SERVICE
 
 
+def eidetic_store(cfg: MemoryConfig):
+    """The blob store the pictures kept with entries live in
+    (seren_sinew.blobs), or None when eidetic pictures are off."""
+    if not cfg.eidetic.enabled:
+        return None
+    from seren_sinew.blobs import BlobStore
+    return BlobStore(cfg.resolved_eidetic_dir(), max_bytes=cfg.eidetic.max_bytes,
+                     max_total=cfg.eidetic.max_total)
+
+
+def declared_stores(cfg: MemoryConfig) -> list:
+    """What Memory keeps, for a snapshot and for a restore: the chroma
+    persist dir (required) and the eidetic folder beside it (optional on
+    a restore: a snapshot from before it existed holds none)."""
+    from seren_sinew.stores import Store
+    stores = [Store("memory", "chroma", str(cfg.resolved_persist_dir()),
+                    "every tier: short, near, long (cores and satellites), briefs, drafts, pruned, tombstones")]
+    keep = eidetic_store(cfg)
+    if keep is not None:
+        stores.append(keep.store("eidetic", "pictures and clips kept with entries, named by their hash"))
+    return stores
+
+
 def restore_if_asked(cfg: MemoryConfig, log=print) -> Optional[dict[str, Any]]:
     """None when nothing is asked. RestoreRefused when it cannot be done as
     asked (the service must not come up empty instead)."""
     if not (cfg.backup.restore_from or "").strip():
         return None
-    from seren_sinew.stores import Store, restore_at_startup
+    from seren_sinew.stores import restore_at_startup
     return restore_at_startup(
-        SERVICE, [Store("memory", "chroma", str(cfg.resolved_persist_dir()))],
+        SERVICE, declared_stores(cfg),
         cfg.backup.restore_from, cfg.backup.restore_reason, _receipts(cfg),
         log=lambda m: log(f"[seren-memory] {m}"))
 

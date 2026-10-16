@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field
@@ -149,6 +149,28 @@ class BackupConfig(BaseModel):
     # a restart. See seren_sinew.stores.restore_at_startup.
     restore_from: str = ""
     restore_reason: str = ""
+    # How an archive is compressed when one is handed over: gz (default), xz
+    # (smaller on the sqlite half; nothing on the vectors) or none.
+    compress: str = "gz"
+
+
+class EideticConfig(BaseModel):
+    """Pictures (and clips, sounds, PDFs) kept WITH memories, in a folder
+    beside the store (seren_sinew.blobs). A picture can BE the episode -
+    "I drew this at 3 a.m." - with the words as its caption; it lives and
+    dies with the entry: short, long, pruned, merged by the hippocampus into
+    a core with the pictures riding along. The folder holds files named by
+    their hash and nothing else; every word about them is on the entry, and
+    the folder is in the same snapshot.
+
+    sources: where a eidetic may be taken from - folders on this box (the
+    Workbench gallery where make_image saves) and URL prefixes. Nothing
+    listed means nothing can be kept, and the refusal says so."""
+    enabled: bool = True
+    dir: str = ""                           # blank = `eidetic` beside the store
+    max_bytes: int = 256 * 1024 * 1024      # one eidetic
+    max_total: int = 32 * 1024 * 1024 * 1024  # the folder
+    sources: list[Union[str, dict[str, Any]]] = []   # a folder, a URL prefix, or {url, bearer_token | bearer_token_env}
 
 
 class MemoryConfig(BaseModel):
@@ -159,12 +181,19 @@ class MemoryConfig(BaseModel):
     tls: TlsConfig = Field(default_factory=TlsConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
+    eidetic: EideticConfig = Field(default_factory=EideticConfig)
 
     def resolved_backup_dir(self) -> Path:
         """Where snapshots go: backup.dir, or `backups` beside the store."""
         if self.backup.dir.strip():
             return Path(os.path.expanduser(self.backup.dir)).resolve()
         return self.resolved_persist_dir().parent / "backups"
+
+    def resolved_eidetic_dir(self) -> Path:
+        """Where eidetic pictures go: eidetic.dir, or `eidetic` beside the store."""
+        if self.eidetic.dir.strip():
+            return Path(os.path.expanduser(self.eidetic.dir)).resolve()
+        return self.resolved_persist_dir().parent / "eidetic"
 
     def resolved_persist_dir(self) -> Path:
         """Expand ~ and return an absolute Path, creating it if needed."""
