@@ -34,6 +34,9 @@ ENDPOINTS:
                                   (/drafts/* answers too, a deprecated alias)
     POST /long/{id}/purge       - execute a purge with the cascade; GET /tombstones
     POST /tidy                  - the mechanical steps of a sleep, for the hippocampus
+    POST /memory/{id}/eidetic, GET /memory/{id}/eidetic/{digest}
+                                - keep a picture with an entry; its bytes
+    GET  /eidetic               - every picture once, with what it is attached to
 """
 from __future__ import annotations
 
@@ -367,7 +370,8 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         # features: what a client may rely on that an older Memory lacks. The
         # hippocampus reads it before sending target_op - an older Memory would
         # drop the field and refuse the whole draft ("needs target_core_id").
-        return {"ok": True, "ts": time.time(), "features": ["target_op", "restate_guard", "redraft_of", "terminal_edits"]}
+        return {"ok": True, "ts": time.time(),
+                "features": ["target_op", "restate_guard", "redraft_of", "terminal_edits", "edited_sources"]}
 
     # -- The Halls viewer --
     # Serves the introspection UI same-origin. This isn't just a debug tool -
@@ -646,6 +650,19 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
         if k is None:
             raise HTTPException(404, f"no memory '{entry_id}' in short/near/long")
         return {"ok": True, "id": entry_id, "eidetic": k}
+
+    @app.get("/eidetic")
+    async def eidetic_gallery(request: Request, include_pruned: bool = False, limit: int = 200, offset: int = 0):
+        """Every picture kept, once each, newest first, with what it is attached
+        to: the viewer's Eidetic hall. The words come back like any listing
+        route's; the bytes stay behind GET /memory/{id}/eidetic/{digest}, which
+        each picture's `via` names. include_pruned brings the archive's in."""
+        store = request.app.state.store
+        pics = await asyncio.to_thread(store.eidetic_gallery, include_pruned)
+        limit, offset = max(1, min(int(limit), 1000)), max(0, int(offset))
+        return {"ok": True, "enabled": store.eidetic is not None, "count": len(pics),
+                "bytes": store.eidetic.total_bytes() if store.eidetic is not None else 0,
+                "pictures": pics[offset:offset + limit]}
 
     @app.get("/memory/{entry_id}/eidetic/{digest}")
     async def get_eidetic(request: Request, entry_id: str, digest: str):

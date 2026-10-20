@@ -263,3 +263,62 @@ def test_the_halls_show_eidetic_pictures_and_the_backup_panel(tmp_path, fake_emb
         assert "renderBackups" in page and "api('/stores')" in page, "the same backup panel every Seren viewer has"
         root = c.get("/").json()
         assert root["eidetic"] == {"count": 0, "bytes": 0}, "a count and a size for the overview"
+
+
+# ── the Eidetic hall: picture first (19 Oct 2026) ─────────────────────────────
+
+def test_the_gallery_is_one_row_per_picture_with_everything_it_is_attached_to(store, tmp_path):
+    """Chad: 'a gallery of images, then when clicked shows what its attached to'. A
+    picture rides on more than one memory by design, so the gallery is keyed by it."""
+    g = tmp_path / "gallery"
+    one = store.add_short(ShortTermEntry(content="saw the lantern"))
+    ka = store.keep_with(one.id, g / "lantern.png", caption="the lantern")
+    d = _submit(store, [{"kind": DraftOpKind.NEW_CORE, "content": "the night of the lantern",
+                         "source_short_ids": [one.id], "topic": "art"}])
+    store.review_draft(d.id, [{"op": 0, "verdict": "approve"}])
+    core_id = next(r["id"] for r in store.get_long_all())
+    two = store.add_short(ShortTermEntry(content="and the houseboat"))
+    kb = store.keep_with(two.id, g / "houseboat.jpg")
+    d = _submit(store, [{"kind": DraftOpKind.ATTACH, "content": "the houseboat, that same night",
+                         "source_short_ids": [two.id], "target_core_id": core_id}])
+    store.review_draft(d.id, [{"op": 0, "verdict": "approve"}])
+
+    pics = {p["digest"]: p for p in store.eidetic_gallery()}
+    assert set(pics) == {ka["digest"], kb["digest"]}, "one row per picture, not per entry"
+    lantern, boat = pics[ka["digest"]], pics[kb["digest"]]
+    assert [e["id"] for e in lantern["entries"]] == [core_id], "the archived short is not shown by default"
+    assert lantern["caption"] == "the lantern" and lantern["via"] == core_id and not lantern["missing"]
+    sat = next(e for e in boat["entries"] if e["metadata"].get("kind") == "satellite")
+    assert {e["id"] for e in boat["entries"]} == {core_id, sat["id"]}, "the satellite AND the core it grew"
+    assert sat["core"] == {"id": core_id, "content": "the night of the lantern"}, "a satellite brings its core"
+    assert "eidetic" not in sat["metadata"], "the picture is the subject; its row is not repeated"
+    archived = {p["digest"]: p for p in store.eidetic_gallery(include_pruned=True)}
+    assert {e["tier"] for e in archived[ka["digest"]]["entries"]} == {"long", "pruned"}
+    assert archived[ka["digest"]]["via"] == core_id, "the bytes are fetched through a live entry first"
+
+
+def test_the_gallery_route_names_what_to_fetch_and_says_when_bytes_are_gone(tmp_path, fake_embedder):
+    g = _gallery(tmp_path)
+    cfg = _cfg(tmp_path, sources=[g])
+    with TestClient(create_app(cfg, embedding_function=fake_embedder, _allow_store_reset=True)) as c:
+        assert c.get("/eidetic").json() == {"ok": True, "enabled": True, "count": 0, "bytes": 0, "pictures": []}
+        sid = c.post("/short", json={"content": "the lantern"}).json()["id"]
+        k = c.post(f"/memory/{sid}/eidetic", json={"source": str(g / "lantern.png")}).json()["eidetic"]
+        sid2 = c.post("/short", json={"content": "the houseboat"}).json()["id"]
+        c.post(f"/memory/{sid2}/eidetic", json={"source": str(g / "houseboat.jpg")})
+        data = c.get("/eidetic").json()
+        assert data["count"] == 2 and data["bytes"] == len(PNG) + len(JPG)
+        assert data["pictures"][0]["entries"][0]["content"] == "the houseboat", "the newest kept first"
+        lantern = next(p for p in data["pictures"] if p["digest"] == k["digest"])
+        assert c.get(f"/memory/{lantern['via']}/eidetic/{lantern['digest']}").content == PNG
+        assert len(c.get("/eidetic", params={"limit": 1}).json()["pictures"]) == 1
+        for f in Path(cfg.eidetic.dir).rglob(k["digest"] + "*"):
+            f.unlink()
+        assert next(p for p in c.get("/eidetic").json()["pictures"] if p["digest"] == k["digest"])["missing"]
+
+
+def test_the_viewer_has_an_eidetic_hall(tmp_path, fake_embedder):
+    with TestClient(create_app(_cfg(tmp_path), embedding_function=fake_embedder, _allow_store_reset=True)) as c:
+        page = c.get("/viewer").text
+        assert 'data-tab="eidetic"' in page and "loadEidetic" in page and "/eidetic?include_pruned=" in page
+        assert "openPicture" in page and "attached to" in page, "open a picture, see what it is attached to"

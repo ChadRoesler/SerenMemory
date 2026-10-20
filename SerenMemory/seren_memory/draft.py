@@ -41,6 +41,21 @@ WHO DOES WHAT
     takes the best of the bunch, edits as needed and approves (the map of
     the cycle): a denial there drops the operation.
 
+WHAT AN APPROVAL CONSUMES
+    An approved operation archives the short-terms it names in
+    source_short_ids, and only those. The hippocampus names a fragment only
+    when the operation's text carries every sentence of it (covered_fragments,
+    after a two-subject fragment lost its second subject on 3 Oct 2026); the
+    ones it cited but left out ride along as left_short_ids. A small model
+    writes short, so a long fragment is often left out of every attempt. It
+    stays in short-term beside its long-term copy, and each sleep drafts it
+    again. So an approval on ANY attempt may carry edited_source_short_ids: 
+    the reviewer saying "this carries those". Unlike the edits above it 
+    changes no text, and the loop cannot fix it - a redraft comes back no 
+    longer. Nothing tidies short-term against long-term instead: a short-term 
+    ranks above long-term in recall, and one shaped like a core can hold the 
+    detail the core lost; it leaves by an approval that names it, or by aging out.
+
 A RESTATE CANNOT WIPE A CORE
     An attach may carry restated_content: new wording for the core.
     Approving it REPLACES the core's text. On 1 Oct 2026 the small model put
@@ -319,6 +334,10 @@ class DraftMixin:
         the reviewer compared the rewording with the core and wants it. With
         neither, a rewording that would wipe the core is refused (see
         restate_problem).
+
+        On any draft, an approval may carry edited_source_short_ids: the
+        short-terms it carries, replacing the drafted list (see WHAT AN
+        APPROVAL CONSUMES).
         """
         d = self.get_draft(draft_id)
         if d is None:
@@ -466,13 +485,31 @@ class DraftMixin:
                     f"with text that {why}. Approve with \"restate\": false to attach the episode and keep the "
                     f"core's wording, or with \"restate\": true if you have compared the two and want the "
                     f"rewording, or deny it.")
-        return {"kind": kind, "target_core_id": target, "target_op": target_op, "restated_content": restated}
+        return {"kind": kind, "target_core_id": target, "target_op": target_op, "restated_content": restated,
+                "source_short_ids": self._edited_sources(idx, op, dec.get("edited_source_short_ids"))}
+
+    def _edited_sources(self, idx: int, op: DraftOperation, edited: Any) -> list[str]:
+        """The short-terms an approval consumes: the drafted list, or the
+        reviewer's. A name the op did not already carry must be in short-term
+        now - a typo would archive nothing and say nothing."""
+        if edited is None:
+            return list(op.source_short_ids)
+        if not isinstance(edited, list) or not all(isinstance(s, str) and s.strip() for s in edited):
+            raise DraftError(f"operation {idx}: edited_source_short_ids must be a list of short-term ids")
+        ids = list(dict.fromkeys(s.strip() for s in edited))
+        new = [s for s in ids if s not in op.source_short_ids]
+        present = {r["id"] for r in self._shorts_present(new)}
+        gone = [s for s in new if s not in present]
+        if gone:
+            raise DraftError(f"operation {idx}: not in short-term: {', '.join(gone)} "
+                             "(a typo, or it was promoted or aged out)")
+        return ids
 
     @staticmethod
     def _take_final_shape(op: DraftOperation, final: dict[str, Any]) -> None:
         """Put the checked shape on the operation; what was drafted is kept
         in review_edits for the audit."""
-        for field in ("kind", "target_core_id", "target_op", "restated_content"):
+        for field in ("kind", "target_core_id", "target_op", "restated_content", "source_short_ids"):
             was, now = getattr(op, field), final[field]
             if was != now:
                 op.review_edits[field] = was.value if isinstance(was, DraftOpKind) else was
@@ -511,17 +548,47 @@ class DraftMixin:
             while ref is not None and at in chain and 0 <= ref < len(chain[at].operations):
                 prev = chain[at].operations[ref]
                 earlier.append({"attempt": at, "kind": prev.kind.value, "target_core_id": prev.target_core_id,
-                                "content": prev.content, "critique": prev.critique})
+                                "content": prev.content, "source_short_ids": list(prev.source_short_ids),
+                                "critique": prev.critique})
                 at, ref = at - 1, prev.redraft_of
             if earlier:
                 view["earlier_attempts"] = earlier
+            if op.status == OpStatus.PENDING:
+                self._sources_check(op, earlier, view)
         if d.terminal and d.status == DraftStatus.PENDING:
             out["last_attempt"] = (
                 "This is the last attempt: an operation denied now is dropped and its memory stays in "
                 "short-term. Land each one - approve it, or approve it with your fixes (edited_content, "
-                "edited_kind, edited_target_core_id, \"restate\": false), taking the best wording from "
-                "earlier_attempts. Deny only what should not be in memory at all.")
+                "edited_kind, edited_target_core_id, \"restate\": false, edited_source_short_ids), taking the "
+                "best wording from earlier_attempts. Deny only what should not be in memory at all.")
         return out
+
+    def _sources_check(self, op: DraftOperation, earlier: list[dict[str, Any]], view: dict[str, Any]) -> None:
+        """What a pending operation leaves in short-term: the fragments the
+        hippocampus cited but found its text does not carry, and the ones an
+        earlier attempt cited, that are still there. Shown in full, since
+        whether the text carries them is the reviewer's call."""
+        cited = [*op.left_short_ids, *(s for e in earlier for s in e["source_short_ids"])]
+        left = self._shorts_present([s for s in cited if s not in op.source_short_ids])
+        if not left and op.source_short_ids:
+            return
+        if left:
+            view["left_in_short_term"] = [{"id": r["id"], "content": r["content"]} for r in left]
+        lead = ("names no short-term: approving it archives nothing, so what it was drafted from stays in "
+                "short-term and a later sleep drafts it again" if not op.source_short_ids else
+                "leaves fragments it cited in short-term")
+        view["sources_check"] = (
+            f"{lead}. left_in_short_term has the ones still there. If your approval carries one - every "
+            "sentence of it, in content or edited_content - approve with edited_source_short_ids listing it "
+            "with the rest; if not, leave it for a later sleep." if left else f"{lead}.")
+
+    def _shorts_present(self, ids: list[str]) -> list[dict[str, Any]]:
+        """The short-terms among these ids, in the order given."""
+        ids = list(dict.fromkeys(ids))
+        if not ids:
+            return []
+        rows = {r["id"]: r for r in _zip_get(self.short.get(ids=ids, include=["documents", "metadatas"]), None)}
+        return [rows[s] for s in ids if s in rows]
 
     # -- apply ----------------------------------------------------------------
     def _long_row(self, entry_id: str) -> Optional[dict[str, Any]]:

@@ -19,6 +19,7 @@
     --long: #6ff3d6;   /* mint - durable, gated */
     --brief: #c7a6ff;  /* lavender - steering, not memory */
     --draft: #ffab91;  /* peach - synthesis in-flight, awaiting review */
+    --eidetic: #ff9fcf; /* rose - what you can still see */
 }
 
 /* Leaf flavor on top of the shell base. The shell owns the header, tabbar,
@@ -60,6 +61,7 @@ a {
 .tab[data-tab="long"] .dot { background: var(--long); }
 .tab[data-tab="briefs"] .dot { background: var(--brief); }
 .tab[data-tab="drafts"] .dot { background: var(--draft); }
+.tab[data-tab="eidetic"] .dot { background: var(--eidetic); }
 .tab[data-tab="search"] .dot { background: var(--accent); }
 .tab[data-tab="overview"] .dot { background: var(--muted); }
 
@@ -691,3 +693,183 @@ code.id {
 
     .backups .ok { color: var(--ok); }
     .backups .bad { color: var(--danger); }
+
+/* -- the Eidetic Hall: picture first. A grid of every picture kept; open one and
+   it shows what it is attached to (the memories that keep it, and for a
+   satellite the core it hangs under). Thumbnails come through the token, like
+   the strips on an entry. ------------------------------------------------- */
+.gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+}
+
+.tile {
+    position: relative;
+    aspect-ratio: 1;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    overflow: hidden;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font: inherit;
+    transition: border-color .15s, transform .15s;
+}
+
+    .tile:hover, .tile:focus-visible {
+        border-color: var(--eidetic);
+        outline: none;
+        transform: translateY(-1px);
+    }
+
+    .tile img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0;
+        transition: opacity .25s;
+    }
+
+        .tile img.ready { opacity: 1; }
+
+    .tile .what {
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 8px;
+        text-align: center;
+        line-height: 1.5;
+    }
+
+    .tile .glyph { font-size: 18px; color: var(--eidetic); }
+
+    .tile.missing { border-style: dashed; }
+
+    .tile .on {
+        position: absolute;
+        left: 6px;
+        bottom: 6px;
+        font-family: var(--mono);
+        font-size: 10px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        background: rgba(8,8,16,.74);
+        color: var(--eidetic);
+    }
+
+.pic-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8,8,16,.78);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: none;
+    justify-content: center;
+    align-items: flex-start;
+    overflow-y: auto;
+    z-index: 1000;
+    padding: 24px 16px;
+}
+
+    .pic-overlay.show { display: flex; }
+
+.pic-card {
+    position: relative;
+    background: var(--bg-2);
+    border: 1px solid var(--eidetic);
+    border-radius: 14px;
+    max-width: 920px;
+    width: 100%;
+    min-width: 0;
+    padding: 18px;
+    overflow-wrap: anywhere;      /* a long id or path must wrap, not widen the card past a phone */
+    box-shadow: 0 0 0 1px rgba(255,159,207,0.12), 0 18px 60px rgba(0,0,0,0.55);
+}
+
+    .pic-card .pic-close {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--muted);
+        border-radius: 999px;
+        width: 30px;
+        height: 30px;
+        cursor: pointer;
+        font: inherit;
+    }
+
+        .pic-card .pic-close:hover { color: var(--text); border-color: var(--eidetic); }
+
+    .pic-card .face {
+        display: flex;
+        justify-content: center;
+        margin: 4px 0 10px;
+    }
+
+        .pic-card .face img, .pic-card .face video {
+            display: block;
+            max-width: 100%;
+            max-height: 62vh;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+        }
+
+        .pic-card .face audio { width: 100%; }
+
+    .pic-card .caption {
+        text-align: center;
+        color: var(--text);
+        margin-bottom: 6px;
+    }
+
+    .pic-card .facts {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 4px 14px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--faint);
+    }
+
+    .pic-card .entries { margin-top: 4px; }
+
+    .pic-card .core-of { border-left-color: var(--long); }
+
+@media (max-width: 520px) {
+    .gallery { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+    .pic-card { padding: 14px; }
+}
+
+/* -- phone width: the tab strip scrolls, the head wraps -------------------
+   The shell's .tabbar is a plain flex row and its head never wraps, so at
+   390px the eight halls ran to ~700px and dragged the whole page (and every
+   fixed overlay with it) wider than the screen. Fixed here for Memory; the
+   shell-wide fix is on the punch list (meninges-phone-shell). ------------- */
+.tabbar {
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+    .tabbar .tab {
+        flex: none;
+        white-space: nowrap;
+    }
+
+@media (max-width: 600px) {
+    header.seren-head {
+        flex-wrap: wrap;
+        gap: 10px;
+        padding: 12px 16px;
+    }
+
+    .tabbar { padding: 0 8px; }
+
+        .tabbar .tab { padding: 10px 11px; }
+}

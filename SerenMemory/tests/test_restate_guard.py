@@ -235,8 +235,9 @@ def test_the_last_attempt_can_retarget_an_attach(client):
 
 def test_the_reviewers_view(client):
     core = _core(client)
+    s1 = _short(client, EPISODE)
     first = _submit(client, [{"kind": "attach", "content": "pluots, badly put", "topic": "t",
-                              "target_core_id": core, "source_short_ids": [_short(client, EPISODE)]}])
+                              "target_core_id": core, "source_short_ids": [s1]}])
     assert _review(client, first, [{"op": 0, "verdict": "deny", "critique": "say what they said"}]).status_code == 200
     cluster = client.get(f"/drafts/{first}").json()["cluster_id"]
     last = _submit(client, [{"kind": "attach", "content": EPISODE, "topic": "t", "target_core_id": core,
@@ -248,7 +249,8 @@ def test_the_reviewers_view(client):
     assert op["target_core"] == {"id": core, "content": CORE, "gone": False}
     assert op["restate_check"].startswith("REFUSED as it stands")
     assert op["earlier_attempts"] == [{"attempt": 1, "kind": "attach", "target_core_id": core,
-                                       "content": "pluots, badly put", "critique": "say what they said"}]
+                                       "content": "pluots, badly put", "source_short_ids": [s1],
+                                       "critique": "say what they said"}]
     assert "last attempt" in view["last_attempt"]
     # the plain read is unchanged - the hippocampus reads this one
     plain = client.get(f"/drafts/{last}").json()

@@ -77,7 +77,8 @@ async def draft_chain(request: Request, draft_id: str):
 async def review_draft(request: Request, draft_id: str, body: dict = Body(...)):
     """Approve or deny operations, one verdict each. Approved operations are
     applied now; denied ones carry a critique back to the hippocampus.
-    edited_content on an approval is accepted only on a terminal draft."""
+    edited_content on an approval is accepted only on a terminal draft;
+    edited_source_short_ids on any."""
     decisions = (body or {}).get("decisions")
     if not isinstance(decisions, list) or not decisions:
         raise HTTPException(400, "'decisions' must be a non-empty list of {op, verdict, critique?}")

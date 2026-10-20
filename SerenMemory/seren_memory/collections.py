@@ -377,6 +377,64 @@ class MemoryStore(DraftMixin):
                 n += len(self.eidetic_in(r["metadata"]))
         return {"count": n, "bytes": self.eidetic.total_bytes() if self.eidetic is not None else 0}
 
+    # The fields of an entry the gallery shows beside a picture. Not its `eidetic`
+    # list: the picture is already the subject, and every other picture the entry
+    # keeps is in the gallery on its own.
+    _GALLERY_META = ("kind", "core_id", "topic", "created_at", "ts", "superseded_by", "evidence_count", "pinned")
+
+    def eidetic_gallery(self, include_pruned: bool = False) -> list[dict[str, Any]]:
+        """Picture first: every picture once, the newest kept first, each with
+        every entry that keeps it. A picture rides on more than one entry by
+        design - a core drafted from short-terms inherits their pictures, an
+        attach gives the core its satellite's, a supersession carries them
+        forward - so the gallery is keyed by the picture, and what it is
+        attached to is a list. A satellite brings the core it hangs under.
+
+        `via` is the entry the bytes are fetched through (they are only handed
+        out through an entry that keeps them, open_eidetic): a live one ahead of
+        the archive. `missing` says the bytes are gone from the folder."""
+        tiers = [("short", self.short), ("near", self.near), ("long", self.long)]
+        if include_pruned:
+            tiers.append(("pruned", self.pruned))
+        pics: dict[str, dict[str, Any]] = {}
+        core_ids: set[str] = set()
+        for tier, col in tiers:
+            for r in _zip_get(col.get(include=["documents", "metadatas"]), None):
+                meta = r["metadata"] or {}
+                rows = self.eidetic_in(meta)
+                if not rows:
+                    continue
+                entry = {"id": r["id"], "tier": tier, "content": r["content"],
+                         "metadata": {k: meta[k] for k in self._GALLERY_META if meta.get(k) not in (None, "")}}
+                if meta.get("kind") == "satellite" and meta.get("core_id"):
+                    core_ids.add(str(meta["core_id"]))
+                for k in rows:
+                    p = pics.setdefault(k["digest"], {"digest": k["digest"], "mime": k.get("mime"),
+                                                      "bytes": k.get("bytes"), "file": k.get("file"),
+                                                      "caption": None, "source": None, "kept_at": None,
+                                                      "via": None, "entries": []})
+                    p["caption"] = p["caption"] or k.get("caption")
+                    p["source"] = p["source"] or k.get("source")
+                    if k.get("kept_at") and (p["kept_at"] is None or k["kept_at"] < p["kept_at"]):
+                        p["kept_at"] = k["kept_at"]
+                    if p["via"] is None and tier != "pruned":
+                        p["via"] = r["id"]
+                    p["entries"].append(entry)
+        cores = ({r["id"]: r["content"] for r in _zip_get(self.long.get(ids=sorted(core_ids), include=["documents", "metadatas"]), None)}
+                 if core_ids else {})
+        out = []
+        for p in pics.values():
+            for e in p["entries"]:
+                cid = e["metadata"].get("core_id")
+                if e["metadata"].get("kind") == "satellite" and cid in cores:
+                    e["core"] = {"id": cid, "content": cores[cid]}
+            if p["via"] is None:
+                p["via"] = p["entries"][0]["id"]              # only the archive keeps it
+            p["missing"] = self.eidetic is None or not self.eidetic.has(p["digest"])
+            out.append(p)
+        out.sort(key=lambda p: (p["kept_at"] or 0, p["digest"]), reverse=True)
+        return out
+
     def sources_eidetic(self, ids: list[str]) -> list[dict[str, Any]]:
         """The pictures a set of short-terms carry (in short, or already
         archived to pruned): what a core made from them inherits."""

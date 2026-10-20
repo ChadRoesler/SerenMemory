@@ -492,8 +492,10 @@ class MemoryToolImpl:
         change, in full. An attach with restated_content carries
         restate_check - approving it REPLACES that core's wording, so compare
         the two. On a redraft, earlier_attempts shows every previous version
-        of the operation and the critique that sent it back. last_attempt is
-        set when nothing comes back after this one."""
+        of the operation and the critique that sent it back. An operation
+        that would leave fragments in short-term carries sources_check and
+        left_in_short_term (see review_draft). last_attempt is set when
+        nothing comes back after this one."""
         view = self.store.review_view(draft_id)
         if view is None:
             return {"ok": False, "error": f"no draft '{draft_id}'"}
@@ -530,6 +532,15 @@ class MemoryToolImpl:
         are refused on any earlier attempt: there, deny and let the loop do
         its job. Deny on the last attempt only what should not be in memory
         at all.
+
+        WHAT IT CONSUMES, on any attempt. Approving archives the short-terms
+        the operation names in source_short_ids, and only those. Where
+        get_draft shows sources_check, the operation leaves fragments in
+        short-term (left_in_short_term, in full), and a later sleep drafts
+        them again. If the approved text carries one - every sentence of it -
+        name it, with the rest:
+          {"op": 2, "verdict": "approve", "edited_source_short_ids": ["<id>", "<id>"]}
+        If it does not, leave it: it waits for a later sleep, or ages out.
         """
         from ..draft import DraftError
         try:

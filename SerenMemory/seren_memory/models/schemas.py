@@ -205,6 +205,9 @@ class DraftOperation(BaseModel):
                                      "new_core operation in this same draft - the core it creates once approved.")
     restated_content: Optional[str] = Field(None, description="attach: new wording for the core, if the evidence changes it.")
     source_short_ids: list[str] = Field(default_factory=list, description="The short-terms this operation consumes (archived on approval).")
+    left_short_ids: list[str] = Field(default_factory=list, description="Short-terms the operation cited but whose every "
+                                      "sentence its text does not carry: they stay in short-term unless the reviewer "
+                                      "names them in edited_source_short_ids.")
     evidence_count: int = Field(default=1)
     rationale: Optional[str] = Field(None, description="The small model's why - shown to the reviewer.")
     redraft_of: Optional[int] = Field(None, description="On a redraft: the index of the denied operation in the previous "
@@ -215,7 +218,7 @@ class DraftOperation(BaseModel):
     note: Optional[str] = Field(None)
     edited_content: Optional[str] = Field(None, description="On a terminal draft only: the reviewer's revision, applied instead of content.")
     review_edits: dict[str, Any] = Field(default_factory=dict, description="What the reviewer changed on approval "
-                                         "(kind, target, restate): the drafted values, kept for the audit.")
+                                         "(kind, target, restate, sources): the drafted values, kept for the audit.")
     long_term_id: Optional[str] = Field(None, description="What this operation became or touched.")
     reviewed_at: Optional[float] = Field(None)
 

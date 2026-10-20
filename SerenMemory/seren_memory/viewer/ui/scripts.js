@@ -114,11 +114,16 @@ function eideticStrip(id, meta) {
     }).join('') + `</div>`;
 }
 function hydrateFigures(root) {
-    root.querySelectorAll('img[data-fig]').forEach(async img => {
-        const path = img.dataset.fig;
-        img.removeAttribute('data-fig');
-        try { img.src = await apiBlob(path); img.classList.add('ready'); }
-        catch (e) { img.replaceWith(Object.assign(document.createElement('span'), { className: 'fig chip', textContent: 'picture missing' })); }
+    // img, video and audio take the object URL as src; a link (a PDF) as href.
+    root.querySelectorAll('[data-fig]').forEach(async el => {
+        const path = el.dataset.fig;
+        el.removeAttribute('data-fig');
+        try {
+            const url = await apiBlob(path);
+            if (el.tagName === 'A') el.href = url; else el.src = url;
+            el.classList.add('ready');
+        }
+        catch (e) { el.replaceWith(Object.assign(document.createElement('span'), { className: 'fig chip', textContent: 'picture missing' })); }
     });
 }
 
@@ -156,6 +161,7 @@ async function loadBackups() {
 function entryCard(tier, content, meta, opts = {}) {
     const badges = [];
     badges.push(`<span class="badge tier-${tier}">${tier}</span>`);
+    if (meta.kind === 'satellite') badges.push(`<span class="badge satellite">satellite</span>`);
     if (opts.score != null) badges.push(`<span class="badge score">score ${opts.score.toFixed(3)}</span>`);
     if (meta.pinned === true || meta.pinned === 'true') badges.push(`<span class="badge pinned">pinned</span>`);
     if (meta.completed === true || meta.completed === 'true') badges.push(`<span class="badge completed">completed</span>`);
@@ -344,6 +350,110 @@ async function loadLongInner(includeSuperseded) {
         { id: e.id, under: surroundingsBlock(e.id, e.metadata || {}, byCore[e.id] || [], 0) })).join(''));
 }
 
+// ----------------------------------------------------------------------
+// The Eidetic Hall: picture first. Every picture once, the newest kept first;
+// open one and it shows what it is attached to. A picture rides on more than
+// one memory by design (a core inherits its short-terms' pictures, an attach
+// gives the core its satellite's, a supersession carries them forward), so the
+// gallery is keyed by the picture and "what is this" is a list. Chad, 19 Oct
+// 2026: "a gallery of images, then when clicked shows what its attached to ...
+// eidetic is picture first".
+// ----------------------------------------------------------------------
+let _gallery = [];
+function picPath(p) {
+    return `/memory/${encodeURIComponent(p.via)}/eidetic/${encodeURIComponent(p.digest)}`;
+}
+function picKind(p) { return (p.mime || 'file').split('/')[0]; }
+// what a tile says when it is not a still: eidetic keeps sounds and clips too
+// (my voice lines from 17 Oct are six of the first thirteen)
+function picGlyph(p) {
+    const k = picKind(p);
+    return k === 'audio' ? '♪ sound' : k === 'video' ? '▶ clip' : p.mime === 'application/pdf' ? 'PDF' : k;
+}
+
+async function loadEidetic() {
+    setExtraToggle('include the archive', async (checked) => loadEideticInner(checked));
+    await loadEideticInner($('extra-toggle').checked);
+}
+async function loadEideticInner(includePruned) {
+    setHint('Pictures kept with memories · newest first · open one to see what it is attached to');
+    const data = await api(`/eidetic?include_pruned=${includePruned ? 'true' : 'false'}&limit=1000`);
+    _gallery = data.pictures || [];
+    if (!_gallery.length) {
+        renderEntries(`<div class="empty">${data.enabled === false ? 'this store keeps no pictures (eidetic.enabled is off)' : 'no pictures kept yet'}</div>`);
+        return;
+    }
+    setHint(`${data.count} picture${data.count === 1 ? '' : 's'} · ${human(data.bytes)} · newest first · open one to see what it is attached to`);
+    renderEntries(`<div class="gallery">${_gallery.map(galleryTile).join('')}</div>`);
+}
+function galleryTile(p, i) {
+    const n = (p.entries || []).length;
+    const title = escapeHtml(p.caption || p.file || p.digest.slice(0, 12));
+    const on = `<span class="on">on ${n} memor${n === 1 ? 'y' : 'ies'}</span>`;
+    const face = p.missing ? `<span class="what">picture missing</span>`
+               : STILL.has(p.mime) ? `<img alt="${title}" data-fig="${picPath(p)}">`
+               : `<span class="what"><span class="glyph">${escapeHtml(picGlyph(p))}</span><br>${human(p.bytes)}</span>`;
+    return `<button class="tile${p.missing ? ' missing' : ''}" data-pic="${i}" title="${title}">${face}${on}</button>`;
+}
+$('entries').addEventListener('click', (ev) => {
+    const t = ev.target.closest('.tile[data-pic]');
+    if (t) openPicture(parseInt(t.dataset.pic, 10));
+});
+
+function attachedRow(e, shown) {
+    // A satellite brings the core it hangs under - in full, unless that core keeps
+    // the picture too and is already in this list (an attach gives the core its
+    // satellite's pictures, so it usually is).
+    const m = e.metadata || {};
+    let under = '';
+    if (e.core && shown.has(e.core.id)) {
+        under = `<div class="sat core-of"><div class="meta"><span class="badge tier-long">hangs under the core above</span>
+                 <code class="id">${escapeHtml(e.core.id)}</code></div></div>`;
+    } else if (e.core) {
+        under = `<div class="sat core-of"><div class="content">${escapeHtml(e.core.content)}</div><div class="meta">
+                 <span class="badge tier-long">the core it hangs under</span> <code class="id">${escapeHtml(e.core.id)}</code></div></div>`;
+    }
+    return entryCard(e.tier, e.content, m, { id: e.id, under });
+}
+function openPicture(i) {
+    const p = _gallery[i];
+    if (!p) return;
+    let o = $('pic-overlay');
+    if (!o) {
+        o = document.createElement('div');
+        o.id = 'pic-overlay';
+        o.className = 'pic-overlay';
+        document.body.appendChild(o);
+        o.addEventListener('click', (ev) => { if (ev.target === o || ev.target.closest('.pic-close')) closePicture(); });
+        document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePicture(); });
+    }
+    const title = escapeHtml(p.caption || p.file || '');
+    const kind = picKind(p);
+    const face = p.missing ? `<div class="empty">the bytes are gone from the folder; the memories still name it</div>`
+               : STILL.has(p.mime) ? `<img alt="${title}" data-fig="${picPath(p)}">`
+               : kind === 'video' ? `<video controls data-fig="${picPath(p)}"></video>`
+               : kind === 'audio' ? `<audio controls data-fig="${picPath(p)}"></audio>`
+               : `<a class="btn" target="_blank" rel="noopener" data-fig="${picPath(p)}">open the ${escapeHtml(kind)}</a>`;
+    // where it came from: the file's name, the whole path on hover
+    const from = p.source ? `<span title="${escapeHtml(p.source)}">from ${escapeHtml(p.source.split(/[\\/]/).pop())}</span>` : '';
+    const facts = [p.mime, human(p.bytes), p.kept_at ? `kept ${fmtTs(p.kept_at)}` : '', `${p.digest.slice(0, 12)}…`]
+                  .filter(Boolean).map(f => `<span>${escapeHtml(f)}</span>`).join('') + from;
+    const n = (p.entries || []).length;
+    const shown = new Set((p.entries || []).map(e => e.id));
+    o.innerHTML = `
+        <div class="pic-card" role="dialog" aria-label="${title || 'picture'}">
+            <button class="pic-close" aria-label="close">✕</button>
+            <div class="face">${face}</div>
+            ${p.caption ? `<div class="caption">${escapeHtml(p.caption)}</div>` : ''}
+            <div class="facts">${facts}</div>
+            <h3 class="group-h">attached to ${n} memor${n === 1 ? 'y' : 'ies'}</h3>
+            <div class="entries">${(p.entries || []).map(e => attachedRow(e, shown)).join('')}</div>
+        </div>`;
+    o.classList.add('show');
+    hydrateFigures(o);
+}
+function closePicture() { const o = $('pic-overlay'); if (o) o.classList.remove('show'); }
+
 async function loadBriefs() {
     setHint('Daily briefs · what mattered · each one opens a sleep · newest first');
     setExtraToggle(null);
@@ -422,6 +532,7 @@ async function switchTab(tier) {
         if (tier === 'short') await loadShort();
         else if (tier === 'near') await loadNear();
         else if (tier === 'long') await loadLong();
+        else if (tier === 'eidetic') await loadEidetic();
         else if (tier === 'briefs') await loadBriefs();
         else if (tier === 'drafts') await loadDrafts();
         else if (tier === 'search') renderEntries(`<div class="empty">enter a query and hit search</div>`);

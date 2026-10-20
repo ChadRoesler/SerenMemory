@@ -250,19 +250,33 @@ critique, and the hippocampus redrafts from it, up to its `max_attempts`.
   operation, or aimed at the wrong core) and `edited_restated_content`. What
   was drafted is kept on the operation as `review_edits`. Deny there only
   what should not be in memory at all.
+- **An approval consumes what it names, and only that.** Approving archives
+  the short-terms in `source_short_ids`. The hippocampus names a fragment only
+  when the operation's text carries every sentence of it; the ones it cited
+  but left out ride along as `left_short_ids`. The reviewer's view says when
+  an operation would leave fragments behind (`sources_check`) and shows the
+  ones still in short-term in full (`left_in_short_term`, including what an
+  earlier attempt cited). On any attempt, an approval may carry
+  `edited_source_short_ids`, the reviewer saying "this carries those"; it
+  replaces the drafted list, and a name not in short-term is refused. Nothing
+  tidies short-term against long-term: a short-term ranks above long-term in
+  recall and can hold detail the core lost, so it leaves by an approval that
+  names it or by aging out. Before this (19 Oct 2026), long fragments were
+  left out of every attempt and each sleep drafted them again.
 
 ```json
 {"decisions": [
   {"op": 0, "verdict": "approve"},
   {"op": 1, "verdict": "approve", "restate": false},
   {"op": 2, "verdict": "approve", "edited_kind": "attach", "edited_target_core_id": "<core id>"},
-  {"op": 3, "verdict": "deny", "critique": "a duplicate of core <id>"}
+  {"op": 3, "verdict": "deny", "critique": "a duplicate of core <id>"},
+  {"op": 4, "verdict": "approve", "edited_source_short_ids": ["<short id>", "<short id>"]}
 ]}
 ```
 
 `GET /health` lists `features` (`target_op`, `restate_guard`, `redraft_of`,
-`terminal_edits`), so a hippocampus can tell what the Memory it talks to
-understands.
+`terminal_edits`, `edited_sources`), so a hippocampus can tell what the Memory
+it talks to understands.
 
 Long-term is a core and its surroundings: recall returns cores; satellites
 (`kind: satellite`, `core_id`) and superseded cores come back only when asked
