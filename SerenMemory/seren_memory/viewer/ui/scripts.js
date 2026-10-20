@@ -427,7 +427,8 @@ function openPicture(i) {
         o.addEventListener('click', (ev) => { if (ev.target === o || ev.target.closest('.pic-close')) closePicture(); });
         document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePicture(); });
     }
-    const title = escapeHtml(p.caption || p.file || '');
+    // the title: the caption, else the file's name, else the digest's start
+    const title = escapeHtml(p.caption || p.file || p.digest.slice(0, 12));
     const kind = picKind(p);
     const face = p.missing ? `<div class="empty">the bytes are gone from the folder; the memories still name it</div>`
                : STILL.has(p.mime) ? `<img alt="${title}" data-fig="${picPath(p)}">`
@@ -440,11 +441,16 @@ function openPicture(i) {
                   .filter(Boolean).map(f => `<span>${escapeHtml(f)}</span>`).join('') + from;
     const n = (p.entries || []).length;
     const shown = new Set((p.entries || []).map(e => e.id));
+    // A header row, then the face with room under it: the close button used
+    // to float over the top-right corner, and a sound clip's controls ran
+    // under it (Chad, 20 Oct 2026).
     o.innerHTML = `
         <div class="pic-card" role="dialog" aria-label="${title || 'picture'}">
-            <button class="pic-close" aria-label="close">✕</button>
+            <div class="pic-head">
+                <span class="pic-title">${title}</span>
+                <button class="pic-close" aria-label="close">✕</button>
+            </div>
             <div class="face">${face}</div>
-            ${p.caption ? `<div class="caption">${escapeHtml(p.caption)}</div>` : ''}
             <div class="facts">${facts}</div>
             <h3 class="group-h">attached to ${n} memor${n === 1 ? 'y' : 'ies'}</h3>
             <div class="entries">${(p.entries || []).map(e => attachedRow(e, shown)).join('')}</div>

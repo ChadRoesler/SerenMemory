@@ -42,8 +42,9 @@ a {
 
 /* content lives in this padded wrapper (it's not a shell .view, so it doesn't
    get the .view padding; #views still caps the width at 1100). */
+/* page padding is the shell's .view (22px), the same on every viewer (20 Oct 2026) */
 .halls {
-    padding: 20px 24px 60px;
+    padding: 22px;
 }
 
 /* -- tab dots (per Hall) ------------------------------------------------- */
@@ -790,18 +791,47 @@ code.id {
     box-shadow: 0 0 0 1px rgba(255,159,207,0.12), 0 18px 60px rgba(0,0,0,0.55);
 }
 
+    /* The header row: the title on the left, the close on the right - the
+       family's shape (Lodestar's modal-close, the Workbench dialog-x), not a
+       round button floated over the face. Chad, 20 Oct 2026: "the close
+       button should be in parity with other services modals ... currently
+       with a sound clip the clip partially covers the X to close." */
+    .pic-card .pic-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .pic-card .pic-title {
+        color: var(--text);
+        font-weight: 600;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
     .pic-card .pic-close {
-        position: absolute;
-        top: 10px;
-        right: 10px;
+        flex: 0 0 auto;
+        /* a flex box with no padding: the ✕ sat a hair low and right of the
+           square's centre as inline text (Chad, 20 Oct 2026: "center close X
+           on Eidetic and Figure modals"). Same rule in Memory and Loci. */
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
         border: 1px solid var(--line);
-        background: var(--panel);
+        background: transparent;
         color: var(--muted);
-        border-radius: 999px;
-        width: 30px;
-        height: 30px;
+        border-radius: 8px;
+        width: 36px;
+        height: 36px;
+        font-size: 18px;
+        line-height: 1;
         cursor: pointer;
-        font: inherit;
+        font-family: inherit;
     }
 
         .pic-card .pic-close:hover { color: var(--text); border-color: var(--eidetic); }
@@ -809,7 +839,7 @@ code.id {
     .pic-card .face {
         display: flex;
         justify-content: center;
-        margin: 4px 0 10px;
+        margin: 0 0 12px;
     }
 
         .pic-card .face img, .pic-card .face video {
@@ -821,12 +851,6 @@ code.id {
         }
 
         .pic-card .face audio { width: 100%; }
-
-    .pic-card .caption {
-        text-align: center;
-        color: var(--text);
-        margin-bottom: 6px;
-    }
 
     .pic-card .facts {
         display: flex;
