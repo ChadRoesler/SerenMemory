@@ -151,8 +151,11 @@ def test_drafted_into_a_core_the_pictures_follow_through_every_operation(store, 
     store.review_draft(d.id, [{"op": 0, "verdict": "approve"}])
     core = store.get_by_id(core_id)
     assert kc["digest"] in {k["digest"] for k in store.eidetic_in(core["metadata"])}
-    (sat,) = store.satellites_of(core_id)
-    assert [k["digest"] for k in store.eidetic_in(sat["metadata"])] == [kc["digest"]]
+    sats = {s["content"]: s for s in store.satellites_of(core_id)}
+    assert [k["digest"] for k in store.eidetic_in(sats["and a third"]["metadata"])] == [kc["digest"]]
+    # the episodes the core was made from are under it too, each with its own picture
+    assert [k["digest"] for k in store.eidetic_in(sats["saw the lantern"]["metadata"])] == [ka["digest"]]
+    assert [k["digest"] for k in store.eidetic_in(sats["saw the houseboat"]["metadata"])] == [kb["digest"]]
     # SUPERSEDE: the new core takes them forward, the old keeps its own
     four = store.add_short(ShortTermEntry(content="rethought"))
     d = _submit(store, [{"kind": DraftOpKind.SUPERSEDE, "content": "that night, rethought", "source_short_ids": [four.id],
@@ -268,7 +271,7 @@ def test_the_halls_show_eidetic_pictures_and_the_backup_panel(tmp_path, fake_emb
 # ── the Eidetic hall: picture first (19 Oct 2026) ─────────────────────────────
 
 def test_the_gallery_is_one_row_per_picture_with_everything_it_is_attached_to(store, tmp_path):
-    """Chad: 'a gallery of images, then when clicked shows what its attached to'. A
+    """The ask: 'a gallery of images, then when clicked shows what its attached to'. A
     picture rides on more than one memory by design, so the gallery is keyed by it."""
     g = tmp_path / "gallery"
     one = store.add_short(ShortTermEntry(content="saw the lantern"))
@@ -286,7 +289,9 @@ def test_the_gallery_is_one_row_per_picture_with_everything_it_is_attached_to(st
     pics = {p["digest"]: p for p in store.eidetic_gallery()}
     assert set(pics) == {ka["digest"], kb["digest"]}, "one row per picture, not per entry"
     lantern, boat = pics[ka["digest"]], pics[kb["digest"]]
-    assert [e["id"] for e in lantern["entries"]] == [core_id], "the archived short is not shown by default"
+    kept = next(e for e in lantern["entries"] if e["metadata"].get("kind") == "satellite")
+    assert {e["id"] for e in lantern["entries"]} == {core_id, kept["id"]}, \
+        "the core and the episode kept under it; the archived short is not shown by default"
     assert lantern["caption"] == "the lantern" and lantern["via"] == core_id and not lantern["missing"]
     sat = next(e for e in boat["entries"] if e["metadata"].get("kind") == "satellite")
     assert {e["id"] for e in boat["entries"]} == {core_id, sat["id"]}, "the satellite AND the core it grew"

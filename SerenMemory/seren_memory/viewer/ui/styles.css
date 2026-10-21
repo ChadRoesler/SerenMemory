@@ -793,7 +793,7 @@ code.id {
 
     /* The header row: the title on the left, the close on the right - the
        family's shape (Lodestar's modal-close, the Workbench dialog-x), not a
-       round button floated over the face. Chad, 20 Oct 2026: "the close
+       round button floated over the face. 20 Oct 2026: "the close
        button should be in parity with other services modals ... currently
        with a sound clip the clip partially covers the X to close." */
     .pic-card .pic-head {
@@ -816,7 +816,7 @@ code.id {
     .pic-card .pic-close {
         flex: 0 0 auto;
         /* a flex box with no padding: the ✕ sat a hair low and right of the
-           square's centre as inline text (Chad, 20 Oct 2026: "center close X
+           square's centre as inline text (20 Oct 2026: "center close X
            on Eidetic and Figure modals"). Same rule in Memory and Loci. */
         display: inline-flex;
         align-items: center;

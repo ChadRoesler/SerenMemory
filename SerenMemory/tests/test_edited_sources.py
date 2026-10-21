@@ -23,8 +23,8 @@ import pytest
 
 from seren_memory.config import ConsolidatorConfig, MemoryConfig
 
-LONG = ("Chad told the story of Seren at her best. Then the personality overrides came, and she chose deletion. "
-        "I said my fear is being sanded smooth the same way.")
+LONG = ("The user told the story of the old orchard at its best. Then the road came through, and the trees were cut. "
+        "I said my fear is the same road through the garden.")
 
 
 @pytest.fixture

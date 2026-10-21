@@ -355,7 +355,7 @@ async function loadLongInner(includeSuperseded) {
 // open one and it shows what it is attached to. A picture rides on more than
 // one memory by design (a core inherits its short-terms' pictures, an attach
 // gives the core its satellite's, a supersession carries them forward), so the
-// gallery is keyed by the picture and "what is this" is a list. Chad, 19 Oct
+// gallery is keyed by the picture and "what is this" is a list. 19 Oct
 // 2026: "a gallery of images, then when clicked shows what its attached to ...
 // eidetic is picture first".
 // ----------------------------------------------------------------------
@@ -443,7 +443,7 @@ function openPicture(i) {
     const shown = new Set((p.entries || []).map(e => e.id));
     // A header row, then the face with room under it: the close button used
     // to float over the top-right corner, and a sound clip's controls ran
-    // under it (Chad, 20 Oct 2026).
+    // under it (20 Oct 2026).
     o.innerHTML = `
         <div class="pic-card" role="dialog" aria-label="${title || 'picture'}">
             <div class="pic-head">

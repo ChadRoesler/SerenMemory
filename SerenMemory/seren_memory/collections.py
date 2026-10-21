@@ -1032,6 +1032,7 @@ class MemoryStore(DraftMixin):
                 sources += [str(x) for x in src]
             if e.get("original_short_id"):
                 sources.append(str(e["original_short_id"]))
+        sources = list(dict.fromkeys(sources))      # a core and its kept episodes cite the same shorts
         pruned_removed = shorts_removed = 0
         if sources:
             for col, counter in ((self.pruned, "pruned"), (self.short, "short")):

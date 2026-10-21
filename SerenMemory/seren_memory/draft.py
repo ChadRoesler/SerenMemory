@@ -11,7 +11,9 @@ THE SHAPE
     is a DRAFT: a list of operations on long-term, each reviewed on its
     own by the main model, each carrying its own verdict and critique.
 
-        new_core    a durable statement with the lesson in it
+        new_core    a durable statement with the lesson in it - the
+                    retelling; the episodes it was made from are kept
+                    under it as its first satellites (kept_episode)
         attach      tonight's short-terms are evidence for a core that
                     already exists; the core's evidence grows, its wording
                     may be restated
@@ -19,10 +21,17 @@ THE SHAPE
                     yellow's story, still recallable through history
         verbatim    "this deserves its own thing and must not be muddled" -
                     one episode, kept word for word as its own core
+        retell      the core's wording becomes the retelling (21 Oct 2026);
+                    the old wording hangs under it as its episode, no new
+                    evidence, no word-share guard - the reviewer is the guard
 
     Long-term is a core and its surroundings. Recall returns cores.
     Satellites (kind=satellite, core_id=<core>) are the supporting episodes
     with their dates; a superseded core keeps superseded_by pointing forward.
+    A core's own sources land under it as satellites. Before that they went 
+    to pruned, which recall never sees, so the only place an episode's detail 
+    survived promotion was the core's text - and cores came out as long as the 
+    episodes they were made from.
 
 WHO DOES WHAT
 
@@ -101,6 +110,7 @@ class DraftError(ValueError):
 
 _WORD = re.compile(r"[a-z0-9']+")
 RESTATE_KEEP = 0.5          # the share of the core's words a restatement must still carry
+_TARGETED = (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE, DraftOpKind.RETELL)   # the kinds that name a core
 
 
 def _words(text: str) -> set[str]:
@@ -206,9 +216,10 @@ class DraftMixin:
         for i, op in enumerate(d.operations):
             if op.target_op is not None:
                 self._check_target_op(d, i, op)
-            elif op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE) and not op.target_core_id:
-                raise DraftError(f"operation {i} ({op.kind.value}) needs target_core_id (or target_op)")
-            if op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE) and op.target_op is None:
+            elif op.kind in _TARGETED and not op.target_core_id:
+                raise DraftError(f"operation {i} ({op.kind.value}) needs target_core_id"
+                                 + (" (or target_op)" if op.kind != DraftOpKind.RETELL else ""))
+            if op.kind in _TARGETED and op.target_op is None:
                 target = self._long_row(op.target_core_id)
                 if target is None:
                     raise DraftError(f"operation {i}: no long-term entry '{op.target_core_id}'")
@@ -453,7 +464,7 @@ class DraftMixin:
         elif et is not None:
             target, target_op = str(et).strip(), None
         core_text: Optional[str] = None
-        if kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE):
+        if kind in _TARGETED:
             if target_op is not None:
                 t = d.operations[target_op]
                 core_text = t.edited_content if t.edited_content is not None else t.content
@@ -469,6 +480,9 @@ class DraftMixin:
         content = dec.get("edited_content") if dec.get("edited_content") is not None else op.content
         if kind != DraftOpKind.ATTACH and not str(content or "").strip():
             raise DraftError(f"operation {idx}: a {kind.value} needs content; give edited_content")
+        if kind == DraftOpKind.RETELL and str(content or "").strip() == (core_text or "").strip():
+            raise DraftError(f"operation {idx}: a retell that keeps the core's wording changes nothing; "
+                             "give edited_content, or deny it")
         restated = (str(er) if er is not None else op.restated_content) if kind == DraftOpKind.ATTACH else None
         restated = (restated or "").strip() or None
         choice = dec.get("restate")
@@ -529,7 +543,7 @@ class DraftMixin:
         out = d.model_dump()
         for op, view in zip(d.operations, out["operations"]):
             core_text = None
-            if op.kind in (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE):
+            if op.kind in _TARGETED:
                 if op.target_op is not None and 0 <= op.target_op < len(d.operations):
                     core_text = d.operations[op.target_op].content
                     view["target_core"] = {"op": op.target_op, "content": core_text}
@@ -544,6 +558,23 @@ class DraftMixin:
                     f"REFUSED as it stands: the rewording {why}. Approve with \"restate\": false to keep the "
                     f"core's wording." if why else
                     "approving REPLACES target_core's wording with restated_content: compare them first")
+            if op.kind == DraftOpKind.RETELL and op.status == OpStatus.PENDING and core_text is not None:
+                old_w, new_w = _words(core_text), _words(op.content or "")
+                kept = round(100 * len(old_w & new_w) / len(old_w)) if old_w else 100
+                view["retell_check"] = (
+                    f"approving REPLACES the core's wording ({len(core_text) // 4} tokens) with content "
+                    f"({len(op.content or '') // 4} tokens, keeping {kept}% of its words); the old wording hangs "
+                    "under the core as its episode, and undo_restate brings it back. Read both: a retelling keeps "
+                    "the names, dates, numbers and quotes that matter and adds nothing. Approve with edited_content "
+                    "to retell it yourself, or deny it.")
+            if op.kind in (DraftOpKind.NEW_CORE, DraftOpKind.SUPERSEDE) and op.status == OpStatus.PENDING:
+                same = [r["id"] for r in self._shorts_present(list(op.source_short_ids))
+                        if (r.get("content") or "").strip() == (op.content or "").strip()]
+                if same:
+                    view["core_check"] = (
+                        f"content is the episode's own words ({', '.join(same)}). A core is the retelling; the "
+                        "episode itself is kept under it as a satellite when this lands. Deny with 'retell it' "
+                        "unless these words are the point, or on the last attempt approve with edited_content.")
             earlier, at, ref = [], d.attempt - 1, op.redraft_of
             while ref is not None and at in chain and 0 <= ref < len(chain[at].operations):
                 prev = chain[at].operations[ref]
@@ -553,8 +584,8 @@ class DraftMixin:
                 at, ref = at - 1, prev.redraft_of
             if earlier:
                 view["earlier_attempts"] = earlier
-            if op.status == OpStatus.PENDING:
-                self._sources_check(op, earlier, view)
+            if op.status == OpStatus.PENDING and not (op.kind == DraftOpKind.RETELL and not op.source_short_ids):
+                self._sources_check(op, earlier, view)       # a retell of a core cites nothing, by design
         if d.terminal and d.status == DraftStatus.PENDING:
             out["last_attempt"] = (
                 "This is the last attempt: an operation denied now is dropped and its memory stays in "
@@ -623,8 +654,9 @@ class DraftMixin:
                                   evidence_count=max(1, op.evidence_count),
                                   source=Source.CONSOLIDATOR, extra=base_extra)
             self.add_long(entry)
+            kept = self._keep_episodes(d, op, entry)
             archived = self._archive_sources(op.source_short_ids)
-            return {"long_term_id": entry.id, "kind": "core", "shorts_archived": archived}
+            return {"long_term_id": entry.id, "kind": "core", "satellite_ids": kept, "shorts_archived": archived}
 
         if op.kind == DraftOpKind.VERBATIM:
             entry = LongTermEntry(content=content, topic=op.topic, kind="core",
@@ -675,11 +707,68 @@ class DraftMixin:
                                          **({"eidetic": carried} if carried else {})})
             self.add_long(entry)
             self.supersede_long(op.target_core_id, entry.id)
+            kept = self._keep_episodes(d, op, entry)
             archived = self._archive_sources(op.source_short_ids)
             return {"long_term_id": entry.id, "kind": "core", "superseded": op.target_core_id,
+                    "satellite_ids": kept, "shorts_archived": archived}
+
+        if op.kind == DraftOpKind.RETELL:
+            core = self._long_row(op.target_core_id)
+            if core is None:
+                raise DraftError(f"core '{op.target_core_id}' is gone")
+            old_text = (core["content"] or "").strip()
+            meta = dict(core["metadata"])
+            sat_id = None
+            # the old wording becomes the core's episode - once; a core that was
+            # overwritten with its own satellite's text (seen 1 Oct 2026) is not doubled
+            already = any((s.get("content") or "").strip() == old_text for s in self.satellites_of(op.target_core_id))
+            if old_text and not already:
+                own = self.eidetic_in(meta)
+                sat = LongTermEntry(content=old_text, topic=meta.get("topic"), kind="satellite",
+                                    core_id=op.target_core_id, evidence_count=1, source=Source.CONSOLIDATOR,
+                                    created_at=float(meta.get("created_at") or time.time()),
+                                    extra={**base_extra, "kept_episode": True, "was_core": True,
+                                           **({"eidetic": own} if own else {})})
+                self.add_long(sat)
+                sat_id = sat.id
+            if inherited:
+                meta["eidetic"] = self.merge_eidetic(self.eidetic_in(meta), inherited)
+            # the wording changes; the evidence does not - a retelling is not new evidence
+            self._restate_long(op.target_core_id, (content or "").strip(), meta)
+            archived = self._archive_sources(op.source_short_ids)
+            return {"long_term_id": op.target_core_id, "kind": "retell", "satellite_id": sat_id,
                     "shorts_archived": archived}
 
         raise DraftError(f"unknown operation kind {op.kind!r}")
+
+    def _keep_episodes(self, d: Draft, op: DraftOperation, core: LongTermEntry) -> list[str]:
+        """The episodes a new core was made from become its first satellites,
+        each with its own date, topic and pictures, so the core can be the
+        retelling and the detail still has somewhere to live. A source whose
+        text IS the core's (verbatim; mechanical mode keeping the longest
+        fragment whole) is not doubled under it."""
+        ids = list(dict.fromkeys(op.source_short_ids))
+        if not ids:
+            return []
+        rows = _zip_get(self.short.get(ids=ids, include=["documents", "metadatas"]), None)
+        rows.sort(key=lambda r: float((r.get("metadata") or {}).get("ts") or 0))
+        core_text = (core.content or "").strip()
+        kept: list[str] = []
+        for r in rows:
+            text = (r.get("content") or "").strip()
+            if not text or text == core_text:
+                continue
+            meta = r.get("metadata") or {}
+            own = self.eidetic_in(meta)
+            sat = LongTermEntry(content=text, topic=core.topic or meta.get("topic"), kind="satellite",
+                                core_id=core.id, evidence_count=1, source=Source.CONSOLIDATOR,
+                                created_at=float(meta.get("ts") or time.time()),
+                                extra={"from_draft_id": d.id, "draft_op": op.index,
+                                       "cluster_id": d.cluster_id or d.id, "source_short_ids": [r["id"]],
+                                       "kept_episode": True, **({"eidetic": own} if own else {})})
+            self.add_long(sat)
+            kept.append(sat.id)
+        return kept
 
     def _restate_long(self, entry_id: str, new_content: str, meta: dict[str, Any]) -> None:
         """Replace a core's wording. The distilled retrieval key is re-embedded

@@ -41,14 +41,14 @@ def _search(client, q, **kw):
 
 def test_an_episode_brings_its_core(client):
     core = _core(client, "The user makes board games.")
-    sat = _attach(client, core, "Dice Race is a push-your-luck dice race styled as an 8-bit platformer, with cheat codes.")
+    sat = _attach(client, core, "Tidewater is a push-your-luck tile game set in a flooding harbour, with cheat codes.")
     for _ in range(6):                                       # other cores, so the fetch window is crowded
         _core(client, "An unrelated note about the weather and the garden.")
-    hits = _search(client, "Dice Race dice race platformer cheat codes")
+    hits = _search(client, "Tidewater tile game flooding harbour cheat codes")
     ids = [h["id"] for h in hits]
     assert core in ids, ids
     got = next(h for h in hits if h["id"] == core)
-    assert got["matched_via"]["id"] == sat and "Dice Race" in got["matched_via"]["content"]
+    assert got["matched_via"]["id"] == sat and "Tidewater" in got["matched_via"]["content"]
     assert got["raw_distance"] == got["matched_via"]["raw_distance"]
     assert sat not in ids, "the satellite itself stays out of the answer"
     assert ids[0] == core, "and the core ranks where its episode would have"
@@ -56,8 +56,8 @@ def test_an_episode_brings_its_core(client):
 
 def test_a_core_already_there_takes_the_better_distance(client):
     core = _core(client, "The user designs board games as a hobby.")
-    sat = _attach(client, core, "Four Floor Slumlord is themed on Kowloon Walled City: blind bids, a 3x3 grid, polyomino rooms.")
-    hits = _search(client, "Kowloon Walled City blind bids polyomino rooms")
+    sat = _attach(client, core, "Stackhouse is themed on a walled city: blind bids, a 3x3 grid, polyomino rooms.")
+    hits = _search(client, "walled city blind bids polyomino rooms")
     got = next(h for h in hits if h["id"] == core)
     assert got["matched_via"]["id"] == sat
     plain = _search(client, "board games hobby")

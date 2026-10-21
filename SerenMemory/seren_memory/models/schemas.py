@@ -151,8 +151,10 @@ class LongTermEntry(BaseModel):
     # recall returns: the durable statement with the lesson in it. A
     # SATELLITE is a supporting episode attached to a core (core_id): the
     # evidence with its date, pulled by the draft around a hit, never
-    # ranked on its own. Superseded cores keep superseded_by pointing
-    # forward and stay recallable through history.
+    # ranked on its own. A core's own source episodes are kept under it
+    # as satellites when it lands (extra.kept_episode), so the core can be
+    # the retelling. Superseded cores keep superseded_by pointing forward
+    # and stay recallable through history.
     kind: str = Field(default="core", description='"core" | "satellite"')
     core_id: Optional[str] = Field(None, description="For a satellite: the core it supports.")
     # The forget flag: a person's voice. It means PURGE - executed with a
@@ -180,6 +182,7 @@ class DraftOpKind(str, Enum):
     ATTACH = "attach"          # evidence for an existing core (a satellite); may restate the core
     SUPERSEDE = "supersede"    # a new core that overrides an old one, which stays, demoted
     VERBATIM = "verbatim"      # one episode kept word for word as its own core
+    RETELL = "retell"          # the core's wording becomes the retelling; the old wording hangs under it as its episode
 
 
 class OpStatus(str, Enum):

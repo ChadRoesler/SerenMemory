@@ -208,10 +208,17 @@ It holds no store: it reads short-terms from here, writes **drafts** here,
 resubmits what the reviewer denied, and purges what was flagged. Memory
 keeps the data and applies what is approved.
 
-A draft is a list of operations on long-term - `new_core`, `attach` (a
-satellite on an existing core; the core's evidence grows, its wording may be
-restated), `supersede` (the old core stays, demoted, still recallable through
-history), `verbatim` - each reviewed on its own:
+A draft is a list of operations on long-term - `new_core` (the retelling;
+the episodes it was made from land under it as its first satellites,
+`kept_episode`), `attach` (a satellite on an existing core; the core's
+evidence grows, its wording may be restated), `supersede` (the old core
+stays, demoted, still recallable through history; the new core keeps its
+episodes the same way), `verbatim`, and `retell` (the core's wording becomes
+the retelling and the old wording hangs under it as its episode; no evidence
+bump, no word-share guard, the reviewer is the guard, `undo_restate` still
+brings the old wording back) - each reviewed on its own. The review view
+flags a pending core that is its episode's own words (`core_check`) and
+shows a retell beside the wording it replaces (`retell_check`):
 
 | route                          | who        | what                                          |
 |--------------------------------|------------|-----------------------------------------------|
@@ -280,7 +287,9 @@ it talks to understands.
 
 Long-term is a core and its surroundings: recall returns cores; satellites
 (`kind: satellite`, `core_id`) and superseded cores come back only when asked
-(`include_satellites`, `include_superseded`).
+(`include_satellites`, `include_superseded`). A core's own episodes are among
+its satellites (`kept_episode`), so a core can be a paragraph while the
+detail still finds it (a core is as near as its nearest episode).
 Every core hit from `/search` (and the `recall` tool) carries `surroundings`:
 how many satellites stand behind it, when the latest landed, what it
 superseded and what superseded it; `with_surroundings: true` brings the most

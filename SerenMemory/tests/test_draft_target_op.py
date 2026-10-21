@@ -33,9 +33,9 @@ def _short(client, content, topic="dream"):
 
 def _dream(client, *, dependent_first=False):
     a = _short(client, "A dream the user described: a garden, a long table, everyone there.")
-    b = _short(client, "Second dream: a nose wrinkle on a real laugh, freckles in the sun.")
+    b = _short(client, "Second dream: a long table in a garden, lanterns in the trees.")
     core = {"kind": "new_core", "content": "A dream the user described.", "topic": "dream", "source_short_ids": [a]}
-    sat = {"kind": "attach", "content": "The face, from the second dream.", "topic": "dream",
+    sat = {"kind": "attach", "content": "The table, from the second dream.", "topic": "dream",
            "source_short_ids": [b]}
     ops = [dict(sat, target_op=1), core] if dependent_first else [core, dict(sat, target_op=0)]
     r = client.post("/drafts", json={"summary": "the dream", "operations": ops})
@@ -78,7 +78,9 @@ def test_the_core_and_its_satellite_land_in_one_review(client):
     assert d["operations"][1]["target_op"] == 0
     assert d["operations"][1]["target_core_id"] == core_id, "the resolved core is recorded"
     around = client.get(f"/long/{core_id}/satellites").json()
-    assert around["count"] == 1 and "second dream" in around["satellites"][0]["content"]
+    texts = [s["content"] for s in around["satellites"]]
+    assert around["count"] == 2 and any("second dream" in t for t in texts), texts
+    assert any(t.startswith("A dream the user described: a garden") for t in texts), "the core's own episode is kept under it too"
 
 
 def test_order_in_the_draft_does_not_matter(client):
