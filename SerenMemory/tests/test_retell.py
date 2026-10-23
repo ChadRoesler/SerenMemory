@@ -125,3 +125,10 @@ def test_a_detail_only_the_old_wording_carries_still_finds_the_core(client):
     got = next((h for h in hits if h["id"] == core), None)
     assert got is not None, [h["id"] for h in hits]
     assert got["content"] == RETOLD and got["matched_via"]["content"] == FAT
+
+
+def test_health_advertises_retell_and_kept_episodes(client):
+    """A hippocampus checks /health features before it proposes a retell: an
+    older Memory would refuse the kind at submit, and its tests skip on this."""
+    feats = client.get("/health").json()["features"]
+    assert "retell" in feats and "kept_episodes" in feats

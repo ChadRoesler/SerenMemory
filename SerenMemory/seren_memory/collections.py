@@ -93,6 +93,18 @@ def _maybe_json(v: Any) -> Any:
     return v
 
 
+def satellite_parents(meta: dict[str, Any]) -> list[str]:
+    """Every core a satellite hangs under: its first home (core_id), then the
+    other cores it also supports (also_core_ids). Empty for a core."""
+    out: list[str] = []
+    if meta.get("core_id"):
+        out.append(str(meta["core_id"]))
+    also = _maybe_json(meta.get("also_core_ids"))
+    if isinstance(also, list):
+        out += [str(c) for c in also if c and str(c) not in out]
+    return out
+
+
 def _split_topics(topic: Optional[str]) -> list[str]:
     """Split a comma-joined topic string into normalized lowercase tags.
     Topics are stored as ONE comma-joined metadata string ("a, b, c" - the
@@ -575,6 +587,7 @@ class MemoryStore(DraftMixin):
             "superseded_by": entry.superseded_by,
             "kind": entry.kind,
             "core_id": entry.core_id,
+            "also_core_ids": entry.also_core_ids or None,
             "forget_flag": entry.forget_flag,
             "source": entry.source.value,
             **entry.extra,
@@ -1017,8 +1030,20 @@ class MemoryStore(DraftMixin):
         meta = row["metadata"]
         kind = meta.get("kind", "core")
         ids = [entry_id]
+        rehomed = 0
         if kind == "core":
-            ids += [s["id"] for s in self.satellites_of(entry_id)]
+            # A satellite that also supports another core survives on it
+            # (design note, 21 Oct 2026): only what hangs on this core alone goes.
+            for s in self.satellites_of(entry_id):
+                others = [p for p in satellite_parents(s["metadata"])
+                          if p != entry_id and self._long_row(p) is not None]
+                if not others:
+                    ids.append(s["id"])
+                    continue
+                smeta = dict(s["metadata"])
+                smeta["core_id"], smeta["also_core_ids"] = others[0], others[1:]
+                self.long.update(ids=[s["id"]], metadatas=[_clean_meta(smeta)])
+                rehomed += 1
 
         # the short-terms these entries were made from
         sources: list[str] = []
@@ -1087,7 +1112,8 @@ class MemoryStore(DraftMixin):
                     removed += 1
         tomb = {
             "id": entry_id, "kind": kind, "reason": reason, "purged_at": time.time(),
-            "cascade": {"satellites": len(ids) - 1, "shorts": shorts_removed,
+            "cascade": {"satellites": len(ids) - 1, "satellites_kept_on_another_core": rehomed,
+                        "shorts": shorts_removed,
                         "pruned": pruned_removed, "legacy_drafts": len(dead),
                         "drafts_scrubbed": scrubbed, "backups_removed": removed,
                         "backups_retained": len(backups) - removed, "eidetic": len(swept)},
@@ -1132,6 +1158,22 @@ class MemoryStore(DraftMixin):
                 if op.status == OpStatus.PENDING:
                     held.update(str(x) for x in op.source_short_ids)
         return held
+
+    def aging_short(self, lifetime_seconds: float, within_seconds: float,
+                    now: Optional[float] = None) -> list[dict[str, Any]]:
+        """The short-terms that reach the end of their lifetime within
+        within_seconds from now (already past it included), oldest first:
+        what a sleep decides about, and the only ones it touches (design note, 22
+        Oct 2026). Pinned ones are in the list - a pin never ages out, but
+        at the end of its week it is promoted - and say so; ones a pending
+        draft holds are not."""
+        now = time.time() if now is None else now
+        held = self.held_short_ids()
+        line = now + within_seconds - lifetime_seconds
+        rows = [r for r in self.get_short_all(limit=None)
+                if r["id"] not in held and float(r["metadata"].get("ts", now) or now) <= line]
+        rows.sort(key=lambda r: float(r["metadata"].get("ts", 0) or 0))
+        return rows
 
     def age_out_short(self, cutoff_seconds: float, keep_pruned: bool = True) -> int:
         """Archive-then-delete short-term entries older than cutoff that are

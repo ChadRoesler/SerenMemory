@@ -153,10 +153,16 @@ class LongTermEntry(BaseModel):
     # evidence with its date, pulled by the draft around a hit, never
     # ranked on its own. A core's own source episodes are kept under it
     # as satellites when it lands (extra.kept_episode), so the core can be
-    # the retelling. Superseded cores keep superseded_by pointing forward
-    # and stay recallable through history.
+    # the retelling. A core that was replaced (supersede) becomes a satellite
+    # of the core that replaced it (was_core), its own satellites move under
+    # the new core as history (moved_from), and superseded_by still points
+    # forward - the trail of what was wrong and what fixed it stays together.
     kind: str = Field(default="core", description='"core" | "satellite"')
     core_id: Optional[str] = Field(None, description="For a satellite: the core it supports.")
+    # One episode can support two stories (22 Oct 2026): core_id stays the
+    # satellite's first home, and these are the others. Every reader that asks
+    # for a core's satellites sees it under each of them.
+    also_core_ids: list[str] = Field(default_factory=list, description="For a satellite: other cores it also supports.")
     # The forget flag: a person's voice. It means PURGE - executed with a
     # tombstone and a cascade (MemoryStore.purge_long), by the hippocampus at
     # its next sleep or immediately for an emergency. Demotion is not this;
@@ -178,11 +184,12 @@ class LongTermEntry(BaseModel):
 #  briefing packet a search returns, so here it is a draft.)
 # -------------------------------------------------------------------------
 class DraftOpKind(str, Enum):
-    NEW_CORE = "new_core"      # a durable statement with the lesson in it
-    ATTACH = "attach"          # evidence for an existing core (a satellite); may restate the core
-    SUPERSEDE = "supersede"    # a new core that overrides an old one, which stays, demoted
+    NEW_CORE = "new_core"      # a durable statement: a lesson, or just the fun
+    ATTACH = "attach"          # support (the episode becomes a satellite of a core), or refine (and the core is reworded)
+    SUPERSEDE = "supersede"    # replace: the old core was wrong; it becomes the new core's satellite, its trail moves too
     VERBATIM = "verbatim"      # one episode kept word for word as its own core
     RETELL = "retell"          # the core's wording becomes the retelling; the old wording hangs under it as its episode
+    AGE_OUT = "age_out"        # a short-term at the end of its week, let go: archived to pruned, nothing written to long
 
 
 class OpStatus(str, Enum):
@@ -207,6 +214,10 @@ class DraftOperation(BaseModel):
     target_op: Optional[int] = Field(None, description="attach / supersede, instead of target_core_id: the index of a "
                                      "new_core operation in this same draft - the core it creates once approved.")
     restated_content: Optional[str] = Field(None, description="attach: new wording for the core, if the evidence changes it.")
+    also_target_core_ids: list[str] = Field(default_factory=list, description="attach: other cores the same episode "
+                                            "also supports; its satellite hangs under each of them.")
+    contradicts: Optional[str] = Field(None, description="supersede: the sentence of the target core this proves wrong, "
+                                       "quoted from it - what a replace has to show.")
     source_short_ids: list[str] = Field(default_factory=list, description="The short-terms this operation consumes (archived on approval).")
     left_short_ids: list[str] = Field(default_factory=list, description="Short-terms the operation cited but whose every "
                                       "sentence its text does not carry: they stay in short-term unless the reviewer "

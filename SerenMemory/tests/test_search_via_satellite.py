@@ -80,15 +80,20 @@ def test_with_surroundings_the_matching_episode_rides_first(client):
     assert len(recent) == 3 and got["surroundings"]["satellites"] == 3
 
 
-def test_a_superseded_core_is_not_lifted_unless_asked(client):
+def test_a_replaced_cores_trail_finds_the_core_that_replaced_it(client):
+    """The old core and its episodes hang under the new core after a replace
+    (22 Oct 2026), so an episode of the old story finds what is true now,
+    never the old core as an answer."""
     old = _core(client, "The user likes blue.")
     sat = _attach(client, old, "He painted the whole minis cabinet cobalt blue in March.")
     did = client.post("/drafts", json={"operations": [{"kind": "supersede", "content": "The user likes yellow now.", "topic": "t", "target_core_id": old}]}).json()["id"]
-    client.post(f"/drafts/{did}/review", json={"decisions": [{"op": 0, "verdict": "approve"}]})
-    ids = [h["id"] for h in _search(client, "painted the minis cabinet cobalt blue in March")]
-    assert old not in ids and sat not in ids
-    ids = [h["id"] for h in _search(client, "painted the minis cabinet cobalt blue in March", include_superseded=True)]
-    assert old in ids
+    new = client.post(f"/drafts/{did}/review", json={"decisions": [{"op": 0, "verdict": "approve"}]}).json()["results"][0]["long_term_id"]
+    hits = _search(client, "painted the minis cabinet cobalt blue in March")
+    ids = [h["id"] for h in hits]
+    assert old not in ids and sat not in ids and new in ids
+    assert next(h for h in hits if h["id"] == new)["matched_via"]["id"] == sat
+    ids = [h["id"] for h in _search(client, "painted the minis cabinet cobalt blue in March", include_satellites=True)]
+    assert sat in ids
 
 
 def test_include_satellites_still_returns_the_satellites_themselves(client):

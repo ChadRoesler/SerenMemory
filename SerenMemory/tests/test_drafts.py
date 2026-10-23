@@ -102,23 +102,31 @@ def test_attach_adds_a_satellite_grows_the_core_and_may_restate_it(client):
     assert res["satellite_id"] in {h["id"] for h in hits}
 
 
-def test_supersede_keeps_the_old_core_demoted_and_recallable_as_history(client):
+def test_a_replace_makes_the_old_core_a_satellite_of_the_new_one(client):
+    """The core lifecycle (design note, 22 Oct 2026): a replaced core becomes
+    a satellite of the core that replaced it, still there and still saying
+    what it said, so the trail of what was wrong hangs under what is true."""
     old = _review(client, _submit(client, [{"kind": "new_core", "content": "The user likes blue.", "topic": "color"}]),
                   [{"op": 0, "verdict": "approve"}])["results"][0]["long_term_id"]
     new = _review(client, _submit(client, [{"kind": "supersede", "target_core_id": old,
-                                            "content": "The user likes yellow now.", "topic": "color"}]),
+                                            "content": "The user likes yellow now.", "topic": "color",
+                                            "contradicts": "The user likes blue."}]),
                   [{"op": 0, "verdict": "approve"}])["results"][0]
     assert new["superseded"] == old
     live = _long_ids(client)
     assert list(live) == [new["long_term_id"]]
-    hist = _long_ids(client, include_superseded=True)
-    assert hist[old]["metadata"]["superseded_by"] == new["long_term_id"]
-    assert hist[old]["content"] == "The user likes blue.", "blue is still there, demoted"
-    hits = client.post("/search", json={"query": "favourite colour", "n_results": 5,
-                                        "include_superseded": True}).json()["hits"]
-    assert {old, new["long_term_id"]} <= {h["id"] for h in hits}
+    everything = _long_ids(client, include_superseded=True, include_satellites=True)
+    blue = everything[old]["metadata"]
+    assert blue["kind"] == "satellite" and blue["core_id"] == new["long_term_id"] and blue["was_core"] is True
+    assert blue["superseded_by"] == new["long_term_id"]
+    assert everything[old]["content"] == "The user likes blue.", "blue is still there, demoted"
+    # asked the old way, recall finds what is true now, and says which episode found it
+    hits = client.post("/search", json={"query": "The user likes blue.", "n_results": 5}).json()["hits"]
+    top = next(h for h in hits if h["id"] == new["long_term_id"])
+    assert top["matched_via"]["id"] == old and old not in {h["id"] for h in hits}
     around = client.get(f"/long/{new['long_term_id']}/satellites").json()
-    assert around["supersedes"]["id"] == old
+    assert around["supersedes"]["id"] == old and [s["id"] for s in around["satellites"]] == [old]
+    assert everything[new["long_term_id"]]["metadata"]["contradicts"] == "The user likes blue."
 
 
 # ── review discipline ────────────────────────────────────────────────────────
@@ -186,7 +194,8 @@ def test_purge_takes_the_core_its_satellites_its_sources_and_the_backups(client,
     r = client.post(f"/long/{core}/purge", json={"reason": "leaked ssh key"})
     assert r.status_code == 200, r.text
     tomb = r.json()["tombstone"]
-    assert tomb["cascade"] == {"satellites": 2, "shorts": 0, "pruned": 2, "legacy_drafts": 0,
+    assert tomb["cascade"] == {"satellites": 2, "satellites_kept_on_another_core": 0,
+                               "shorts": 0, "pruned": 2, "legacy_drafts": 0,
                                "drafts_scrubbed": 2, "backups_removed": 1, "backups_retained": 0, "eidetic": 0}
     assert "ssh-rsa" not in json.dumps(tomb), "a tombstone never carries content"
     assert not fake_backup.exists()

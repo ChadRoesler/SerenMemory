@@ -96,10 +96,15 @@ def test_a_supersede_keeps_its_episodes_too(client):
     _, res = _land(client, [{"kind": "supersede", "content": "The cordial was elderflower.", "topic": "cabin",
                              "target_core_id": old, "source_short_ids": [b]}])
     new = res[0]["long_term_id"]
-    assert res[0]["superseded"] == old and len(res[0]["satellite_ids"]) == 1
-    sats = client.get(f"/long/{new}/satellites").json()["satellites"]
-    assert [s["content"] for s in sats] == ["Correction: the cordial was elderflower, not blackcurrant."]
-    assert sats[0]["metadata"]["kept_episode"] is True
+    assert res[0]["superseded"] == old and len(res[0]["satellite_ids"]) == 1 and res[0]["moved_satellites"] == 1
+    sats = {s["content"]: s["metadata"] for s in client.get(f"/long/{new}/satellites").json()["satellites"]}
+    # its own episode, the old core, and the old core's episode moved over: the whole trail
+    assert set(sats) == {"Correction: the cordial was elderflower, not blackcurrant.",
+                         "The cordial was blackcurrant.", "First version: the cordial was blackcurrant."}
+    assert sats["Correction: the cordial was elderflower, not blackcurrant."]["kept_episode"] is True
+    assert sats["The cordial was blackcurrant."]["was_core"] is True
+    assert sats["First version: the cordial was blackcurrant."]["moved_from"] == old
+    assert client.get(f"/long/{old}/satellites").json()["count"] == 0, "nothing hangs under the old core now"
 
 
 def test_the_review_flags_a_core_that_is_its_episodes_own_words(client):

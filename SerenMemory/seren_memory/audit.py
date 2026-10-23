@@ -20,6 +20,13 @@ what the config asked for; model_prompt, the prompt version; model_mode,
                        critique did not take (matched on source short-terms)
   edited_on_approval   landed only because the reviewer rewrote it
   chains_ended_denied  the last permitted attempt was still denied
+  by_kind              reviewed / approved, and on attempt 1, per kind - how a
+                       model does at support, refine (attach_restate) and
+                       replace (supersede) separately
+
+An age_out writes nothing and is easy to approve, so it is counted on its
+own (age_outs) and kept out of the numbers above, which stay comparable with
+drafts from before it existed (22 Oct 2026).
 
 Read-only. Nothing here changes a draft.
 """
@@ -75,6 +82,7 @@ def _brief(store, brief_id: Optional[str]) -> Optional[dict[str, Any]]:
 def _op(op) -> dict[str, Any]:
     return {"index": op.index, "kind": op.kind.value, "content": op.content, "topic": op.topic,
             "target_core_id": op.target_core_id, "target_op": op.target_op, "rationale": op.rationale,
+            "contradicts": op.contradicts,
             "source_short_ids": list(op.source_short_ids or []), "status": op.status.value,
             "critique": op.critique, "edited_content": op.edited_content,
             "long_term_id": op.long_term_id}
@@ -97,7 +105,12 @@ def build_audit(store, limit: int = 20, since: Optional[float] = None) -> dict[s
             "model": key, "drafts": 0, "operations": 0, "reviewed": 0, "approved": 0,
             "first_reviewed": 0, "first_approved": 0, "landed": 0, "_attempt_sum": 0,
             "edited_on_approval": 0, "redrafts_reviewed": 0, "repeated_denials": 0,
-            "chains_ended_denied": 0})
+            "chains_ended_denied": 0, "age_outs": {"reviewed": 0, "approved": 0}, "by_kind": {}})
+
+    def kind_of(op) -> str:
+        if op.kind.value == "attach" and (op.restated_content or "").strip():
+            return "attach_restate"
+        return op.kind.value
 
     out_chains = []
     for cid, attempts in chains.items():
@@ -109,9 +122,23 @@ def build_audit(store, limit: int = 20, since: Optional[float] = None) -> dict[s
             s["drafts"] += 1
             denied_now: list[set] = []
             for op in d.operations:
-                s["operations"] += 1
-                srcs = set(op.source_short_ids or [])
                 decided = op.status.value in ("approved", "denied")
+                if op.kind.value == "age_out":
+                    if decided:
+                        s["age_outs"]["reviewed"] += 1
+                    if op.status.value == "approved":
+                        s["age_outs"]["approved"] += 1
+                    continue
+                s["operations"] += 1
+                k = s["by_kind"].setdefault(kind_of(op), {"reviewed": 0, "approved": 0,
+                                                         "first_reviewed": 0, "first_approved": 0})
+                if decided:
+                    k["reviewed"] += 1
+                    k["first_reviewed"] += d.attempt == 1
+                if op.status.value == "approved":
+                    k["approved"] += 1
+                    k["first_approved"] += d.attempt == 1
+                srcs = set(op.source_short_ids or [])
                 follows_denial = bool(srcs) and any(srcs & p for p in prev_denied)
                 if decided:
                     s["reviewed"] += 1
@@ -138,12 +165,13 @@ def build_audit(store, limit: int = 20, since: Optional[float] = None) -> dict[s
                              "operations": [_op(op) for op in d.operations]})
         last = attempts[-1]
         pending = any(op.status.value == "pending" for op in last.operations)
-        if last.terminal and any(op.status.value == "denied" for op in last.operations):
+        if last.terminal and any(op.status.value == "denied" and op.kind.value != "age_out"
+                                 for op in last.operations):
             st(model_of(last.extra)["key"])["chains_ended_denied"] += 1
             outcome = "ended denied"
         elif pending:
             outcome = "under review"
-        elif any(op.status.value == "denied" for op in last.operations):
+        elif not last.terminal and any(op.status.value == "denied" for op in last.operations):
             outcome = "waiting for a redraft"
         else:
             outcome = "landed"

@@ -508,10 +508,14 @@ class MemoryToolImpl:
         decisions: [{"op": 0, "verdict": "approve"},
                     {"op": 1, "verdict": "deny", "critique": "conflates X with Y; separate them"}]
 
-        Approving APPLIES the operation now: a new core, a satellite attached
-        to a core (and the core's evidence grows), a supersession (the old
-        core stays, demoted), or a verbatim core. Denying records the
-        critique; the hippocampus redrafts that operation and resubmits.
+        Approving APPLIES the operation now: a new core; an attach (SUPPORT:
+        the memory itself becomes a satellite of the core, whose evidence
+        grows - or a REFINE, with restated_content: a small change, the core
+        reworded); a supersede (REPLACE: the old core was wrong - it becomes
+        the new core's satellite and its satellites move under the new one
+        as history); a verbatim core; or an age_out (the short-term is let
+        go). Denying records the critique; the hippocampus redrafts that
+        operation and resubmits.
         Critiques should be specific - the next attempt is written from
         them. An operation with target_op attaches to the new core another
         operation in this draft creates: approve that one too (it applies
@@ -528,10 +532,17 @@ class MemoryToolImpl:
         best of the attempts, fix what is wrong, approve:
           {"op": 0, "verdict": "approve", "edited_content": "the text as it should read"}
           {"op": 1, "verdict": "approve", "edited_kind": "attach", "edited_target_core_id": "<core id>"}
-        edited_kind is new_core, attach, supersede or verbatim. These edits
-        are refused on any earlier attempt: there, deny and let the loop do
-        its job. Deny on the last attempt only what should not be in memory
-        at all.
+        edited_kind is new_core, attach, supersede, verbatim or age_out. These
+        edits are refused on any earlier attempt: there, deny and let the loop
+        do its job. Deny on the last attempt only what should not be in memory
+        at all. A memory at the end of its week ages out at the tidy whatever
+        happens, so denying its age_out does not keep it: to keep it, approve
+        with edited_kind - attach + edited_target_core_id keeps the memory
+        itself under that core.
+
+        A SATELLITE CAN HANG ON MORE THAN ONE CORE. On an attach, on any
+        attempt, name the others the episode also supports:
+          {"op": 3, "verdict": "approve", "edited_also_core_ids": ["<core id>"]}
 
         WHAT IT CONSUMES, on any attempt. Approving archives the short-terms
         the operation names in source_short_ids, and only those. Where
@@ -607,7 +618,9 @@ class MemoryToolImpl:
 
     def get_satellites(self, core_id: str) -> dict:
         """The surroundings of a core: its supporting episodes with their
-        dates, and the core it superseded. The draft around a hit."""
+        dates (shared ones included), and the core it replaced - which is
+        among the satellites now (was_core), with that core's own episodes
+        moved under this one (moved_from). The draft around a hit."""
         core = self.store.get_by_id(core_id)
         if core is None or core.get("tier") != "long":
             return {"ok": False, "error": f"no long-term entry '{core_id}'"}

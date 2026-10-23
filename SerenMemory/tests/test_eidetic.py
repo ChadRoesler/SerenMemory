@@ -164,11 +164,13 @@ def test_drafted_into_a_core_the_pictures_follow_through_every_operation(store, 
     new_id = next(r["id"] for r in store.get_long_all() if r["metadata"].get("supersedes") == core_id)
     assert {k["digest"] for k in store.eidetic_in(store.get_by_id(new_id)["metadata"])} == {ka["digest"], kb["digest"], kc["digest"]}
     assert len(store.eidetic_in(store.get_by_id(core_id)["metadata"])) == 3
-    # a purge of the new core: its pictures stay while the old core and the pruned sources still name them
-    store.purge_long(new_id, "test", purge_backups=False)
-    assert store.eidetic.count() == 3
-    # purge the old core too: its satellite and its archived sources go in the cascade, and nothing names them now
-    tomb = store.purge_long(core_id, "test", purge_backups=False)
+    # the old core is the new one's satellite now, and its episodes moved with it
+    assert store.get_by_id(core_id)["metadata"]["kind"] == "satellite"
+    assert {s["id"] for s in store.satellites_of(new_id)} >= {core_id, *(s["id"] for s in sats.values())}
+    # a purge of the new core takes the whole trail - every one of them hangs on it alone -
+    # and their archived sources, and nothing names the pictures now
+    tomb = store.purge_long(new_id, "test", purge_backups=False)
+    assert store.get_by_id(core_id) is None
     assert tomb["cascade"]["eidetic"] == 3 and store.eidetic.count() == 0
 
 

@@ -11,19 +11,32 @@ THE SHAPE
     is a DRAFT: a list of operations on long-term, each reviewed on its
     own by the main model, each carrying its own verdict and critique.
 
-        new_core    a durable statement with the lesson in it - the
+        new_core    a durable statement - a lesson, or just the fun - the
                     retelling; the episodes it was made from are kept
                     under it as its first satellites (kept_episode)
-        attach      tonight's short-terms are evidence for a core that
-                    already exists; the core's evidence grows, its wording
-                    may be restated
-        supersede   yellow arrives; blue becomes a demoted satellite of
-                    yellow's story, still recallable through history
+        attach      SUPPORT: the short-terms are evidence for a core that
+                    already exists; the episode itself becomes its
+                    satellite (or, from an older hippocampus, a summary
+                    of it in content), the core's evidence grows. With
+                    restated_content it is a REFINE: a small change - a
+                    detail, a misspelling, a colour - and the core's
+                    point still stands, so it keeps its id and its
+                    satellites and is reworded. A satellite can hang on
+                    more than one core (also_target_core_ids)
+        supersede   REPLACE: the core was wrong. The new core takes over;
+                    the old core becomes its satellite (was_core) and every
+                    satellite of the old one moves under the new one as
+                    history (moved_from) - the trail of what was wrong, why
+                    and what fixed it. The new core's evidence is its own:
+                    the old episodes were evidence for the old claim
         verbatim    "this deserves its own thing and must not be muddled" -
                     one episode, kept word for word as its own core
         retell      the core's wording becomes the retelling (21 Oct 2026);
                     the old wording hangs under it as its episode, no new
                     evidence, no word-share guard - the reviewer is the guard
+        age_out     a short-term at the end of its week, let go (22 Oct
+                    2026): archived to pruned like any that ages out, but
+                    as a verdict the reviewer saw, not by being left out
 
     Long-term is a core and its surroundings. Recall returns cores.
     Satellites (kind=satellite, core_id=<core>) are the supporting episodes
@@ -91,7 +104,8 @@ THE WAY BACK IS GATED TOO
 
 FORGET IS NOT HERE. A purge is a separate path (MemoryStore.purge_long):
     a person's flag, executed with a tombstone and a cascade. Nothing in a
-    draft deletes.
+    draft deletes from long-term; age_out only lets a short-term go the way
+    aging out always has.
 """
 from __future__ import annotations
 
@@ -225,12 +239,34 @@ class DraftMixin:
                     raise DraftError(f"operation {i}: no long-term entry '{op.target_core_id}'")
                 if target["metadata"].get("kind", "core") != "core":
                     raise DraftError(f"operation {i}: '{op.target_core_id}' is a satellite, not a core")
-            if not (op.content or "").strip() and op.kind != DraftOpKind.ATTACH:
+            if op.also_target_core_ids:
+                if op.kind != DraftOpKind.ATTACH:
+                    raise DraftError(f"operation {i}: also_target_core_ids is only for attach, not {op.kind.value}")
+                self._check_cores(i, op.also_target_core_ids, "also_target_core_ids")
+            if op.kind == DraftOpKind.AGE_OUT:
+                if not op.source_short_ids:
+                    raise DraftError(f"operation {i} (age_out) names no short-term to let go")
+                if op.target_core_id or op.target_op is not None:
+                    raise DraftError(f"operation {i}: an age_out writes nothing to long-term and has no target")
+            elif not (op.content or "").strip() and op.kind != DraftOpKind.ATTACH:
                 raise DraftError(f"operation {i} ({op.kind.value}) needs content")
         d.cluster_id = d.cluster_id or d.id
         self.drafts.add(documents=[d.summary or "(no summary)"],
                          metadatas=[_draft_meta(d)], ids=[d.id])
         return d
+
+    def _check_cores(self, i: int, ids: Any, field: str) -> list[str]:
+        """A list of live core ids, or the reason it is not one."""
+        if not isinstance(ids, list) or not all(isinstance(c, str) and c.strip() for c in ids):
+            raise DraftError(f"operation {i}: {field} must be a list of core ids")
+        out = list(dict.fromkeys(c.strip() for c in ids))
+        for cid in out:
+            row = self._long_row(cid)
+            if row is None:
+                raise DraftError(f"operation {i}: {field} names no long-term entry '{cid}'")
+            if row["metadata"].get("kind", "core") != "core":
+                raise DraftError(f"operation {i}: {field} names '{cid}', a satellite, not a core")
+        return out
 
     @staticmethod
     def _check_target_op(d: Draft, i: int, op: DraftOperation) -> None:
@@ -348,7 +384,8 @@ class DraftMixin:
 
         On any draft, an approval may carry edited_source_short_ids: the
         short-terms it carries, replacing the drafted list (see WHAT AN
-        APPROVAL CONSUMES).
+        APPROVAL CONSUMES); and, on an attach, edited_also_core_ids: the
+        other cores the same episode supports.
         """
         d = self.get_draft(draft_id)
         if d is None:
@@ -423,7 +460,16 @@ class DraftMixin:
                 else:
                     op.status = OpStatus.DENIED
                     op.critique = str(dec.get("critique")).strip()
-                    applied.append({"op": idx, "denied": True})
+                    out: dict[str, Any] = {"op": idx, "denied": True}
+                    if d.terminal and op.kind == DraftOpKind.VERBATIM:
+                        # A verbatim mark pins: the memory never ages out and
+                        # every sleep proposes it again, so a final denial would
+                        # come back for ever. The denial releases the mark and
+                        # the next sleep decides it like any other memory.
+                        out["released_verbatim"] = [
+                            r["id"] for r in self._shorts_present(list(op.source_short_ids))
+                            if self.update_short_metadata(r["id"], {"verbatim": None, "pinned": None})]
+                    applied.append(out)
                 op.reviewed_at = time.time()
         except Exception:
             # an apply that fails part way (a target core purged meanwhile)
@@ -459,7 +505,7 @@ class DraftMixin:
                 raise DraftError(f"operation {idx}: edited_kind must be one of "
                                  f"{', '.join(k.value for k in DraftOpKind)}")
         target, target_op = op.target_core_id, op.target_op
-        if kind in (DraftOpKind.NEW_CORE, DraftOpKind.VERBATIM):
+        if kind in (DraftOpKind.NEW_CORE, DraftOpKind.VERBATIM, DraftOpKind.AGE_OUT):
             target, target_op = None, None
         elif et is not None:
             target, target_op = str(et).strip(), None
@@ -478,8 +524,18 @@ class DraftMixin:
                     raise DraftError(f"operation {idx}: '{target}' is a satellite, not a core")
                 core_text = row["content"]
         content = dec.get("edited_content") if dec.get("edited_content") is not None else op.content
-        if kind != DraftOpKind.ATTACH and not str(content or "").strip():
+        if kind not in (DraftOpKind.ATTACH, DraftOpKind.AGE_OUT) and not str(content or "").strip():
             raise DraftError(f"operation {idx}: a {kind.value} needs content; give edited_content")
+        sources = self._edited_sources(idx, op, dec.get("edited_source_short_ids"))
+        if kind == DraftOpKind.AGE_OUT and not sources:
+            raise DraftError(f"operation {idx}: an age_out names no short-term to let go")
+        also = op.also_target_core_ids if kind == DraftOpKind.ATTACH else []
+        if dec.get("edited_also_core_ids") is not None:
+            # like the sources, a judgement that changes no text: any attempt
+            if kind != DraftOpKind.ATTACH:
+                raise DraftError(f"operation {idx}: edited_also_core_ids is only for an attach")
+            also = self._check_cores(idx, dec["edited_also_core_ids"], "edited_also_core_ids")
+        also = [c for c in also if c != target]
         if kind == DraftOpKind.RETELL and str(content or "").strip() == (core_text or "").strip():
             raise DraftError(f"operation {idx}: a retell that keeps the core's wording changes nothing; "
                              "give edited_content, or deny it")
@@ -488,9 +544,9 @@ class DraftMixin:
         choice = dec.get("restate")
         if choice is False:
             restated = None
-        if kind == DraftOpKind.ATTACH and not restated and not str(content or "").strip():
-            raise DraftError(f"operation {idx}: an attach with no episode text and no rewording does nothing; "
-                             "give edited_content, or deny it")
+        if kind == DraftOpKind.ATTACH and not restated and not str(content or "").strip() and not sources:
+            raise DraftError(f"operation {idx}: an attach with no episode, no text and no rewording does nothing; "
+                             "give edited_content or edited_source_short_ids, or deny it")
         if restated and choice is not True:
             why = restate_problem(core_text or "", restated, str(content or ""))
             if why:
@@ -500,7 +556,7 @@ class DraftMixin:
                     f"core's wording, or with \"restate\": true if you have compared the two and want the "
                     f"rewording, or deny it.")
         return {"kind": kind, "target_core_id": target, "target_op": target_op, "restated_content": restated,
-                "source_short_ids": self._edited_sources(idx, op, dec.get("edited_source_short_ids"))}
+                "source_short_ids": sources, "also_target_core_ids": also}
 
     def _edited_sources(self, idx: int, op: DraftOperation, edited: Any) -> list[str]:
         """The short-terms an approval consumes: the drafted list, or the
@@ -523,7 +579,8 @@ class DraftMixin:
     def _take_final_shape(op: DraftOperation, final: dict[str, Any]) -> None:
         """Put the checked shape on the operation; what was drafted is kept
         in review_edits for the audit."""
-        for field in ("kind", "target_core_id", "target_op", "restated_content", "source_short_ids"):
+        for field in ("kind", "target_core_id", "target_op", "restated_content", "source_short_ids",
+                      "also_target_core_ids"):
             was, now = getattr(op, field), final[field]
             if was != now:
                 op.review_edits[field] = was.value if isinstance(was, DraftOpKind) else was
@@ -567,6 +624,18 @@ class DraftMixin:
                     "under the core as its episode, and undo_restate brings it back. Read both: a retelling keeps "
                     "the names, dates, numbers and quotes that matter and adds nothing. Approve with edited_content "
                     "to retell it yourself, or deny it.")
+            if op.kind == DraftOpKind.SUPERSEDE and op.status == OpStatus.PENDING:
+                view["replace_check"] = self._replace_check(op, core_text)
+            if op.kind == DraftOpKind.AGE_OUT and op.status == OpStatus.PENDING:
+                gone = self._shorts_present(list(op.source_short_ids))
+                view["letting_go"] = [{"id": r["id"], "content": r["content"],
+                                       "ts": (r.get("metadata") or {}).get("ts")} for r in gone]
+                view["age_out_check"] = (
+                    "approving lets these short-terms go: archived to pruned, then gone at the sweep. Keep one only "
+                    "if it is a fact that will be needed again or a moment that would be missed; to keep it, "
+                    "deny with where it belongs (a core to support, or a new core); on the last attempt approve "
+                    "with edited_kind instead (attach + edited_target_core_id keeps the memory itself under that "
+                    "core; new_core needs edited_content).")
             if op.kind in (DraftOpKind.NEW_CORE, DraftOpKind.SUPERSEDE) and op.status == OpStatus.PENDING:
                 same = [r["id"] for r in self._shorts_present(list(op.source_short_ids))
                         if (r.get("content") or "").strip() == (op.content or "").strip()]
@@ -584,15 +653,44 @@ class DraftMixin:
                 at, ref = at - 1, prev.redraft_of
             if earlier:
                 view["earlier_attempts"] = earlier
-            if op.status == OpStatus.PENDING and not (op.kind == DraftOpKind.RETELL and not op.source_short_ids):
+            if (op.status == OpStatus.PENDING and op.kind != DraftOpKind.AGE_OUT
+                    and not (op.kind == DraftOpKind.RETELL and not op.source_short_ids)):
                 self._sources_check(op, earlier, view)       # a retell of a core cites nothing, by design
         if d.terminal and d.status == DraftStatus.PENDING:
+            # The reviewer holds the pen here, and the old note ("land each one,
+            # deny only what should not be in memory at all") read as keep
+            # everything - on the one attempt where nothing pushes back. Design
+            # note, 22 Oct 2026: the bar does not move with the pen, and a
+            # moment is kept on its own, since moments do not repeat the way
+            # facts do.
+            stays = ("its memories stay in short-term and the next sleep decides them again, so denying "
+                     "only puts the question off" if d.extra.get("sleep_flow") == "aging" else
+                     "its memory stays in short-term, where a memory at the end of its week ages out anyway, "
+                     "so denying an age_out does not keep it")
             out["last_attempt"] = (
-                "This is the last attempt: an operation denied now is dropped and its memory stays in "
-                "short-term. Land each one - approve it, or approve it with your fixes (edited_content, "
-                "edited_kind, edited_target_core_id, \"restate\": false, edited_source_short_ids), taking the "
-                "best wording from earlier_attempts. Deny only what should not be in memory at all.")
+                "This is the last attempt, and the pen is yours: approve each operation, approve it with your "
+                "fixes (edited_content, edited_kind, edited_target_core_id, \"restate\": false, "
+                "edited_source_short_ids, edited_also_core_ids), taking the best wording from earlier_attempts, "
+                "or deny it. Holding the pen does not lower the bar. Keep a memory only if it is a fact that "
+                "will be needed again, or a moment that would be missed - a joke, a first, something fun - "
+                "which needs no other memories behind it. Whatever is neither goes, and when in doubt it goes: "
+                f"approving an age_out lands it. A denied operation is dropped: {stays}.")
         return out
+
+    @staticmethod
+    def _replace_check(op: DraftOperation, core_text: Optional[str]) -> str:
+        """What a replace has to show: the sentence of the old core it proves
+        wrong. Without one it is support or a refine, not a replace."""
+        quote = (op.contradicts or "").strip()
+        lead = ("approving makes the old core a satellite of this one and moves its satellites under it as "
+                "history; the new core's evidence is its own. ")
+        if not quote:
+            return lead + ("It quotes NO sentence of the old core as wrong: if the old core still gets the "
+                           "main point right, this is support or a refine, not a replace.")
+        qw, cw = _words(quote), _words(core_text or "")
+        found = quote.lower() in (core_text or "").lower() or (bool(qw) and len(qw & cw) / len(qw) >= 0.8)
+        return lead + (f"It says the old core is wrong where it says: \"{quote}\"" +
+                       ("" if found else " - which is NOT in the core as written; check it before approving."))
 
     def _sources_check(self, op: DraftOperation, earlier: list[dict[str, Any]], view: dict[str, Any]) -> None:
         """What a pending operation leaves in short-term: the fragments the
@@ -654,9 +752,14 @@ class DraftMixin:
                                   evidence_count=max(1, op.evidence_count),
                                   source=Source.CONSOLIDATOR, extra=base_extra)
             self.add_long(entry)
-            kept = self._keep_episodes(d, op, entry)
+            kept = self._keep_episodes(d, op, entry.id, entry.content, entry.topic)
             archived = self._archive_sources(op.source_short_ids)
             return {"long_term_id": entry.id, "kind": "core", "satellite_ids": kept, "shorts_archived": archived}
+
+        if op.kind == DraftOpKind.AGE_OUT:
+            # Let go: what aging out always did, but as a verdict the reviewer saw.
+            archived = self._archive_sources(op.source_short_ids)
+            return {"long_term_id": None, "kind": "age_out", "shorts_archived": archived}
 
         if op.kind == DraftOpKind.VERBATIM:
             entry = LongTermEntry(content=content, topic=op.topic, kind="core",
@@ -670,14 +773,25 @@ class DraftMixin:
             core = self._long_row(op.target_core_id)
             if core is None:
                 raise DraftError(f"core '{op.target_core_id}' is gone")
-            sat_id = None
+            # the other cores the same episode supports; one purged meanwhile is skipped
+            also = []
+            for cid in dict.fromkeys(op.also_target_core_ids):
+                row = self._long_row(cid) if cid != op.target_core_id else None
+                if row is not None and row["metadata"].get("kind", "core") == "core":
+                    also.append(cid)
+            sat_ids: list[str] = []
             if (content or "").strip():
                 sat = LongTermEntry(content=content, topic=op.topic or core["metadata"].get("topic"),
-                                    kind="satellite", core_id=op.target_core_id,
+                                    kind="satellite", core_id=op.target_core_id, also_core_ids=also,
                                     evidence_count=max(1, op.evidence_count),
                                     source=Source.CONSOLIDATOR, extra=base_extra)
                 self.add_long(sat)
-                sat_id = sat.id
+                sat_ids.append(sat.id)
+            else:
+                # SUPPORT: the memory itself becomes the satellite - its own
+                # words and its date, not a small model's summary of it
+                sat_ids = self._keep_episodes(d, op, op.target_core_id, core["content"],
+                                              op.topic or core["metadata"].get("topic"), also=also)
             # the core grows: evidence, freshness, its pictures, and possibly its wording
             meta = dict(core["metadata"])
             meta["evidence_count"] = int(meta.get("evidence_count", 1) or 1) + max(1, op.evidence_count)
@@ -686,11 +800,14 @@ class DraftMixin:
                 meta["eidetic"] = self.merge_eidetic(self.eidetic_in(meta), inherited)
             restated = op.restated_content
             if restated and restated.strip() and restated.strip() != core["content"]:
-                self._restate_long(op.target_core_id, restated.strip(), meta)
+                self._restate_long(op.target_core_id, restated.strip(), meta)       # REFINE
             else:
                 self.long.update(ids=[op.target_core_id], metadatas=[_clean_meta(meta)])
+            for cid in also:
+                self._grow_core(cid, max(1, op.evidence_count))
             archived = self._archive_sources(op.source_short_ids)
-            return {"long_term_id": op.target_core_id, "satellite_id": sat_id,
+            return {"long_term_id": op.target_core_id, "satellite_id": sat_ids[0] if sat_ids else None,
+                    "satellite_ids": sat_ids, "also_core_ids": also,
                     "kind": "attach", "restated": bool(restated),
                     "evidence_count": meta["evidence_count"], "shorts_archived": archived}
 
@@ -700,17 +817,20 @@ class DraftMixin:
                 raise DraftError(f"core '{op.target_core_id}' is gone")
             # the old core's pictures come forward with the new one; the old keeps its own
             carried = self.merge_eidetic(self.eidetic_in(old["metadata"]), inherited)
+            # Its evidence is its own: the old core's episodes were evidence for
+            # the claim that turned out wrong (refine-vs-replace, 22 Oct 2026).
             entry = LongTermEntry(content=content, topic=op.topic or old["metadata"].get("topic"),
                                   kind="core", evidence_count=max(1, op.evidence_count),
                                   source=Source.CONSOLIDATOR,
                                   extra={**base_extra, "supersedes": op.target_core_id,
+                                         **({"contradicts": op.contradicts} if op.contradicts else {}),
                                          **({"eidetic": carried} if carried else {})})
             self.add_long(entry)
-            self.supersede_long(op.target_core_id, entry.id)
-            kept = self._keep_episodes(d, op, entry)
+            moved = self._demote_into(old, entry.id)
+            kept = self._keep_episodes(d, op, entry.id, entry.content, entry.topic)
             archived = self._archive_sources(op.source_short_ids)
             return {"long_term_id": entry.id, "kind": "core", "superseded": op.target_core_id,
-                    "satellite_ids": kept, "shorts_archived": archived}
+                    "satellite_ids": kept, "moved_satellites": moved, "shorts_archived": archived}
 
         if op.kind == DraftOpKind.RETELL:
             core = self._long_row(op.target_core_id)
@@ -741,9 +861,11 @@ class DraftMixin:
 
         raise DraftError(f"unknown operation kind {op.kind!r}")
 
-    def _keep_episodes(self, d: Draft, op: DraftOperation, core: LongTermEntry) -> list[str]:
-        """The episodes a new core was made from become its first satellites,
-        each with its own date, topic and pictures, so the core can be the
+    def _keep_episodes(self, d: Draft, op: DraftOperation, core_id: str, core_text: str,
+                       topic: Optional[str], also: Optional[list[str]] = None) -> list[str]:
+        """The episodes an operation was made from become satellites of its
+        core - a new core's first ones, or a supported core's newest - each
+        with its own date, topic and pictures, so the core can be the
         retelling and the detail still has somewhere to live. A source whose
         text IS the core's (verbatim; mechanical mode keeping the longest
         fragment whole) is not doubled under it."""
@@ -752,7 +874,7 @@ class DraftMixin:
             return []
         rows = _zip_get(self.short.get(ids=ids, include=["documents", "metadatas"]), None)
         rows.sort(key=lambda r: float((r.get("metadata") or {}).get("ts") or 0))
-        core_text = (core.content or "").strip()
+        core_text = (core_text or "").strip()
         kept: list[str] = []
         for r in rows:
             text = (r.get("content") or "").strip()
@@ -760,8 +882,9 @@ class DraftMixin:
                 continue
             meta = r.get("metadata") or {}
             own = self.eidetic_in(meta)
-            sat = LongTermEntry(content=text, topic=core.topic or meta.get("topic"), kind="satellite",
-                                core_id=core.id, evidence_count=1, source=Source.CONSOLIDATOR,
+            sat = LongTermEntry(content=text, topic=topic or meta.get("topic"), kind="satellite",
+                                core_id=core_id, also_core_ids=list(also or []),
+                                evidence_count=1, source=Source.CONSOLIDATOR,
                                 created_at=float(meta.get("ts") or time.time()),
                                 extra={"from_draft_id": d.id, "draft_op": op.index,
                                        "cluster_id": d.cluster_id or d.id, "source_short_ids": [r["id"]],
@@ -769,6 +892,42 @@ class DraftMixin:
             self.add_long(sat)
             kept.append(sat.id)
         return kept
+
+    def _grow_core(self, core_id: str, by: int) -> None:
+        """A core one more episode stands behind: its evidence and freshness."""
+        row = self._long_row(core_id)
+        if row is None:
+            return
+        meta = dict(row["metadata"])
+        meta["evidence_count"] = int(meta.get("evidence_count", 1) or 1) + max(1, by)
+        meta["last_confirmed"] = time.time()
+        self.long.update(ids=[core_id], metadatas=[_clean_meta(meta)])
+
+    def _demote_into(self, old: dict[str, Any], new_id: str) -> int:
+        """REPLACE, the core lifecycle (design note, 22 Oct 2026): the old
+        core becomes a satellite of the core that replaced it, and every
+        satellite of the old one moves under the new one, so the trail - what
+        was believed, why it changed, what fixed it - hangs together under
+        what is true now. superseded_by still points forward. A satellite
+        that also supports another core keeps that home. The moved ones are
+        history, not evidence: the new core's evidence_count is its own.
+        Returns how many satellites moved."""
+        from .collections import satellite_parents
+        old_id = old["id"]
+        moved = 0
+        for s in self.satellites_of(old_id):
+            parents = [new_id if p == old_id else p for p in satellite_parents(s["metadata"])]
+            parents = list(dict.fromkeys(parents))
+            smeta = dict(s["metadata"])
+            smeta["core_id"], smeta["also_core_ids"] = parents[0], parents[1:]
+            smeta["moved_from"] = old_id
+            self.long.update(ids=[s["id"]], metadatas=[_clean_meta(smeta)])
+            moved += 1
+        meta = dict(old["metadata"])
+        meta.update({"kind": "satellite", "core_id": new_id, "superseded_by": new_id,
+                     "was_core": True, "demoted_at": time.time()})
+        self.long.update(ids=[old_id], metadatas=[_clean_meta(meta)])
+        return moved
 
     def _restate_long(self, entry_id: str, new_content: str, meta: dict[str, Any]) -> None:
         """Replace a core's wording. The distilled retrieval key is re-embedded
@@ -834,7 +993,9 @@ class DraftMixin:
 
     # -- the surroundings -------------------------------------------------------
     def satellites_of(self, core_id: str) -> list[dict[str, Any]]:
+        """Everything that hangs under a core, its shared satellites included."""
+        from .collections import satellite_parents
         rows = _zip_get(self.long.get(include=["documents", "metadatas"]), None)
-        sats = [r for r in rows if r["metadata"].get("core_id") == core_id]
+        sats = [r for r in rows if core_id in satellite_parents(r["metadata"])]
         sats.sort(key=lambda r: r["metadata"].get("created_at", 0))
         return sats

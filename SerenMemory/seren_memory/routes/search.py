@@ -41,6 +41,7 @@ import math
 
 from fastapi import APIRouter, Body, Request
 
+from ..collections import satellite_parents
 from ..models.schemas import (
     SearchRequest, SearchHit, SearchResponse,
     TopicSearchRequest, TopicHit, TopicSearchResponse,
@@ -89,8 +90,7 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
             # Long-term filtering: satellites are the surroundings, not the
             # answer, and superseded cores are history - both off unless asked.
             if tier == "long" and not req.include_satellites and meta.get("kind") == "satellite":
-                cid = str(meta.get("core_id") or "")
-                if cid:
+                for cid in satellite_parents(meta):          # a shared episode finds each of its cores
                     prev = via.get(cid)
                     if prev is None or hit["distance"] < prev["raw_distance"]:
                         via[cid] = {"id": hit["id"], "content": hit["content"],
@@ -194,9 +194,8 @@ def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: 
     by_id = {i: (docs[k] if k < len(docs) else "", metas[k] or {}) for k, i in enumerate(ids)}
     sats: dict[str, list[tuple[float, str, str]]] = {}
     for i, (doc, meta) in by_id.items():
-        cid = meta.get("core_id")
-        if cid:
-            sats.setdefault(str(cid), []).append((float(meta.get("created_at", 0) or 0), i, doc))
+        for cid in satellite_parents(meta):
+            sats.setdefault(cid, []).append((float(meta.get("created_at", 0) or 0), i, doc))
     for h in cores:
         mine = sorted(sats.get(h.id, []), reverse=True)
         sup = h.metadata.get("supersedes")

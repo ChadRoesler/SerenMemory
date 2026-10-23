@@ -26,6 +26,21 @@ async def list_short(request: Request, limit: int = 100):
     return {"count": len(rows), "entries": rows[:limit]}
 
 
+@router.get("/aging")
+async def aging(request: Request, within_seconds: float = 0.0):
+    """The short-terms that reach the end of their lifetime within
+    within_seconds from now (already past it included), oldest first - what
+    a sleep decides about, and the only ones it touches. The lifetime is
+    Memory's (lifetimes.short_term_seconds), so the hippocampus never keeps
+    a second copy of the number. Pinned ones are listed and say so; ones a
+    pending draft holds are not."""
+    store = request.app.state.store
+    lifetime = float(request.app.state.config.lifetimes.short_term_seconds)
+    rows = store.aging_short(lifetime, max(0.0, float(within_seconds)))
+    return {"lifetime_seconds": lifetime, "within_seconds": within_seconds,
+            "count": len(rows), "entries": rows}
+
+
 @router.delete("/{entry_id}")
 async def delete_short(request: Request, entry_id: str):
     """Remove a short-term entry. This is fine to expose freely - short-term
