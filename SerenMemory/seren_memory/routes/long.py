@@ -7,6 +7,7 @@ hatch on short-term). What IS exposed:
 
     GET  /long                  - list cores (debugging / dashboard)
     GET  /long/{id}/satellites  - the surroundings of a core
+    GET  /long/map              - all of it as a constellation, for the Halls' Map
     POST /long/{id}/forget      - FLAG a memory: a purge request, executed at
                                   the hippocampus's next sleep with a tombstone
     POST /long/{id}/purge       - execute the purge now, with the cascade
@@ -45,6 +46,14 @@ async def list_long(request: Request, include_superseded: bool = False,
         rows = [r for r in rows if r["metadata"].get("kind", "core") != "satellite"]
     rows.sort(key=lambda r: r["metadata"].get("last_confirmed", 0), reverse=True)
     return {"count": len(rows), "entries": rows}
+
+
+@router.get("/map")
+async def memory_map(request: Request):
+    """Every core and satellite placed in three dimensions by what it means
+    (its embedding, by PCA), with the links between them: home, bridge,
+    history. Read-only; what the Halls' Map draws."""
+    return request.app.state.store.map_view()
 
 
 @router.get("/{entry_id}/satellites")

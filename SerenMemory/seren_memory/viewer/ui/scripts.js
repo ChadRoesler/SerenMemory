@@ -529,12 +529,18 @@ async function switchTab(tier) {
     showTab(tier);
     const isSearch = tier === 'search';
     const isOverview = tier === 'overview';
+    const isMap = tier === 'map';
     $('searchbar').style.display = isSearch ? 'flex' : 'none';
-    $('list-toolbar').style.display = (isSearch || isOverview) ? 'none' : 'flex';
-    $('entries').style.display = isOverview ? 'none' : 'flex';
+    $('list-toolbar').style.display = (isSearch || isOverview || isMap) ? 'none' : 'flex';
+    $('entries').style.display = (isOverview || isMap) ? 'none' : 'flex';
     $('overview-section').style.display = isOverview ? 'block' : 'none';
+    $('map-section').style.display = isMap ? 'block' : 'none';
+    document.body.classList.toggle('map-on', isMap);      // the Map fills the window: no page scroll under it
+    if (isMap) { window.scrollTo(0, 0); mapFrame(); }
+    if (!isMap) mapPause();
     clearError();
     try {
+        if (isMap) { await loadMap(); return; }
         if (tier === 'short') await loadShort();
         else if (tier === 'near') await loadNear();
         else if (tier === 'long') await loadLong();
@@ -545,6 +551,330 @@ async function switchTab(tier) {
         else if (tier === 'overview') { const r = await api('/'); loadOverview(r); }
     } catch (e) { showError(e.message); renderEntries(''); }
 }
+
+// ----------------------------------------------------------------------
+// The Map (23 Oct 2026): long-term as a constellation. The user wanted to see it -
+// "heres the cores, heres the sats, and heres how they all hook to eachother".
+// GET /long/map places every entry in 3D by what it means (its embedding, by
+// PCA) and names the links: home (a satellite's first core), bridge (one
+// episode supporting another story too) and history (a core's older wording
+// under what replaced it). Meaning keeps those places; Constellation lets the
+// links pull. A core's colour comes from where it sits, so a neighbourhood
+// reads as one hue and its satellites wear their core's. The 3D library is
+// vendored, served from /viewer/vendor/ and run from an object URL.
+// ----------------------------------------------------------------------
+const MAP = { graph: null, data: null, byId: new Map(), layout: 'meaning', sats: true,
+              rotate: !matchMedia('(prefers-reduced-motion: reduce)').matches,
+              selected: null, hood: null, hoodLinks: null, lit: null, lib: null, fitted: false };
+
+function loadMapLib() {
+    if (window.ForceGraph3D) return Promise.resolve();
+    if (!MAP.lib) {
+        MAP.lib = apiBlob('/viewer/vendor/3d-force-graph.min.js').then(url => new Promise((ok, bad) => {
+            const s = document.createElement('script');
+            s.src = url;
+            s.onload = () => ok();
+            s.onerror = () => bad(new Error('the 3D library did not load'));
+            document.head.appendChild(s);
+        }));
+        MAP.lib.catch(() => { MAP.lib = null; });
+    }
+    return MAP.lib;
+}
+
+function hslRgba(h, s, l, a) {
+    s /= 100; l /= 100;
+    const k = n => (n + h / 30) % 12, f = n => l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+    return `rgba(${Math.round(255 * f(0))},${Math.round(255 * f(8))},${Math.round(255 * f(4))},${a})`;
+}
+const endId = (e) => (e && typeof e === 'object') ? e.id : e;
+
+function mapPrepare(data) {
+    MAP.byId = new Map(data.nodes.map(n => [n.id, n]));
+    for (const n of data.nodes) {
+        n.subs = [];
+        const [x, y, z] = n.pos;
+        n.x = x; n.y = y; n.z = z;
+        n.hue = (Math.atan2(z, x) * 180 / Math.PI + 360 + y * 0.15) % 360;
+    }
+    for (const n of data.nodes) {
+        if (n.kind !== 'satellite') continue;
+        const home = MAP.byId.get((n.cores || [])[0]);
+        if (home) n.hue = home.hue;
+        for (const c of n.cores || []) { const core = MAP.byId.get(c); if (core) core.subs.push(n.id); }
+    }
+    mapPlace(data.nodes);
+    return data;
+}
+
+function mapPlace(nodes) {
+    for (const n of nodes) {
+        if (MAP.layout === 'meaning') { n.fx = n.pos[0]; n.fy = n.pos[1]; n.fz = n.pos[2]; }
+        else { n.fx = undefined; n.fy = undefined; n.fz = undefined; }
+    }
+}
+
+function mapNodeColor(n) {
+    const dim = (MAP.hood && !MAP.hood.has(n.id)) || (MAP.lit && !MAP.lit.has(n.id));
+    const a = dim ? 0.1 : 1;
+    if (MAP.lit && MAP.lit.has(n.id)) return `rgba(255,214,110,1)`;
+    if (n.was_core) return `rgba(138,147,166,${dim ? 0.08 : 0.55})`;
+    if (n.verbatim) return `rgba(255,243,196,${a})`;
+    if (n.kind === 'core') return hslRgba(n.hue, 88, n.superseded_by ? 40 : 62, a);
+    return hslRgba(n.hue, 70, 76, dim ? 0.07 : 0.8);
+}
+
+function mapNodeVal(n) {
+    if (n.kind === 'core') return 3 + 1.6 * Math.sqrt(n.evidence || 1) + (n.verbatim ? 1 : 0);
+    return n.was_core ? 0.45 : 0.8;
+}
+
+function mapLinkOn(l) { return !MAP.hoodLinks || MAP.hoodLinks.has(l); }
+
+function mapLinkColor(l) {
+    const on = mapLinkOn(l), sel = MAP.hoodLinks && on;
+    if (l.kind === 'bridge') return `rgba(255,210,122,${on ? 0.9 : 0.06})`;
+    if (l.kind === 'history') return `rgba(138,147,166,${on ? (sel ? 0.8 : 0.3) : 0.04})`;
+    const core = MAP.byId.get(endId(l.target));
+    return hslRgba(core ? core.hue : 0, 70, 70, on ? (sel ? 0.85 : 0.3) : 0.03);
+}
+
+function mapLabel(n) {
+    const kind = n.kind === 'core'
+        ? (n.verbatim ? 'core · kept verbatim' : `core · ${n.subs.length} episode${n.subs.length === 1 ? '' : 's'}`)
+        : (n.was_core ? 'an older wording' : (n.cores || []).length > 1 ? `satellite · ${n.cores.length} stories` : 'satellite');
+    const text = (n.text || '').length > 180 ? n.text.slice(0, 180) + '…' : (n.text || '');
+    return `<div class="map-tip"><div class="mt-kind">${escapeHtml(kind)}</div>` +
+           (n.topic ? `<div class="mt-topic">${escapeHtml(n.topic)}</div>` : '') +
+           `<div class="mt-text">${escapeHtml(text)}</div></div>`;
+}
+
+// Deep space behind the scene: a few hundred stars, a handful of them warm,
+// on a canvas under the transparent WebGL one - not the cores or the
+// satellites, the sky they hang in.
+function mapStars() {
+    const c = document.createElement('canvas');
+    c.className = 'map-stars';
+    c.width = 2400; c.height = 1500;
+    $('map-section').prepend(c);
+    twinkleStars(c, starField(520, c.width, c.height));
+}
+
+// The stars far behind everything twinkle: most a little, a few a lot, each
+// on its own clock, the bigger ones with a soft halo that breathes with them.
+// Redrawn at ~30 frames a second, and only while the canvas is on screen and
+// the tab is in front. prefers-reduced-motion gets a slower, fainter twinkle,
+// not a frozen sky: nothing moves, only brightness changes, and Windows hands
+// that setting to every browser on a box whose animations are turned off.
+function twinkleStars(c, stars) {
+    const x = c.getContext('2d');
+    const calm = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.45 : 1;
+    const draw = (t) => {
+        x.clearRect(0, 0, c.width, c.height);
+        for (const s of stars) {
+            const k = 1 - s.amp * calm * (0.5 + 0.5 * Math.sin(t * s.sp * calm + s.ph));
+            x.fillStyle = s.col;
+            if (s.r > 1.05) {
+                x.globalAlpha = s.a * k * 0.18;
+                x.beginPath(); x.arc(s.x, s.y, s.r * 3.2, 0, 2 * Math.PI); x.fill();
+            }
+            x.globalAlpha = s.a * k;
+            x.beginPath(); x.arc(s.x, s.y, s.r, 0, 2 * Math.PI); x.fill();
+        }
+        x.globalAlpha = 1;
+    };
+    draw(0);
+    let last = 0;
+    const tick = (now) => {
+        requestAnimationFrame(tick);
+        if (now - last < 33 || document.hidden || !c.getClientRects().length) return;
+        last = now;
+        draw(now / 1000);
+    };
+    requestAnimationFrame(tick);
+}
+
+function starField(n, w, h, yOf = () => Math.random() * h) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+        const big = Math.random() < 0.06, warm = Math.random() < 0.12, lively = Math.random() < 0.15;
+        out.push({ x: Math.random() * w, y: yOf(), r: big ? 1.1 + Math.random() * 0.9 : 0.3 + Math.random() * 0.7,
+                   col: warm ? '#ffd6aa' : '#d2e1ff', a: warm ? 0.35 + Math.random() * 0.5 : 0.2 + Math.random() * 0.6,
+                   amp: lively ? 0.55 + Math.random() * 0.4 : 0.1 + Math.random() * 0.2,
+                   sp: 0.6 + Math.random() * 1.8, ph: Math.random() * 6.283 });
+    }
+    return out;
+}
+
+
+// zoomToFit frames the whole bounding box, depth included, which leaves a
+// round cloud small on a wide screen: fit, then come in a little closer
+function mapFit(ms = 900) {
+    const g = MAP.graph;
+    if (!g) return;
+    g.zoomToFit(ms, 10);
+    setTimeout(() => {
+        const p = g.cameraPosition(), k = 0.72;
+        g.cameraPosition({ x: p.x * k, y: p.y * k, z: p.z * k }, undefined, 700);
+    }, ms + 60);
+}
+
+function mapBuild() {
+    mapStars();
+    const el = $('map-canvas');
+    const g = ForceGraph3D({ controlType: 'orbit' })(el)
+        .backgroundColor('rgba(0,0,0,0)')
+        .showNavInfo(false)
+        .nodeRelSize(3)
+        .nodeResolution(14)
+        .nodeOpacity(0.95)
+        .nodeVal(mapNodeVal)
+        .nodeColor(mapNodeColor)
+        .nodeLabel(mapLabel)
+        .nodeVisibility(n => MAP.sats || n.kind === 'core')
+        .linkVisibility(l => MAP.sats)
+        .linkColor(mapLinkColor)
+        .linkOpacity(1)
+        .linkWidth(l => (l.kind === 'bridge' ? 0.9 : 0.25) * (MAP.hoodLinks && MAP.hoodLinks.has(l) ? 2.6 : 1))
+        .linkDirectionalParticles(l => l.kind === 'bridge' ? 3 : 0)
+        .linkDirectionalParticleWidth(1.5)
+        .linkDirectionalParticleSpeed(0.0045)
+        .linkDirectionalParticleColor(() => '#ffe3a3')
+        .cooldownTicks(MAP.layout === 'meaning' ? 1 : 260)
+        .onNodeHover(n => { el.style.cursor = n ? 'pointer' : ''; })
+        .onNodeClick(n => mapSelect(n.id))
+        .onBackgroundClick(() => mapSelect(null))
+        .onEngineStop(() => { if (!MAP.fitted) { MAP.fitted = true; mapFit(); } });
+    g.d3Force('charge').strength(-16);
+    g.d3Force('link').distance(l => l.kind === 'bridge' ? 70 : l.kind === 'history' ? 14 : 24).strength(l => l.kind === 'bridge' ? 0.15 : 0.6);
+    const c = g.controls();
+    c.autoRotate = MAP.rotate;
+    c.autoRotateSpeed = 0.45;
+    el.addEventListener('pointerdown', () => { if (MAP.rotate) { MAP.rotate = false; c.autoRotate = false; $('map-rotate').checked = false; } });
+    new ResizeObserver(() => { if (el.clientWidth) g.width(el.clientWidth).height(el.clientHeight); }).observe(el);
+    MAP.graph = g;
+    mapWire();
+}
+
+function mapRefresh() {
+    const g = MAP.graph;
+    if (!g) return;
+    g.nodeColor(g.nodeColor()).linkColor(g.linkColor()).linkWidth(g.linkWidth())
+     .nodeVisibility(g.nodeVisibility()).linkVisibility(g.linkVisibility());
+}
+
+function mapSelect(id) {
+    const n = id ? MAP.byId.get(id) : null;
+    MAP.selected = n;
+    if (!n) {
+        MAP.hood = MAP.hoodLinks = null;
+        $('map-info').hidden = true;
+        mapRefresh();
+        return;
+    }
+    const hood = new Set([n.id, ...(n.cores || []), ...n.subs]);
+    if (n.superseded_by) hood.add(n.superseded_by);
+    MAP.hood = hood;
+    MAP.hoodLinks = new Set(MAP.data.links.filter(l => endId(l.source) === n.id || endId(l.target) === n.id));
+    mapRefresh();
+    mapInfo(n);
+    const d = n.kind === 'core' ? 110 : 70, r = Math.hypot(n.x, n.y, n.z) || 1, k = 1 + d / r;
+    MAP.graph.cameraPosition({ x: n.x * k, y: n.y * k, z: n.z * k }, { x: n.x, y: n.y, z: n.z }, 1400);
+}
+
+function mapRef(id) {
+    const m = MAP.byId.get(id);
+    if (!m) return `<li class="faint">${escapeHtml(id.slice(0, 8))} (not on the map)</li>`;
+    const t = (m.text || '').length > 110 ? m.text.slice(0, 110) + '…' : m.text;
+    const sw = m.was_core ? 'rgba(138,147,166,1)' : m.verbatim ? 'rgba(255,243,196,1)' : hslRgba(m.hue, 80, 66, 1);
+    return `<li><button class="mi-ref" data-id="${escapeHtml(m.id)}"><i style="background:${sw}"></i>${escapeHtml(t)}</button></li>`;
+}
+
+function mapInfo(n) {
+    const kind = n.kind === 'core'
+        ? (n.verbatim ? 'core · kept verbatim' : n.superseded_by ? 'core · replaced' : 'core')
+        : n.was_core ? 'an older wording' : 'satellite';
+    const facts = [kind, `evidence ${n.evidence}`, n.pictures ? `${n.pictures} picture${n.pictures === 1 ? '' : 's'}` : '']
+        .filter(Boolean).map(escapeHtml).join(' · ');
+    const homes = (n.cores || []);
+    const subs = n.subs.filter(s => !MAP.byId.get(s)?.was_core), olds = n.subs.filter(s => MAP.byId.get(s)?.was_core);
+    $('map-info').innerHTML = `
+        <button class="mi-close" aria-label="Close" data-close>×</button>
+        <div class="mi-kind">${facts}</div>
+        ${n.topic ? `<div class="mi-topic">${escapeHtml(n.topic)}</div>` : ''}
+        <div class="mi-text">${escapeHtml(n.text || '')}</div>
+        <div class="mi-when">${escapeHtml(fmtTs(n.created_at))} · <span class="mono">${escapeHtml(n.id.slice(0, 8))}</span></div>
+        ${homes.length ? `<h4>${n.was_core ? 'replaced by' : homes.length > 1 ? `hangs on ${homes.length} stories` : 'hangs on'}</h4><ul>${homes.map(mapRef).join('')}</ul>` : ''}
+        ${subs.length ? `<h4>its episodes (${subs.length})</h4><ul>${subs.map(mapRef).join('')}</ul>` : ''}
+        ${olds.length ? `<h4>what it said before</h4><ul>${olds.map(mapRef).join('')}</ul>` : ''}`;
+    $('map-info').hidden = false;
+    $('map-info').scrollTop = 0;
+}
+
+function mapLight(q) {
+    q = (q || '').trim().toLowerCase();
+    MAP.lit = q ? new Set(MAP.data.nodes.filter(n => (n.text || '').toLowerCase().includes(q) ||
+                                                    (n.topic || '').toLowerCase().includes(q)).map(n => n.id)) : null;
+    mapRefresh();
+    mapStats();
+}
+
+function mapStats() {
+    const c = MAP.data.counts;
+    $('map-stats').textContent = `${c.cores} cores · ${c.satellites} satellites · ${c.bridges} bridges` +
+        (MAP.lit ? ` · ${MAP.lit.size} lit` : '');
+}
+
+function mapWire() {
+    document.querySelectorAll('.map-seg-btn').forEach(b => b.addEventListener('click', () => {
+        if (MAP.layout === b.dataset.layout) return;
+        MAP.layout = b.dataset.layout;
+        document.querySelectorAll('.map-seg-btn').forEach(x => x.classList.toggle('on', x === b));
+        mapPlace(MAP.data.nodes);
+        MAP.graph.cooldownTicks(MAP.layout === 'meaning' ? 1 : 260).d3ReheatSimulation();
+        MAP.fitted = false;
+    }));
+    $('map-sats').addEventListener('change', (e) => { MAP.sats = e.target.checked; mapRefresh(); });
+    $('map-rotate').addEventListener('change', (e) => { MAP.rotate = e.target.checked; MAP.graph.controls().autoRotate = MAP.rotate; });
+    $('map-search').addEventListener('input', (e) => mapLight(e.target.value));
+    $('map-fit').addEventListener('click', () => mapFit(800));
+    $('map-info').addEventListener('click', (e) => {
+        if (e.target.closest('[data-close]')) return mapSelect(null);
+        const ref = e.target.closest('.mi-ref');
+        if (ref) mapSelect(ref.dataset.id);
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.tab === 'map') mapSelect(null); });
+}
+
+async function loadMap() {
+    $('map-loading').hidden = false;
+    $('map-loading').textContent = 'charting…';
+    try {
+        const [, data] = await Promise.all([loadMapLib(), api('/long/map')]);
+        MAP.data = mapPrepare(data);
+        $('map-rotate').checked = MAP.rotate;
+        if (!MAP.graph) mapBuild();
+        MAP.fitted = false;
+        MAP.graph.cooldownTicks(MAP.layout === 'meaning' ? 1 : 260).graphData({ nodes: data.nodes, links: data.links });
+        MAP.graph.resumeAnimation();
+        if (MAP.layout === 'meaning') setTimeout(() => { MAP.fitted = true; mapFit(); }, 400);
+        mapLight($('map-search').value);
+        if (MAP.selected) mapSelect(MAP.byId.has(MAP.selected.id) ? MAP.selected.id : null);
+        $('map-loading').hidden = true;
+    } catch (e) {
+        $('map-loading').textContent = '';
+        $('map-loading').hidden = true;
+        throw e;
+    }
+}
+
+function mapPause() { if (MAP.graph) MAP.graph.pauseAnimation(); }
+
+function mapFrame() {
+    const bar = document.querySelector('.tabbar') || document.querySelector('header');
+    if (bar) $('map-section').style.top = Math.round(bar.getBoundingClientRect().bottom) + 'px';
+}
+window.addEventListener('resize', () => { if (state.tab === 'map') mapFrame(); });
 
 $('do-search').addEventListener('click', doSearch);
 $('search-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });

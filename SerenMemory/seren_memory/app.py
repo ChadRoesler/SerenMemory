@@ -375,7 +375,13 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                              "kept_episodes", "retell",
                              # 22 Oct 2026: the sleep touches only what is aging
                              "aging", "age_out", "support_keeps_episode", "replace_lifecycle",
-                             "shared_satellites"]}
+                             "shared_satellites",
+                             # 23 Oct 2026: a satellite can be linked to, or come off, a core after it lands
+                             "relink",
+                             # 23 Oct 2026: pruned says why, a denied op says where it went, a short-term can be taken back
+                             "consumed_by", "redrafted_in", "retract", "prompt_echo_guard", "fold", "review_note",
+                             # 23 Oct 2026: the Map - long-term as a constellation
+                             "map"]}
 
     # -- The Halls viewer --
     # Serves the introspection UI same-origin. This isn't just a debug tool -
@@ -400,6 +406,20 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
             accent="#ff6e8a",
         )
         return HTMLResponse(html)
+
+    # The Map's 3D library (3d-force-graph 1.80.0, MIT, vendored: the Halls
+    # work on a LAN with no internet). Under /viewer/, so public like the page
+    # itself (Meninges treats /viewer/... as public): it is a library, no data.
+    _VENDOR = {"3d-force-graph.min.js"}
+
+    @app.get("/viewer/vendor/{name}")
+    async def viewer_vendor(name: str):
+        from pathlib import Path
+        from fastapi.responses import FileResponse
+        if name not in _VENDOR:
+            raise HTTPException(404, "no such file")
+        return FileResponse(Path(__file__).resolve().parent / "viewer" / "vendor" / name,
+                            media_type="text/javascript", headers={"Cache-Control": "private, max-age=86400"})
 
     # -- Brief submission --
     @app.post("/brief")

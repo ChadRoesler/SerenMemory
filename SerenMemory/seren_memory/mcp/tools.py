@@ -31,6 +31,7 @@ TOOL ROSTER (organised by what they do, not API path):
     release_memory_verbatim     take that mark back off
     promote_memory_now          immediate verbatim promotion to long-term
     forget_memory               the Lacuna gate on long-term
+    retract_memory              take back a short-term I wrote (a duplicate, a mistake)
 
   The sleep (SerenHippocampus drafts; the main model reviews):
     submit_brief                what mattered - it opens the next sleep
@@ -39,10 +40,15 @@ TOOL ROSTER (organised by what they do, not API path):
     review_draft               approve or deny each operation, with a critique
     undo_restate               flag a core to get its earlier wording back
     get_satellites              a core's surroundings
+    where_else                  where else a core's or satellite's story might hang
+    link_satellite              flag a satellite to hang on one more core
+    unlink_satellite            flag a satellite to come off one of its cores
+    fold_satellite              flag a satellite that is the same episode as another to fold into it
     purge_memory_now            the emergency door (a flag, executed now)
 """
 from __future__ import annotations
 
+import json
 import math
 import time
 from typing import Any, Optional
@@ -311,11 +317,17 @@ class MemoryToolImpl:
         comes back here as tier "pruned" (recall does not see it). If an
         operation landed holding only part of a fragment, this is how to
         read the rest and write it back with remember.
+
+        PRUNED IS NOT LOST. A pruned entry carries pruned_because: what sent
+        it there - the operation that consumed it and what it became (the
+        core, and the satellite that keeps its words), an age-out, or a
+        retraction. Read it before writing the memory again: on 23 Oct 2026
+        I took a landed episode for a lost one and wrote a duplicate.
         """
         row = self.store.get_by_id(memory_id)
         if row is None:
             return {"ok": False, "error": f"no memory '{memory_id}' in short/near/long, nor in the pruned archive"}
-        return {
+        out = {
             "ok": True,
             "id": row["id"],
             "tier": row["tier"],
@@ -323,6 +335,9 @@ class MemoryToolImpl:
             "topic": row["metadata"].get("topic"),
             "metadata": row["metadata"],
         }
+        if row["tier"] == "pruned":
+            out["pruned_because"] = _pruned_because(row["metadata"])
+        return out
 
     # -- Open loops (near-term) -------------------------------------------
     def remember_for_later(self, intent: str,
@@ -446,6 +461,21 @@ class MemoryToolImpl:
             return {"ok": False, "error": f"no long-term entry '{long_id}'"}
         return {"ok": True, "id": long_id, "flagged_reason": reason}
 
+    def retract_memory(self, memory_id: str, reason: str) -> dict:
+        """Take back a SHORT-TERM memory I wrote: a duplicate, a mistake,
+        something written in the wrong words (write it again right, then
+        retract the wrong one). It goes to the pruned archive with the
+        reason - readable by id with get_memory until the sweep - and no
+        draft will see it. Not for long-term (that is forget_memory), not
+        for one a pending draft holds (decide it there), not for a pinned
+        one (release_memory_verbatim first). A reason is required.
+        """
+        try:
+            out = self.store.retract_short(memory_id, reason)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, **out}
+
     # -- Brief + consolidation --------------------------------------------
     def submit_brief(self, summary: str,
                      promote_hints: Optional[list[str]] = None,
@@ -543,6 +573,10 @@ class MemoryToolImpl:
         A SATELLITE CAN HANG ON MORE THAN ONE CORE. On an attach, on any
         attempt, name the others the episode also supports:
           {"op": 3, "verdict": "approve", "edited_also_core_ids": ["<core id>"]}
+        And the other way: where a core is new or newly worded, get_draft
+        shows nearby_satellites, existing episodes elsewhere that sit close
+        to it. If one is part of this story too, on any attempt:
+          {"op": 0, "verdict": "approve", "link_satellite_ids": ["<satellite id>"]}
 
         WHAT IT CONSUMES, on any attempt. Approving archives the short-terms
         the operation names in source_short_ids, and only those. Where
@@ -552,6 +586,9 @@ class MemoryToolImpl:
         name it, with the rest:
           {"op": 2, "verdict": "approve", "edited_source_short_ids": ["<id>", "<id>"]}
         If it does not, leave it: it waits for a later sleep, or ages out.
+
+        note is about the review as a whole and is kept once, on the draft
+        (extra.review_note); a note about one operation goes in its decision.
         """
         from ..draft import DraftError
         try:
@@ -629,6 +666,101 @@ class MemoryToolImpl:
         return {"core": core, "satellites": sats, "count": len(sats),
                 "supersedes": self.store.get_by_id(sup) if sup else None}
 
+    def where_else(self, memory_id: str, n: int = 5) -> dict:
+        """Where else a long-term memory's story might hang. Changes nothing.
+
+        For a CORE: the satellites under other cores that sit closest to it,
+        each with the cores it hangs on now - an episode that is part of this
+        story too can be linked here (link_satellite).
+
+        For a SATELLITE: how close it sits to each core it hangs on now
+        (hangs_on, with similarity), and the nearest cores it does not
+        (nearest_other_cores). A misfile reads as its own core far below a
+        stranger; a real two-core story as two cores both close.
+
+        Similarity is a hint, not a verdict: in a store about one person,
+        everything sits near everything else. Read the memories.
+        """
+        try:
+            return {"ok": True, **self.store.where_else(memory_id, n=n)}
+        except KeyError:
+            return {"ok": False, "error": f"no long-term entry '{memory_id}'"}
+
+    def link_satellite(self, satellite_id: str, core_id: str, reason: str) -> dict:
+        """FLAG a satellite to hang on one more core: an episode that is part
+        of that core's story too. It keeps the cores it hangs on now, and the
+        new core gains it as evidence.
+
+        A flag, the same gate as undo_restate: nothing changes now, the
+        hippocampus executes it on its next tick, and the reason stays on the
+        satellite (relinks). To MOVE a misfiled satellite, link it to its
+        right core and unlink it from the wrong one; both wait for the same
+        tick. A reason is required.
+        """
+        return self._relink(satellite_id, reason, link=[core_id])
+
+    def unlink_satellite(self, satellite_id: str, core_id: str, reason: str) -> dict:
+        """FLAG a satellite to come off one of its cores (a misfile, or a
+        link that turned out wrong); that core gives back the evidence.
+
+        A satellite always hangs somewhere: unlinking its only core is
+        refused unless a link to another core is already flagged. Executed on
+        the hippocampus's next tick, like link_satellite. A reason is required.
+        """
+        return self._relink(satellite_id, reason, unlink=[core_id])
+
+    def fold_satellite(self, satellite_id: str, into_id: str, reason: str) -> dict:
+        """FLAG a satellite that holds the same episode as another to fold
+        into it: the episode kept twice (the same words under two cores, or
+        twice under one) becomes one. where_else shows look_alikes, the
+        satellites that sit near-identical to one - candidates, not verdicts.
+
+        On the hippocampus's next tick: into_id hangs on every core either
+        hung on, a core both stood under gives back the evidence it counted
+        twice, the pictures come along, and the folded one's words (when they
+        differ), date and the reason stay in into_id's folds. Then
+        satellite_id goes. A core's earlier wording (was_core) is history
+        and is not folded away. A reason is required.
+        """
+        from ..draft import DraftError
+        try:
+            out = self.store.flag_fold(satellite_id, into_id, reason)
+        except KeyError:
+            return {"ok": False, "error": f"no long-term entry '{satellite_id}'"}
+        except DraftError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, **out, "note": "Flagged. The hippocampus folds it on its next tick."}
+
+    def _relink(self, satellite_id: str, reason: str, **change: list[str]) -> dict:
+        from ..draft import DraftError
+        try:
+            out = self.store.flag_relink(satellite_id, reason=reason, **change)
+        except KeyError:
+            return {"ok": False, "error": f"no long-term entry '{satellite_id}'"}
+        except DraftError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, **out, "note": "Flagged. The hippocampus moves it on its next tick."}
+
+def _pruned_because(meta: dict[str, Any]) -> str:
+    """What sent a pruned entry to the archive, in a sentence."""
+    if meta.get("retracted"):
+        return f"retracted: {meta['retracted']}"
+    if meta.get("consumed_by_draft"):
+        kind = meta.get("consumed_as")
+        if kind == "age_out":
+            return (f"aged out by an approved verdict (draft {meta['consumed_by_draft']}, op "
+                    f"{meta.get('consumed_by_op')}): let go on purpose")
+        sats = meta.get("consumed_satellites") or []
+        if isinstance(sats, str):
+            sats = [sats] if not sats.startswith("[") else json.loads(sats)
+        return (f"consumed, not lost: draft {meta['consumed_by_draft']} op {meta.get('consumed_by_op')} ({kind}) "
+                f"made it part of {meta.get('consumed_into') or 'long-term'}" +
+                (f"; its words live on as satellite {', '.join(sats)}" if sats else ""))
+    if meta.get("aged_out"):
+        return "aged out at the end of its life, without a verdict"
+    return "archived before 23 Oct 2026, when the reason started being kept: check the drafts that cite it"
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  Registration entry point
 # ═══════════════════════════════════════════════════════════════════════
@@ -658,6 +790,7 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig) -> Me
     mcp.tool()(impl.release_memory_verbatim)
     mcp.tool()(impl.promote_memory_now)
     mcp.tool()(impl.forget_memory)
+    mcp.tool()(impl.retract_memory)
 
     # The sleep: the brief that opens it, the drafts it proposes
     mcp.tool()(impl.submit_brief)
@@ -667,6 +800,10 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig) -> Me
     mcp.tool()(impl.review_draft)
     mcp.tool()(impl.get_satellites)
     mcp.tool()(impl.undo_restate)
+    mcp.tool()(impl.where_else)
+    mcp.tool()(impl.link_satellite)
+    mcp.tool()(impl.unlink_satellite)
+    mcp.tool()(impl.fold_satellite)
     mcp.tool()(impl.audit_drafts)
     mcp.tool()(impl.purge_memory_now)
 

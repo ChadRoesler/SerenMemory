@@ -234,6 +234,8 @@ class DraftOperation(BaseModel):
     review_edits: dict[str, Any] = Field(default_factory=dict, description="What the reviewer changed on approval "
                                          "(kind, target, restate, sources): the drafted values, kept for the audit.")
     long_term_id: Optional[str] = Field(None, description="What this operation became or touched.")
+    linked_satellite_ids: list[str] = Field(default_factory=list, description="Existing satellites the reviewer "
+                                            "also hung under this operation's core on approval (link_satellite_ids).")
     reviewed_at: Optional[float] = Field(None)
 
 

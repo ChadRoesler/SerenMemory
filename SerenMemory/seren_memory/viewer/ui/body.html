@@ -26,4 +26,30 @@
 
     <div class="entries" id="entries"></div>
     <div id="overview-section" style="display:none;"></div>
+
+    <!-- The Map (23 Oct 2026): long-term as a constellation. The scene fills
+         #map-canvas; the controls, legend and the selected memory float over it. -->
+    <div id="map-section" style="display:none;">
+        <div id="map-canvas"></div>
+        <div class="map-controls">
+            <div class="map-seg" role="group" aria-label="Layout">
+                <button class="map-seg-btn on" data-layout="meaning" title="Placed by what each memory means">Meaning</button>
+                <button class="map-seg-btn" data-layout="constellation" title="Pulled together by what hangs on what">Constellation</button>
+            </div>
+            <label class="map-check"><input type="checkbox" id="map-sats" checked /> satellites</label>
+            <label class="map-check"><input type="checkbox" id="map-rotate" checked /> drift</label>
+            <input type="search" id="map-search" placeholder="light up…" aria-label="Light up memories that mention" />
+            <button class="map-btn" id="map-fit" title="Fit everything in view">⌖</button>
+        </div>
+        <div class="map-legend">
+            <div class="map-stats" id="map-stats"></div>
+            <div><i class="lg-core"></i>core <span class="faint">(size: evidence)</span></div>
+            <div><i class="lg-sat"></i>satellite</div>
+            <div><i class="lg-verb"></i>kept verbatim</div>
+            <div><i class="lg-bridge"></i>bridge: one episode, two stories</div>
+            <div><i class="lg-hist"></i>an older wording</div>
+        </div>
+        <div class="map-info" id="map-info" hidden></div>
+        <div class="map-loading" id="map-loading">charting…</div>
+    </div>
 </div>

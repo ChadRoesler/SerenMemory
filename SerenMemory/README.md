@@ -192,6 +192,60 @@ purpose: like delete, it is not something a person holding the token gets to
 do to someone's memory. The model asks; the hippocampus acts; the record
 stays.
 
+**A satellite can find another home, through the same gate.** A satellite
+can hang on more than one core, and it no longer has to stay where it was
+born. When a review leaves a core new or newly worded, the review view shows
+`nearby_satellites` (the existing episodes that sit closest to it, with the
+cores they hang on), and the approval can carry `link_satellite_ids` to hang
+them under it as well. Afterwards, the `link_satellite` and
+`unlink_satellite` MCP tools flag a change with a reason, and the hippocampus
+carries it out on its next tick; a move is a link and an unlink. A satellite
+always keeps at least one core, a link is evidence for the core it adds and
+an unlink takes that back, and every change is logged on the satellite
+(`relinks`). `where_else` (read-only) shows a satellite's own cores against
+the nearest strangers, or a core's nearby satellites. Similarity only puts
+candidates in front of the model; nothing is linked by a threshold, because
+in a store about one person everything sits near everything else.
+
+**Pruned is not lost, and the trail reads both ways.** A short-term that
+leaves for the pruned archive now says why in its metadata: the operation
+that consumed it and what it became (`consumed_by_draft`, `consumed_as`,
+`consumed_into`, `consumed_satellites`), an age-out (`aged_out`), or a
+retraction (`retracted`). `get_memory` adds a `pruned_because` sentence for
+it. In the review view, a denied operation whose chain has another attempt
+shows `redrafted_in`: the operation that carries it now, with its status and
+where it landed. The `retract_memory` MCP tool takes back a short-term the
+model wrote (a duplicate, or a mistake) with a reason, into the archive. It
+refuses long-term entries (use forget), entries a pending draft holds, and
+pinned ones. A restatement that echoes the hippocampus's own core list (the
+"(N episode(s) already attached)" count, or the core cut off at "...") is
+refused as a rewording, the same way as one that drops most of the core.
+
+**The same episode kept twice becomes one.** `where_else` on a satellite
+shows its `look_alikes`: satellites with the same words, or near-identical
+ones. `fold_satellite` flags one to fold into the other, with a reason. On
+the next tick the survivor hangs on every core either one hung on, a core
+that counted both gives back the double count, the pictures come along, and
+the folded one's date, cores, reason, and words (when they differ) stay in
+the survivor's `folds`. A core's earlier wording (`was_core`) is history and
+is never folded away. A review's `note` is kept once, on the draft
+(`extra.review_note`); an operation keeps only a note written for it.
+
+**The Map.** The Halls have a Map tab that shows all of long-term as a 3D
+constellation (`GET /long/map`, read-only). Every core and satellite is
+placed by what it means: its stored embedding, cut to three dimensions by
+PCA. The lines are the structure. A satellite has a line to its first core
+(home), a gold bridge with light running along it to every other core it
+supports, and an older wording has a grey line to the core that took its
+place (history). A core's colour comes from where it sits, so a
+neighbourhood reads as one hue. **Meaning** keeps those places;
+**Constellation** lets the links pull each core's episodes around it.
+Clicking a memory flies the camera to it and opens its full text, its cores
+and its episodes. "Light up" highlights every memory that mentions a word.
+The 3D library (3d-force-graph 1.80.0, MIT) is vendored in `viewer/vendor/`
+and served under `/viewer/` like the page, so the Map works on a LAN with no
+internet.
+
 ### Emergency purge
 
 For a true "this must be gone immediately" case, `POST /long/{id}/purge`
@@ -229,7 +283,7 @@ shows a retell beside the wording it replaces (`retell_check`):
 | `POST /drafts/{id}/close`      | hippocampus | the cull: a reviewed draft whose chain has landed is closed; it leaves the reviewed queue (409 while pending) |
 | `POST /brief/{id}/consume`     | hippocampus | the brief that opened the sleep is retired once the chain lands; `GET /brief` shows open briefs only unless `include_consumed=true` |
 | `GET /long/{id}/satellites`    | anyone     | a core's surroundings                         |
-| `POST /tidy`                   | hippocampus| age out, maintain near-term, sweep, and execute the flags: purge what was flagged, put back the wording of cores flagged with `undo_restate` |
+| `POST /tidy`                   | hippocampus| age out, maintain near-term, sweep, and execute the flags: purge what was flagged, put back the wording of cores flagged with `undo_restate`, move satellites flagged with `link_satellite` / `unlink_satellite` |
 | `POST /long/{id}/purge`        | hippocampus, or the model in an emergency | execute a purge with the cascade; `GET /tombstones` |
 
 **Reviewing.** Each operation gets its own verdict. A denial needs a

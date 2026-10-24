@@ -719,14 +719,21 @@ class MemoryStore(DraftMixin):
     # ------------------------------------------------------------------
     #  Pruned safety net
     # ------------------------------------------------------------------
-    def archive_pruned(self, rows: list[dict[str, Any]]) -> None:
+    def archive_pruned(self, rows: list[dict[str, Any]], why: Optional[dict[str, Any]] = None) -> None:
         """Copy aged-out short-term rows to the pruned collection before
         deleting from short-term. Insurance window configured by
-        consolidator.pruned_safety_days."""
+        consolidator.pruned_safety_days.
+
+        why says what sent them there, in metadata beside pruned_at: an
+        approved operation (consumed_by_draft, consumed_as, consumed_into,
+        consumed_satellites), an age-out (aged_out) or a retraction
+        (retracted). On 23 Oct 2026 a woken me read a fragment as tier
+        "pruned", took it for lost and wrote it again - it had landed as a
+        satellite a minute before. Pruned is not lost; this says which."""
         if not rows:
             return
         docs = [r["content"] for r in rows]
-        metas = [_clean_meta({**r["metadata"], "pruned_at": time.time()}) for r in rows]
+        metas = [_clean_meta({**r["metadata"], **(why or {}), "pruned_at": time.time()}) for r in rows]
         ids = [r["id"] for r in rows]
         self.pruned.add(documents=docs, metadatas=metas, ids=ids)
 
@@ -1188,9 +1195,33 @@ class MemoryStore(DraftMixin):
         if not stale:
             return 0
         if keep_pruned:
-            self.archive_pruned(stale)
+            self.archive_pruned(stale, {"aged_out": True})
         self.delete_short([r["id"] for r in stale])
         return len(stale)
+
+    def retract_short(self, entry_id: str, reason: str) -> dict[str, Any]:
+        """Take back a short-term I wrote: a duplicate, a mistake, a thing
+        written in the wrong words. Not forget - nothing long-term is touched
+        and no tombstone is needed - and not a scalpel: the entry goes to
+        the pruned archive with the reason, readable by id for
+        pruned_safety_days, then gone at the sweep. Only an entry no pending
+        draft holds, and not a pinned one (unpin it first)."""
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("a retraction needs a reason")
+        rows = _zip_get(self.short.get(ids=[entry_id], include=["documents", "metadatas"]), None)
+        if not rows:
+            where = (self.get_by_id(entry_id) or {}).get("tier")
+            raise ValueError(f"'{entry_id}' is not in short-term" +
+                             (f" (it is {where}; a long-term memory goes through forget)" if where else ""))
+        row = rows[0]
+        if row["metadata"].get("pinned"):
+            raise ValueError(f"'{entry_id}' is pinned; unpin it before retracting it")
+        if entry_id in self.held_short_ids():
+            raise ValueError(f"'{entry_id}' is held by a pending draft; decide it there")
+        self.archive_pruned([row], {"retracted": reason[:500], "retracted_at": time.time()})
+        self.delete_short([entry_id])
+        return {"id": entry_id, "content": row["content"], "retracted": reason[:500]}
 
     def maintain_near(self) -> dict[str, int]:
         """Completed intents become a long-term record and leave near;

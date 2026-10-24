@@ -109,7 +109,7 @@ include = ["seren_memory*"]
 # shell on an installed copy (works in dev checkout, silently breaks once
 # installed - the classic package-data gotcha).
 [tool.setuptools.package-data]
-seren_memory = ["viewer/ui/*.html", "viewer/ui/*.css", "viewer/ui/*.js"]
+seren_memory = ["viewer/ui/*.html", "viewer/ui/*.css", "viewer/ui/*.js", "viewer/vendor/*.js", "viewer/vendor/*.txt"]
 
 [tool.setuptools_scm]
 # .git is one level above pyproject.toml (repo root)

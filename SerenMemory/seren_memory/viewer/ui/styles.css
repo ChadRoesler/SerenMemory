@@ -897,3 +897,188 @@ code.id {
 
         .tabbar .tab { padding: 10px 11px; }
 }
+
+/* -- the Map (23 Oct 2026): long-term as a constellation -------------------
+   A window onto deep space, full-bleed under the tabs; the controls, legend
+   and the chosen memory float over it on glass. */
+.tab[data-tab="map"] { color: var(--long); }
+body.map-on { overflow: hidden; }
+
+/* fixed under the tab bar (its top is set from the bar's bottom edge in
+   mapFrame()): the page column is capped and not centred on the window, so
+   breaking out of it with margins left the scene off to one side */
+#map-section {
+    position: fixed;
+    top: 129px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    overflow: hidden;
+    background:
+        radial-gradient(1px 1px at 12% 22%, #fff9 50%, transparent 51%),
+        radial-gradient(1px 1px at 68% 14%, #fff7 50%, transparent 51%),
+        radial-gradient(1.5px 1.5px at 84% 62%, #fffa 50%, transparent 51%),
+        radial-gradient(1px 1px at 33% 78%, #fff6 50%, transparent 51%),
+        radial-gradient(1px 1px at 52% 44%, #fff5 50%, transparent 51%),
+        radial-gradient(1.5px 1.5px at 6% 88%, #fff8 50%, transparent 51%),
+        radial-gradient(1px 1px at 92% 30%, #fff6 50%, transparent 51%),
+        radial-gradient(900px 600px at 25% 30%, #2a1840aa 0%, transparent 60%),
+        radial-gradient(800px 700px at 80% 75%, #0f3a4699 0%, transparent 60%),
+        radial-gradient(600px 400px at 60% 10%, #3b1d2a88 0%, transparent 65%),
+        #06070f;
+}
+
+#map-canvas { position: absolute; inset: 0; }
+.map-stars { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+#map-canvas canvas { display: block; }
+
+.map-controls, .map-legend, .map-info {
+    position: absolute;
+    background: rgba(18, 19, 34, 0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    color: var(--text);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+.map-controls {
+    top: 14px;
+    left: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    max-width: calc(100% - 28px);
+}
+
+.map-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.map-seg-btn, .map-btn {
+    background: transparent;
+    color: var(--muted);
+    border: 0;
+    padding: 6px 11px;
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+.map-seg-btn + .map-seg-btn { border-left: 1px solid var(--line); }
+.map-seg-btn.on { background: rgba(111, 243, 214, 0.14); color: var(--long); }
+.map-seg-btn:hover, .map-btn:hover { color: var(--text); }
+.map-btn { border: 1px solid var(--line); border-radius: 8px; font-size: 15px; padding: 3px 9px; }
+
+.map-check { font-size: 12.5px; color: var(--muted); display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+
+#map-search {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 12.5px;
+    width: 150px;
+}
+#map-search:focus { outline: none; border-color: var(--gold); }
+
+.map-legend {
+    left: 14px;
+    bottom: 14px;
+    padding: 10px 13px;
+    font-size: 12px;
+    color: var(--muted);
+    display: grid;
+    gap: 5px;
+}
+.map-legend i { display: inline-block; vertical-align: middle; margin-right: 8px; }
+.map-legend .faint { color: var(--faint); }
+.map-stats { color: var(--text); font-size: 12.5px; margin-bottom: 3px; }
+.lg-core { width: 11px; height: 11px; border-radius: 50%; background: conic-gradient(#ff6e8a, #f2c14e, #6ff3d6, #c7a6ff, #ff6e8a); }
+.lg-sat { width: 5px; height: 5px; border-radius: 50%; background: #cfd6ff; margin-left: 3px; margin-right: 11px !important; }
+.lg-verb { width: 9px; height: 9px; border-radius: 50%; background: #fff3c4; box-shadow: 0 0 6px #fff3c4; margin-left: 1px; margin-right: 9px !important; }
+.lg-bridge { width: 18px; height: 2px; background: #ffd27a; box-shadow: 0 0 5px #ffd27a; }
+.lg-hist { width: 18px; height: 0; border-top: 1px dashed #8a93a6; }
+
+.map-info {
+    top: 14px;
+    right: 14px;
+    width: min(380px, calc(100% - 28px));
+    max-height: calc(100% - 28px);
+    overflow-y: auto;
+    padding: 16px 18px 14px;
+    scrollbar-width: thin;
+}
+.map-info[hidden] { display: none; }
+.mi-close {
+    position: sticky;
+    float: right;
+    top: 0;
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    margin: -6px -8px 0 8px;
+}
+.mi-close:hover { color: var(--text); }
+.mi-kind { font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--long); }
+.mi-topic { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.mi-text { margin-top: 10px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mi-when { margin-top: 10px; font-size: 11.5px; color: var(--faint); }
+.mi-when .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.map-info h4 { margin: 14px 0 6px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.map-info ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.map-info li.faint { color: var(--faint); font-size: 12.5px; }
+.mi-ref {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    width: 100%;
+    text-align: left;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    line-height: 1.4;
+    padding: 6px 8px;
+    cursor: pointer;
+}
+.mi-ref:hover { border-color: var(--line); background: rgba(255, 255, 255, 0.06); }
+.mi-ref i { flex: none; width: 7px; height: 7px; border-radius: 50%; transform: translateY(-1px); }
+
+.map-tip { max-width: 300px; font-size: 12px; line-height: 1.45; }
+.map-tip .mt-kind { color: var(--long); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; }
+.map-tip .mt-topic { color: var(--muted); margin: 2px 0 4px; }
+.map-tip .mt-text { color: var(--text); }
+/* the library's own hover box, given the Halls' glass */
+#map-canvas .float-tooltip-kap, #map-canvas .scene-tooltip {
+    background: rgba(18, 19, 34, 0.9) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 9px;
+    padding: 8px 10px !important;
+    font-family: var(--font) !important;
+}
+
+.map-loading {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+}
+.map-loading[hidden] { display: none; }
+
+@media (max-width: 700px) {
+    .map-legend { display: none; }
+    .map-info { top: auto; bottom: 14px; max-height: 48%; }
+    #map-search { width: 110px; }
+}

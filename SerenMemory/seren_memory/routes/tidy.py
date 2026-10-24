@@ -9,8 +9,9 @@ housekeeping the in-process consolidator used to do in its own thread:
     near      completed intents become a long-term record; expired ones drop
     sweep     pruned entries past consolidator.pruned_safety_days are deleted
     purge     the flags are executed: every long-term entry carrying a forget
-              flag is purged with the cascade and a tombstone, and every core
-              flagged to get its earlier wording back gets it (undo-restate)
+              flag is purged with the cascade and a tombstone, every core
+              flagged to get its earlier wording back gets it (undo-restate),
+              and every satellite flagged to move is linked and unlinked
 
 Each is opt-in per call so a caller can run one without the rest. Nothing
 here drafts or judges - that is the hippocampus's side of the line.
@@ -52,4 +53,20 @@ async def tidy(request: Request, body: dict = Body(default={})):
                 restored.append({"id": row["id"], "error": str(e)})
         if restored:
             report["restored"] = restored
+        relinked = []
+        for row in store.flagged_relinks():
+            try:
+                relinked.append(store.relink(row["id"]))
+            except Exception as e:  # noqa: BLE001 - one bad flag does not stop the tidy
+                relinked.append({"id": row["id"], "error": str(e)})
+        if relinked:
+            report["relinked"] = relinked
+        folded = []                                         # after the relinks: a fold unions what they left
+        for row in store.flagged_folds():
+            try:
+                folded.append(store.fold(row["id"]))
+            except Exception as e:  # noqa: BLE001
+                folded.append({"id": row["id"], "error": str(e)})
+        if folded:
+            report["folded"] = folded
     return {"ok": True, **report}
