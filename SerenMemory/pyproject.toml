@@ -30,7 +30,7 @@ dependencies = [
     # function says so by name when it is missing. Until 2026-09-23 it was a
     # core dep so the knob would "just work", which cost every default
     # install a resident torch on an 8 GB box that never called it.
-    "seren-meninges>=2.4.0,<6",
+    "seren-meninges>=6.0.0,<7",
     # Shared request logging - one copy across the family (SerenSinew). Mounted
     # outermost (before auth) so even safe-mode 503s and 401s get logged.
     # -> memory-requests.log.

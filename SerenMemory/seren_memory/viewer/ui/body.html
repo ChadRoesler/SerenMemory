@@ -13,7 +13,7 @@
         <label><input type="checkbox" id="inc-near" checked /> near</label>
         <label><input type="checkbox" id="inc-long" checked /> long</label>
         <label>n=<input type="number" id="search-n" value="10" min="1" max="50" style="width:62px;" /></label>
-        <button class="btn" id="do-search">search</button>
+        <button class="btn primary" id="do-search">search</button>
     </div>
 
     <div class="toolbar" id="list-toolbar">
@@ -32,12 +32,9 @@
     <div id="map-section" style="display:none;">
         <div id="map-canvas"></div>
         <div class="map-controls">
-            <div class="map-seg" role="group" aria-label="Layout">
-                <button class="map-seg-btn on" data-layout="meaning" title="Placed by what each memory means">Meaning</button>
-                <button class="map-seg-btn" data-layout="constellation" title="Pulled together by what hangs on what">Constellation</button>
-            </div>
             <label class="map-check"><input type="checkbox" id="map-sats" checked /> satellites</label>
             <label class="map-check"><input type="checkbox" id="map-rotate" checked /> drift</label>
+            <label class="map-check"><input type="checkbox" id="map-twinkle" checked /> twinkle</label>
             <input type="search" id="map-search" placeholder="light up…" aria-label="Light up memories that mention" />
             <button class="map-btn" id="map-fit" title="Fit everything in view">⌖</button>
         </div>
@@ -46,8 +43,9 @@
             <div><i class="lg-core"></i>core <span class="faint">(size: evidence)</span></div>
             <div><i class="lg-sat"></i>satellite</div>
             <div><i class="lg-verb"></i>kept verbatim</div>
-            <div><i class="lg-bridge"></i>bridge: one episode, two stories</div>
+            <div title="A satellite that also supports a second core. Lights run from the episode to that second story; the line to its first core is its home."><i class="lg-bridge"></i>bridge: one episode, two stories</div>
             <div><i class="lg-hist"></i>an older wording</div>
+            <div class="faint">drag to turn · wheel to zoom · right-drag to pan · middle-drag moves a star</div>
         </div>
         <div class="map-info" id="map-info" hidden></div>
         <div class="map-loading" id="map-loading">charting…</div>

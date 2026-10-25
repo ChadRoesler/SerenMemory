@@ -305,6 +305,37 @@ function draftCard(draft) {
     </div>`;
 }
 
+// A first look shows a few and the rest wait behind "show more": opening
+// LongTerm built every core with its satellites at once (179 cores, 220
+// satellites) and the page hung between tabs (24 Oct 2026: "a baseline of
+// 10 short 20 long"). One request still brings the lot; only the drawing waits.
+const PAGE_FIRST = { short: 10, near: 10, long: 20 };
+function renderPaged(cards, first) {
+    if (!cards.length) return renderEntries('');
+    const host = $('entries');
+    host.innerHTML = '';
+    const bar = document.createElement('div');
+    bar.className = 'page-more';
+    host.appendChild(bar);
+    let shown = 0;
+    const show = (n) => {
+        const batch = document.createElement('div');
+        batch.className = 'page-batch';
+        batch.innerHTML = cards.slice(shown, shown + n).join('');
+        host.insertBefore(batch, bar);
+        hydrateFigures(batch);
+        shown = Math.min(cards.length, shown + n);
+        const left = cards.length - shown;
+        bar.innerHTML = left ? `<button class="btn" data-more>show ${Math.min(first, left)} more</button>
+            <button class="btn" data-all>show all ${cards.length}</button><span class="faint">${left} not shown yet</span>` : '';
+    };
+    bar.addEventListener('click', (e) => {
+        if (e.target.closest('[data-more]')) show(first);
+        else if (e.target.closest('[data-all]')) show(cards.length - shown);
+    });
+    show(first);
+}
+
 function renderEntries(html) {
     $('entries').innerHTML = html || `<div class="empty">nothing here yet</div>`;
     hydrateFigures($('entries'));
@@ -314,7 +345,7 @@ async function loadShort() {
     setHint('Working memory · ~8 day lifetime · free read/write');
     setExtraToggle(null);
     const data = await api('/short?limit=200');
-    renderEntries((data.entries || []).map(e => entryCard('short', e.content, e.metadata || {}, { id: e.id })).join(''));
+    renderPaged((data.entries || []).map(e => entryCard('short', e.content, e.metadata || {}, { id: e.id })), PAGE_FIRST.short);
 }
 
 async function loadNear() {
@@ -324,7 +355,7 @@ async function loadNear() {
 }
 async function loadNearInner(includeCompleted) {
     const data = await api(`/near?include_completed=${includeCompleted ? 'true' : 'false'}`);
-    renderEntries((data.entries || []).map(e => entryCard('near', e.content, e.metadata || {}, { id: e.id })).join(''));
+    renderPaged((data.entries || []).map(e => entryCard('near', e.content, e.metadata || {}, { id: e.id })), PAGE_FIRST.near);
 }
 
 async function loadLong() {
@@ -346,8 +377,8 @@ async function loadLongInner(includeSuperseded) {
     const withSats = cores.filter(e => byCore[e.id]).length;
     setHint(`Consolidated knowledge · gated (consolidator writes only) · no scalpel · ${cores.length} cores, ` +
             `${withSats} with satellites: open one to see what stands behind it`);
-    renderEntries(cores.map(e => entryCard('long', e.content, e.metadata || {},
-        { id: e.id, under: surroundingsBlock(e.id, e.metadata || {}, byCore[e.id] || [], 0) })).join(''));
+    renderPaged(cores.map(e => entryCard('long', e.content, e.metadata || {},
+        { id: e.id, under: surroundingsBlock(e.id, e.metadata || {}, byCore[e.id] || [], 0) })), PAGE_FIRST.long);
 }
 
 // ----------------------------------------------------------------------
@@ -558,14 +589,16 @@ async function switchTab(tier) {
 // GET /long/map places every entry in 3D by what it means (its embedding, by
 // PCA) and names the links: home (a satellite's first core), bridge (one
 // episode supporting another story too) and history (a core's older wording
-// under what replaced it). Meaning keeps those places; Constellation lets the
-// links pull. A core's colour comes from where it sits, so a neighbourhood
+// under what replaced it). Each keeps its place by meaning (a Constellation
+// layout that let the links pull was dropped on 24 Oct 2026: the meaning one
+// was the one that did the nice thing). A core's colour comes from where it sits, so a neighbourhood
 // reads as one hue and its satellites wear their core's. The 3D library is
 // vendored, served from /viewer/vendor/ and run from an object URL.
 // ----------------------------------------------------------------------
 const MAP = { graph: null, data: null, byId: new Map(), layout: 'meaning', sats: true,
               rotate: !matchMedia('(prefers-reduced-motion: reduce)').matches,
-              selected: null, hood: null, hoodLinks: null, lit: null, lib: null, fitted: false };
+              selected: null, hood: null, hoodLinks: null, lit: null, lib: null, fitted: false,
+              twinkle: true };      // the stars' twinkle, the memories' glints and their breathing: one switch
 
 function loadMapLib() {
     if (window.ForceGraph3D) return Promise.resolve();
@@ -657,7 +690,7 @@ function mapStars() {
     c.className = 'map-stars';
     c.width = 2400; c.height = 1500;
     $('map-section').prepend(c);
-    twinkleStars(c, starField(520, c.width, c.height));
+    twinkleStars(c, starField(520, c.width, c.height), () => MAP.twinkle);
 }
 
 // The stars far behind everything twinkle: most a little, a few a lot, each
@@ -666,13 +699,15 @@ function mapStars() {
 // the tab is in front. prefers-reduced-motion gets a slower, fainter twinkle,
 // not a frozen sky: nothing moves, only brightness changes, and Windows hands
 // that setting to every browser on a box whose animations are turned off.
-function twinkleStars(c, stars) {
+function twinkleStars(c, stars, on = () => true) {
     const x = c.getContext('2d');
     const calm = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.45 : 1;
+    let still = false;
     const draw = (t) => {
         x.clearRect(0, 0, c.width, c.height);
         for (const s of stars) {
-            const k = 1 - s.amp * calm * (0.5 + 0.5 * Math.sin(t * s.sp * calm + s.ph));
+            // switched off: each star at its middle brightness, no rays
+            const k = still ? 1 - s.amp * 0.5 : 1 - s.amp * calm * (0.5 + 0.5 * Math.sin(t * s.sp * calm + s.ph));
             x.fillStyle = s.col;
             if (s.r > 1.05) {
                 x.globalAlpha = s.a * k * 0.18;
@@ -680,6 +715,19 @@ function twinkleStars(c, stars) {
             }
             x.globalAlpha = s.a * k;
             x.beginPath(); x.arc(s.x, s.y, s.r, 0, 2 * Math.PI); x.fill();
+            // the points: a star that twinkles throws four thin rays, longest
+            // when it is brightest (24 Oct 2026: "they fade in and out but
+            // don't twinkle with points")
+            if (s.spike && !still) {
+                const len = s.r * (2.5 + 7 * k * k);
+                x.globalAlpha = s.a * k * k * 0.75;
+                x.strokeStyle = s.col;
+                x.lineWidth = 0.7;
+                x.beginPath();
+                x.moveTo(s.x - len, s.y); x.lineTo(s.x + len, s.y);
+                x.moveTo(s.x, s.y - len); x.lineTo(s.x, s.y + len);
+                x.stroke();
+            }
         }
         x.globalAlpha = 1;
     };
@@ -689,6 +737,8 @@ function twinkleStars(c, stars) {
         requestAnimationFrame(tick);
         if (now - last < 33 || document.hidden || !c.getClientRects().length) return;
         last = now;
+        if (!on()) { if (!still) { still = true; draw(0); } return; }
+        still = false;
         draw(now / 1000);
     };
     requestAnimationFrame(tick);
@@ -699,6 +749,7 @@ function starField(n, w, h, yOf = () => Math.random() * h) {
     for (let i = 0; i < n; i++) {
         const big = Math.random() < 0.06, warm = Math.random() < 0.12, lively = Math.random() < 0.15;
         out.push({ x: Math.random() * w, y: yOf(), r: big ? 1.1 + Math.random() * 0.9 : 0.3 + Math.random() * 0.7,
+                   spike: big || (lively && Math.random() < 0.5),
                    col: warm ? '#ffd6aa' : '#d2e1ff', a: warm ? 0.35 + Math.random() * 0.5 : 0.2 + Math.random() * 0.6,
                    amp: lively ? 0.55 + Math.random() * 0.4 : 0.1 + Math.random() * 0.2,
                    sp: 0.6 + Math.random() * 1.8, ph: Math.random() * 6.283 });
@@ -741,7 +792,8 @@ function mapBuild() {
         .linkDirectionalParticleSpeed(0.0045)
         .linkDirectionalParticleColor(() => '#ffe3a3')
         .cooldownTicks(MAP.layout === 'meaning' ? 1 : 260)
-        .onNodeHover(n => { el.style.cursor = n ? 'pointer' : ''; })
+        .onNodeHover(n => { MAP.hover = n || null; el.style.cursor = n ? 'pointer' : ''; })
+        .enableNodeDrag(false)
         .onNodeClick(n => mapSelect(n.id))
         .onBackgroundClick(() => mapSelect(null))
         .onEngineStop(() => { if (!MAP.fitted) { MAP.fitted = true; mapFit(); } });
@@ -750,10 +802,140 @@ function mapBuild() {
     const c = g.controls();
     c.autoRotate = MAP.rotate;
     c.autoRotateSpeed = 0.45;
+    // the family's three: left turns, the wheel zooms, right pans - and the
+    // middle button, held on a star, moves it (24 Oct 2026). Shift-drag was
+    // the first try; the library does not take its drag back once built, so
+    // the move is our own (mapDragWire) and the middle button is kept from
+    // the controls for it.
+    c.mouseButtons = { LEFT: 0, MIDDLE: -1, RIGHT: 2 };
+    c.screenSpacePanning = true;
+    mapDragWire(el, g);
+    mapBreathe();
+    mapGlints(g);
     el.addEventListener('pointerdown', () => { if (MAP.rotate) { MAP.rotate = false; c.autoRotate = false; $('map-rotate').checked = false; } });
     new ResizeObserver(() => { if (el.clientWidth) g.width(el.clientWidth).height(el.clientHeight); }).observe(el);
     MAP.graph = g;
     mapWire();
+}
+
+// Moving a star: the middle button held on one carries it in the plane that
+// faces the camera, its links following. Where it is put lasts until the map
+// is charted again - meaning places it, a hand only nudges.
+function mapDragWire(el, g) {
+    const cam = () => g.camera(), V3 = cam().position.constructor;
+    let plane = null;
+    const at = (e) => {
+        const r = el.getBoundingClientRect();
+        const p = new V3(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1, 0.5).unproject(cam());
+        const o = cam().position, d = p.sub(o).normalize();
+        const den = d.dot(plane.normal);
+        if (Math.abs(den) < 1e-6) return null;
+        const t = plane.point.clone().sub(o).dot(plane.normal) / den;
+        return o.clone().add(d.multiplyScalar(t));
+    };
+    el.addEventListener('pointerdown', (e) => {
+        if (e.button !== 1 || !MAP.hover) return;
+        e.preventDefault(); e.stopPropagation();
+        const n = MAP.hover;
+        const normal = new V3();
+        cam().getWorldDirection(normal);
+        plane = { normal, point: new V3(n.x, n.y, n.z) };
+        MAP.dragging = n;
+        el.setPointerCapture(e.pointerId);
+        g.cooldownTicks(Infinity).d3ReheatSimulation();
+    }, true);
+    el.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }, true);   // no autoscroll
+    el.addEventListener('pointermove', (e) => {
+        const n = MAP.dragging;
+        if (!n) return;
+        const p = at(e);
+        if (!p) return;
+        n.fx = n.x = p.x; n.fy = n.y = p.y; n.fz = n.z = p.z;
+        n.pos = [p.x, p.y, p.z];
+    }, true);
+    const drop = () => {
+        if (!MAP.dragging) return;
+        MAP.dragging = null;
+        plane = null;
+        setTimeout(() => g.cooldownTicks(1), 300);
+    };
+    el.addEventListener('pointerup', drop, true);
+    el.addEventListener('pointercancel', drop, true);
+}
+
+// The memories' own glints: every core and satellite throws four thin rays
+// that grow and fade on its own clock, the way the stars behind them do
+// (24 Oct 2026: "core stars and satellites don't star twinkle"). Drawn on a
+// canvas over the scene from where each lands on screen, so nothing in the
+// 3D library changes; a star dimmed by a selection or a search stays quiet.
+function mapGlints(g) {
+    const c = document.createElement('canvas');
+    c.className = 'map-glint';
+    $('map-section').insertBefore(c, $('map-canvas').nextSibling);
+    const x = c.getContext('2d'), V3 = g.camera().position.constructor, v = new V3();
+    const calm = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.5 : 1;
+    let last = 0;
+    const tick = (now) => {
+        requestAnimationFrame(tick);
+        if (state.tab !== 'map' || document.hidden || now - last < 33 || !MAP.data) return;
+        last = now;
+        if (!MAP.twinkle) { if (c.width) { c.width = 0; } return; }
+        const dpr = Math.min(window.devicePixelRatio || 1, 2), w = c.clientWidth, h = c.clientHeight;
+        if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+        x.setTransform(dpr, 0, 0, dpr, 0, 0);
+        x.clearRect(0, 0, w, h);
+        const cam = g.camera(), t = now / 1000, half = Math.tan((cam.fov * Math.PI / 180) / 2);
+        x.lineCap = 'round';
+        for (const n of MAP.data.nodes) {
+            if (n.x === undefined || (!MAP.sats && n.kind !== 'core') || n.was_core) continue;
+            if ((MAP.hood && !MAP.hood.has(n.id)) || (MAP.lit && !MAP.lit.has(n.id))) continue;
+            if (n.tw === undefined) { n.tw = Math.random() * 6.283; n.tws = 0.7 + Math.random() * 1.6; }
+            if (n.gl === undefined) n.gl = n.kind === 'core' ? 0.55 + Math.random() * 0.45 : (Math.random() < 0.35 ? 0.6 : 0);
+            if (!n.gl) continue;
+            v.set(n.x, n.y, n.z);
+            const dist = v.distanceTo(cam.position);
+            v.project(cam);
+            if (v.z > 1 || v.x < -1.1 || v.x > 1.1 || v.y < -1.1 || v.y > 1.1) continue;
+            const k = 0.5 + 0.5 * Math.sin(t * n.tws * calm + n.tw), bright = k * k * n.gl;
+            if (bright < 0.08) continue;
+            const r = Math.cbrt(mapNodeVal(n)) * 3 / (dist * half) * (h / 2);
+            const len = r * (1.4 + 3.2 * bright * calm);
+            const sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
+            x.strokeStyle = MAP.lit && MAP.lit.has(n.id) ? 'rgba(255,214,110,1)' : (n.verbatim ? 'rgba(255,243,196,1)' : hslRgba(n.hue, 90, 82, 1));
+            x.globalAlpha = Math.min(0.85, bright * 0.9);
+            x.lineWidth = Math.max(0.6, Math.min(1.6, r * 0.12));
+            x.beginPath();
+            x.moveTo(sx - len, sy); x.lineTo(sx + len, sy);
+            x.moveTo(sx, sy - len); x.lineTo(sx, sy + len);
+            x.stroke();
+        }
+        x.globalAlpha = 1;
+    };
+    requestAnimationFrame(tick);
+}
+
+// The memories twinkle too: every core and satellite swells and settles on
+// its own clock, a little, the way the stars behind them do. Scale only - the
+// library shares one material between nodes of a colour, so brightness would
+// pulse a whole neighbourhood at once.
+function mapBreathe() {
+    const calm = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.5 : 1;
+    let last = 0;
+    const tick = (now) => {
+        requestAnimationFrame(tick);
+        if (state.tab !== 'map' || document.hidden || now - last < 33 || !MAP.data) return;
+        last = now;
+        const t = now / 1000;
+        for (const n of MAP.data.nodes) {
+            const o = n.__threeObj;
+            if (!o) continue;
+            if (!MAP.twinkle) { o.scale.setScalar(1); continue; }
+            if (n.tw === undefined) { n.tw = Math.random() * 6.283; n.tws = 0.7 + Math.random() * 1.6; }
+            const amp = (n.kind === 'core' ? 0.07 : 0.16) * calm;
+            o.scale.setScalar(1 + amp * Math.sin(t * n.tws * calm + n.tw));
+        }
+    };
+    requestAnimationFrame(tick);
 }
 
 function mapRefresh() {
@@ -826,16 +1008,9 @@ function mapStats() {
 }
 
 function mapWire() {
-    document.querySelectorAll('.map-seg-btn').forEach(b => b.addEventListener('click', () => {
-        if (MAP.layout === b.dataset.layout) return;
-        MAP.layout = b.dataset.layout;
-        document.querySelectorAll('.map-seg-btn').forEach(x => x.classList.toggle('on', x === b));
-        mapPlace(MAP.data.nodes);
-        MAP.graph.cooldownTicks(MAP.layout === 'meaning' ? 1 : 260).d3ReheatSimulation();
-        MAP.fitted = false;
-    }));
     $('map-sats').addEventListener('change', (e) => { MAP.sats = e.target.checked; mapRefresh(); });
     $('map-rotate').addEventListener('change', (e) => { MAP.rotate = e.target.checked; MAP.graph.controls().autoRotate = MAP.rotate; });
+    $('map-twinkle').addEventListener('change', (e) => { MAP.twinkle = e.target.checked; });
     $('map-search').addEventListener('input', (e) => mapLight(e.target.value));
     $('map-fit').addEventListener('click', () => mapFit(800));
     $('map-info').addEventListener('click', (e) => {

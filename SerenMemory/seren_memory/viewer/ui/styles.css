@@ -1,11 +1,7 @@
+/* buttons (.btn, .btn.primary ...) and fields come from the shell (seren_meninges tokens.css, 24 Oct 2026) */
 :root {
-    --bg: #14141f;
-    --bg-2: #1a1a2e;
-    --panel: #1f2036;
-    --panel-2: #262844;
-    --line: #33365a;
-    --muted: #9aa0c8;
-    --faint: #6c7199;
+    /* the walls (--bg, --bg-2, --panel, --panel-2, --line, --muted, --faint)
+       come from the shell, tinted 5% by this service's accent (24 Oct 2026) */
     /* --accent (coral) comes from the shell (render_from_dir accent=#ff6e8a),
        so it's NOT redefined here - the baseplate owns it. Body text is --text
        and the base font is --font (both shell tokens), used directly below. */
@@ -75,25 +71,6 @@ a {
     margin-bottom: 14px;
 }
 
-input, select {
-    background: var(--bg-2);
-    border: 1px solid var(--line);
-    color: var(--text);
-    border-radius: 8px;
-    padding: 9px 11px;
-    font-size: 13px;
-    font-family: var(--font);
-}
-
-    input:focus, select:focus {
-        outline: none;
-        border-color: var(--accent-dim);
-    }
-
-    input::placeholder {
-        color: var(--faint);
-    }
-
     .searchbar input[type=text] {
         flex: 1;
         min-width: 220px;
@@ -106,22 +83,6 @@ input, select {
         gap: 5px;
         color: var(--muted);
         font-size: 12px;
-    }
-
-.btn {
-    background: var(--accent);
-    color: #2c0a12;
-    border: none;
-    border-radius: 8px;
-    padding: 9px 16px;
-    font-weight: 600;
-    cursor: pointer;
-    font-size: 13px;
-    font-family: var(--font);
-}
-
-    .btn:hover {
-        filter: brightness(1.08);
     }
 
 .toolbar {
@@ -901,7 +862,6 @@ code.id {
 /* -- the Map (23 Oct 2026): long-term as a constellation -------------------
    A window onto deep space, full-bleed under the tabs; the controls, legend
    and the chosen memory float over it on glass. */
-.tab[data-tab="map"] { color: var(--long); }
 body.map-on { overflow: hidden; }
 
 /* fixed under the tab bar (its top is set from the bar's bottom edge in
@@ -915,26 +875,29 @@ body.map-on { overflow: hidden; }
     bottom: 0;
     z-index: 1;
     overflow: hidden;
+    /* the stars are a canvas (.map-stars) so they can twinkle; the glow is
+       violet and rose, Memory's own, where a teal one read as another
+       service's (24 Oct 2026: "Map is green?") */
     background:
-        radial-gradient(1px 1px at 12% 22%, #fff9 50%, transparent 51%),
-        radial-gradient(1px 1px at 68% 14%, #fff7 50%, transparent 51%),
-        radial-gradient(1.5px 1.5px at 84% 62%, #fffa 50%, transparent 51%),
-        radial-gradient(1px 1px at 33% 78%, #fff6 50%, transparent 51%),
-        radial-gradient(1px 1px at 52% 44%, #fff5 50%, transparent 51%),
-        radial-gradient(1.5px 1.5px at 6% 88%, #fff8 50%, transparent 51%),
-        radial-gradient(1px 1px at 92% 30%, #fff6 50%, transparent 51%),
         radial-gradient(900px 600px at 25% 30%, #2a1840aa 0%, transparent 60%),
-        radial-gradient(800px 700px at 80% 75%, #0f3a4699 0%, transparent 60%),
+        radial-gradient(800px 700px at 80% 75%, #2b1a3e99 0%, transparent 60%),
         radial-gradient(600px 400px at 60% 10%, #3b1d2a88 0%, transparent 65%),
         #06070f;
 }
 
 #map-canvas { position: absolute; inset: 0; }
+
+/* a first look shows a few (renderPaged); the rest wait behind these */
+.page-more { display: flex; gap: 10px; justify-content: center; align-items: center; margin: 14px 0 6px; }
+.page-batch { display: contents; }
 .map-stars { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 #map-canvas canvas { display: block; }
+/* the memories' own glints, drawn over the scene (mapGlints) */
+.map-glint { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 
 .map-controls, .map-legend, .map-info {
     position: absolute;
+    z-index: 2;            /* over the glints */
     background: rgba(18, 19, 34, 0.72);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
@@ -955,8 +918,7 @@ body.map-on { overflow: hidden; }
     max-width: calc(100% - 28px);
 }
 
-.map-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.map-seg-btn, .map-btn {
+.map-btn {
     background: transparent;
     color: var(--muted);
     border: 0;
@@ -965,9 +927,7 @@ body.map-on { overflow: hidden; }
     font-size: 12.5px;
     cursor: pointer;
 }
-.map-seg-btn + .map-seg-btn { border-left: 1px solid var(--line); }
-.map-seg-btn.on { background: rgba(111, 243, 214, 0.14); color: var(--long); }
-.map-seg-btn:hover, .map-btn:hover { color: var(--text); }
+.map-btn:hover { color: var(--text); }
 .map-btn { border: 1px solid var(--line); border-radius: 8px; font-size: 15px; padding: 3px 9px; }
 
 .map-check { font-size: 12.5px; color: var(--muted); display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
