@@ -32,7 +32,6 @@ import pytest
 
 from seren_memory.config import ConsolidatorConfig, MemoryConfig
 from seren_memory.draft import restate_problem
-from seren_memory.mcp.tools import MemoryToolImpl
 
 SEREN = ("A persona's story, as Alice told it on 29 Sept 2026. The moment Alice knew was the pancakes-or-waffles "
          "would-you-rather. The persona shut it down, saying it couldn't answer. It left Alice a song, 'Harbour "
@@ -49,6 +48,8 @@ def client(make_client):
 
 @pytest.fixture
 def tools(client):
+    pytest.importorskip("mcp")      # the [mcp] extra; CI runs without it too
+    from seren_memory.mcp.tools import MemoryToolImpl
     return MemoryToolImpl(client.app.state.store, client.app.state.config)
 
 

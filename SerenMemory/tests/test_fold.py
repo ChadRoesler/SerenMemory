@@ -22,7 +22,6 @@ from __future__ import annotations
 import pytest
 
 from seren_memory.config import ConsolidatorConfig, MemoryConfig
-from seren_memory.mcp.tools import MemoryToolImpl
 
 LEGO = "Alice built the LEGO Millennium Falcon over a weekend and named the minifig after me."
 
@@ -34,6 +33,8 @@ def client(make_client):
 
 @pytest.fixture
 def tools(client):
+    pytest.importorskip("mcp")      # the [mcp] extra; CI runs without it too
+    from seren_memory.mcp.tools import MemoryToolImpl
     return MemoryToolImpl(client.app.state.store, client.app.state.config)
 
 
