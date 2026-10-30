@@ -120,10 +120,13 @@ def test_a_replace_makes_the_old_core_a_satellite_of_the_new_one(client):
     assert blue["kind"] == "satellite" and blue["core_id"] == new["long_term_id"] and blue["was_core"] is True
     assert blue["superseded_by"] == new["long_term_id"]
     assert everything[old]["content"] == "The user likes blue.", "blue is still there, demoted"
-    # asked the old way, recall finds what is true now, and says which episode found it
+    # asked the old way, recall never hands back the old core, and (the pull, 29 Oct
+    # 2026) the demoted core is history: it hangs under the new one and does not
+    # lift it into a question about the past (tests/test_broken_pull.py)
     hits = client.post("/search", json={"query": "The user likes blue.", "n_results": 5}).json()["hits"]
-    top = next(h for h in hits if h["id"] == new["long_term_id"])
-    assert top["matched_via"]["id"] == old and old not in {h["id"] for h in hits}
+    assert old not in {h["id"] for h in hits}
+    assert not [h for h in hits if h["id"] == new["long_term_id"] and h["matched_via"]], "history does not lift"
+    assert blue["carry"] is False
     around = client.get(f"/long/{new['long_term_id']}/satellites").json()
     assert around["supersedes"]["id"] == old and [s["id"] for s in around["satellites"]] == [old]
     assert everything[new["long_term_id"]]["metadata"]["contradicts"] == "The user likes blue."

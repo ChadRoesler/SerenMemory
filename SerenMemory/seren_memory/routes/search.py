@@ -5,20 +5,12 @@ Queries all three tiers in parallel and merges results by weighted rank.
 This is THE recall path - the thing the main model calls to pull relevant
 memory into context. One call, all tiers, ranked.
 
-THE RANKING MODEL (this is where the memory hierarchy becomes behavior):
-
-    raw similarity -> chroma gives cosine distance (lower = closer)
-    we convert to a base score (1 / (1 + distance)) so higher = better
-
-    then apply a tier weight:
-        short × 1.0   - working memory, what's immediately relevant
-        near  × 0.9   - active intents, slightly below working memory
-        long  × 0.8   - durable facts, individually lower BUT...
-
-    ...long-term gets an evidence multiplier:
-        × (1 + log(evidence_count) × 0.15)
-    so a long-term fact seen 10 times beats a one-off short-term match.
-    A fact you've confirmed over and over SHOULD outrank a passing mention.
+THE RANKING MODEL lives in seren_memory.ranking (29 Oct 2026): a hit's score
+is its cosine similarity plus small additive nudges - working memory wins a
+tie, a confirmed core wins a near tie, and a real difference in relevance is
+never overruled by a tier. The multipliers that were here before (1/(1+d) x
+tier weight x evidence) let short-term entries crowd intents and cores out of
+the top 50 for a month; the module's docstring has the numbers.
 
 A CORE IS AS NEAR AS ITS NEAREST SATELLITE (2 Oct 2026). Recall returns
 cores, and satellites were simply dropped from the rows the vector search
@@ -29,18 +21,21 @@ them full of one subject's own episodes, and threw them all away. (Seen on
 the hippocampus's side the same day: a pile about a well-recorded subject
 was shown none of its cores.) Now a satellite hit counts for its core: the
 core takes the satellite's distance when that is the better one, and the
-hit carries `matched_via` - the episode that found it.
+hit carries `matched_via` - the episode that found it. History does not lift
+(the pull, below): a demoted core and the satellites that were about the old
+state hang under the new core for the trail, and never carry it into a
+question about the past.
 
-The weights are tunable (config could expose them later). The shape -
-recency-biased but confidence-corrected - is the point.
+The shape - relevance first, nudged towards working memory and towards what
+has been confirmed - is the point; the numbers are ranking.py's.
 """
 from __future__ import annotations
 
 import logging
-import math
 
 from fastapi import APIRouter, Body, Request
 
+from .. import ranking
 from ..collections import satellite_parents
 from ..models.schemas import (
     SearchRequest, SearchHit, SearchResponse,
@@ -50,8 +45,27 @@ from ..models.schemas import (
 router = APIRouter(tags=["search"])
 log = logging.getLogger("seren_memory.search")
 
-# Tier base weights. See module docstring for rationale.
-_TIER_WEIGHT = {"short": 1.0, "near": 0.9, "long": 0.8}
+# THE PULL (29 Oct 2026). When a core is superseded, its satellites move under
+# the core that replaced it (draft._demote_into), each tested against the new
+# core: one that still supports it keeps its pull (carry) and may lift it; one
+# that was about the old state, and the demoted core itself, hang on as
+# history with a broken pull and never lift. Measured on 20 Oct 2026 before
+# it was built: history that lifted dragged the current core into every
+# question about the past (Vellmarch episode 0.82 to 0.46); history that
+# hangs without lifting cost nothing. HISTORY_LIFTS is the harness's A/B
+# switch for the old behaviour, not a setting.
+HISTORY_LIFTS = False
+
+
+def _broken_pull(meta: dict) -> bool:
+    """History: a demoted core (was_core AND superseded_by: a retell's kept
+    wording is was_core too, but it is the same story and keeps its pull), or
+    a satellite that moved under a superseding core without carrying."""
+    if HISTORY_LIFTS or meta.get("carry"):
+        return False
+    if meta.get("was_core") and meta.get("superseded_by"):
+        return True
+    return bool(meta.get("moved_from"))
 
 
 @router.post("/search")
@@ -90,6 +104,8 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
             # Long-term filtering: satellites are the surroundings, not the
             # answer, and superseded cores are history - both off unless asked.
             if tier == "long" and not req.include_satellites and meta.get("kind") == "satellite":
+                if _broken_pull(meta):                      # history hangs on the core and never lifts it
+                    continue
                 for cid in satellite_parents(meta):          # a shared episode finds each of its cores
                     prev = via.get(cid)
                     if prev is None or hit["distance"] < prev["raw_distance"]:
@@ -106,20 +122,11 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
                 continue
 
             distance = hit["distance"]
-            base = 1.0 / (1.0 + max(distance, 0.0))
-            score = base * _TIER_WEIGHT[tier]
-
-            # Long-term evidence boost.
-            if tier == "long":
-                ev = meta.get("evidence_count", 1)
-                if isinstance(ev, (int, float)) and ev > 0:
-                    score *= (1.0 + math.log(ev) * 0.15)
-
             all_hits.append(SearchHit(
                 tier=tier,
                 content=hit["content"],
                 topic=meta.get("topic"),
-                score=round(score, 6),
+                score=ranking.score(tier, distance, meta),
                 raw_distance=round(distance, 6),
                 id=hit["id"],
                 metadata=meta,
@@ -141,12 +148,7 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
 
 
 def _long_score(distance: float, meta: dict) -> float:
-    base = 1.0 / (1.0 + max(distance, 0.0))
-    score = base * _TIER_WEIGHT["long"]
-    ev = meta.get("evidence_count", 1)
-    if isinstance(ev, (int, float)) and ev > 0:
-        score *= (1.0 + math.log(ev) * 0.15)
-    return round(score, 6)
+    return ranking.score("long", distance, meta)
 
 
 def _lift_cores_by_satellite(store, all_hits: list[SearchHit], via: dict[str, dict], *,

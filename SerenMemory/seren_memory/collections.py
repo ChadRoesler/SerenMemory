@@ -37,6 +37,7 @@ DISTANCE SPACE:
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 from typing import Any, Optional
@@ -46,6 +47,8 @@ import chromadb
 from chromadb.config import Settings
 
 from .config import MemoryConfig
+
+_log = logging.getLogger("seren_memory.store")
 from .draft import DraftMixin
 from .models.schemas import (
     DraftStatus,
@@ -564,6 +567,12 @@ class MemoryStore(DraftMixin):
         res = self.near.get(include=["documents", "metadatas"])
         return _zip_get(res, None)
 
+    def what_is_due(self, now: Optional[float] = None) -> dict[str, Any]:
+        """The open loops by their triggers (seren_memory.due): due, standing,
+        waiting, expired. The route and the MCP tool both read this."""
+        from . import due
+        return due.bucket(self.get_near_all(), now)
+
     def update_near(self, entry_id: str, updates: dict[str, Any]) -> bool:
         """Merge `updates` into a near-term entry's metadata. A None value
         removes that key (see _apply_metadata_updates)."""
@@ -788,8 +797,20 @@ class MemoryStore(DraftMixin):
                     "distance": float(dists[i]),
                 })
             return hits
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             # HNSW segment not flushed to disk yet — fall back to brute-force.
+            # SAY SO. The fallback answers correctly but can cost seconds a query
+            # (it re-embeds every document when the vectors cannot be read),
+            # and a process whose index stays broken pays that on every search:
+            # seen 29 Oct 2026, one harness arm at 7s a query for hours while
+            # its twin ran at 1.5s, and nothing in the log said why.
+            falls = self._brute_falls = getattr(self, "_brute_falls", {})
+            falls[collection_name] = falls.get(collection_name, 0) + 1
+            if falls[collection_name] in (1, 10, 100, 1000):
+                _log.warning("search: the %s tier's index did not answer (%s: %s); answering by brute force "
+                             "(%d time%s so far). If this keeps repeating, the index is unreadable and a "
+                             "restart or a rebuild is due.", collection_name, type(e).__name__,
+                             str(e)[:120], falls[collection_name], "" if falls[collection_name] == 1 else "s")
             return self._query_brute(col, query_text, n)
 
     def _query_brute(self, col: Any, query_text: str, n: int) -> list[dict[str, Any]]:

@@ -70,7 +70,7 @@ from ..models.schemas import (
 # Tier weights duplicated from routes/search.py to keep recall logic
 # fully in-process. Refactor target if these ever diverge - for now,
 # small enough to inline rather than couple the modules.
-_TIER_WEIGHT = {"short": 1.0, "near": 0.9, "long": 0.8}
+from .. import ranking   # one formula for /search and recall (seren_memory.ranking)
 
 
 class MemoryToolImpl:
@@ -255,17 +255,11 @@ class MemoryToolImpl:
                 if tier == "near" and meta.get("completed"):
                     continue
                 distance = hit["distance"]
-                base = 1.0 / (1.0 + max(distance, 0.0))
-                score = base * _TIER_WEIGHT[tier]
-                if tier == "long":
-                    ev = meta.get("evidence_count", 1)
-                    if isinstance(ev, (int, float)) and ev > 0:
-                        score *= (1.0 + math.log(ev) * 0.15)
                 row = {
                     "tier": tier,
                     "content": hit["content"],
                     "topic": meta.get("topic"),
-                    "score": round(score, 6),
+                    "score": ranking.score(tier, distance, meta),
                     "id": hit["id"],
                 }
                 if (n := len(self.store.eidetic_in(meta))):
@@ -370,6 +364,25 @@ class MemoryToolImpl:
         )
         saved = self.store.add_near(entry)
         return {"ok": True, "id": saved.id, "tier": "near"}
+
+    def what_is_due(self, now: Optional[float] = None) -> dict:
+        """What is due: the open loops read by their TRIGGERS, not by
+        similarity. The clock to ask on waking, because you do not feel time
+        pass and somebody may be waiting on you.
+
+        `due` is every time intent whose moment has passed, most overdue
+        first; `standing` the always-on notes; `waiting` what is still ahead
+        (a time intent with due_in, an event intent with what it waits for);
+        `expired` what passed its expires_at, to complete or let go. `say`
+        reads the whole in a line. Completed intents are history and do not
+        appear.
+
+        recall cannot answer this: "what's due?" resembles no intent in
+        particular (29 Oct 2026: four intents at similarity 0.39 to 0.14,
+        none surfaced, the next day's planned outage among them). Ask this,
+        then act with complete_intent on what you did.
+        """
+        return self.store.what_is_due(now)
 
     def complete_intent(self, intent_id: str) -> dict:
         """Mark a near-term intent as ACTED ON (not merely referenced).
@@ -783,6 +796,7 @@ def register_tools(mcp: FastMCP, store: MemoryStore, config: MemoryConfig) -> Me
 
     # Open loops
     mcp.tool()(impl.remember_for_later)
+    mcp.tool()(impl.what_is_due)
     mcp.tool()(impl.complete_intent)
 
     # Agency surface

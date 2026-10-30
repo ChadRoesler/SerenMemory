@@ -210,6 +210,20 @@ def _maybe_json(v: Any) -> Any:
     return f(v)
 
 
+def _cosine_distance(a: Any, b: Any) -> float:
+    """1 - cosine similarity, the distance chroma's cosine space reports; 1.0
+    for a zero vector. Used by the pull test on a supersede (_demote_into)."""
+    dot = na = nb = 0.0
+    for x, y in zip(a, b):
+        x, y = float(x), float(y)
+        dot += x * y
+        na += x * x
+        nb += y * y
+    if na == 0.0 or nb == 0.0:
+        return 1.0
+    return 1.0 - dot / ((na ** 0.5) * (nb ** 0.5))
+
+
 def _clean_meta(d: dict[str, Any]) -> dict[str, Any]:
     from .collections import _clean_meta as f
     return f(d)
@@ -945,11 +959,12 @@ class DraftMixin:
                                          **({"contradicts": op.contradicts} if op.contradicts else {}),
                                          **({"eidetic": carried} if carried else {})})
             self.add_long(entry)
-            moved = self._demote_into(old, entry.id)
+            moved, carried = self._demote_into(old, entry.id)
             kept = self._keep_episodes(d, op, entry.id, entry.content, entry.topic)
             archived = self._archive_sources(op.source_short_ids, d, op, entry.id, kept)
             return {"long_term_id": entry.id, "kind": "core", "superseded": op.target_core_id,
-                    "satellite_ids": kept, "moved_satellites": moved, "shorts_archived": archived}
+                    "satellite_ids": kept, "moved_satellites": moved, "carried": carried,
+                    "history": moved - carried, "shorts_archived": archived}
 
         if op.kind == DraftOpKind.RETELL:
             core = self._long_row(op.target_core_id)
@@ -967,6 +982,7 @@ class DraftMixin:
                                     core_id=op.target_core_id, evidence_count=1, source=Source.CONSOLIDATOR,
                                     created_at=float(meta.get("created_at") or time.time()),
                                     extra={**base_extra, "kept_episode": True, "was_core": True,
+                                           "carry": True,   # the same story, told longer: it keeps its pull
                                            **({"eidetic": own} if own else {})})
                 self.add_long(sat)
                 sat_id = sat.id
@@ -1022,7 +1038,7 @@ class DraftMixin:
         meta["last_confirmed"] = time.time()
         self.long.update(ids=[core_id], metadatas=[_clean_meta(meta)])
 
-    def _demote_into(self, old: dict[str, Any], new_id: str) -> int:
+    def _demote_into(self, old: dict[str, Any], new_id: str) -> tuple[int, int]:
         """REPLACE, the core lifecycle (design note, 22 Oct 2026): the old
         core becomes a satellite of the core that replaced it, and every
         satellite of the old one moves under the new one, so the trail - what
@@ -1030,23 +1046,53 @@ class DraftMixin:
         what is true now. superseded_by still points forward. A satellite
         that also supports another core keeps that home. The moved ones are
         history, not evidence: the new core's evidence_count is its own.
-        Returns how many satellites moved."""
-        from .collections import satellite_parents
+
+        THE PULL (29 Oct 2026): a planet that is superseded loses its
+        gravitational pull. Each satellite that moves is tested against the
+        core that replaced it: one at least as near to the new core as it was
+        to the old still supports what is true now and keeps its pull
+        (`carry: true`, it may lift the new core in recall); one that was about
+        the old state hangs on as history with a broken pull (`carry: false`,
+        never lifts). The distances ride on the satellite (pull_old, pull_new)
+        so a reviewer can see why. Measured before it was built: history that
+        lifted the new core cost Vellmarch's episode class 0.82 to 0.46 on
+        20 Oct 2026; history that hangs without lifting cost nothing and took
+        the update class to 1.00. The demoted core itself is always history.
+        Returns (satellites moved, of which carried)."""
+        from .collections import _retrieval_text, satellite_parents
         old_id = old["id"]
-        moved = 0
-        for s in self.satellites_of(old_id):
+        new = self._long_row(new_id) or {}
+        keys = [_retrieval_text(old.get("content") or "", (old.get("metadata") or {}).get("topic")),
+                _retrieval_text(new.get("content") or "", (new.get("metadata") or {}).get("topic"))]
+        sats = self.satellites_of(old_id)
+        pulls: list[tuple[Optional[float], Optional[float]]] = [(None, None)] * len(sats)
+        if sats:
+            try:
+                vecs = self.long._embedding_function(keys + [_retrieval_text(s["content"] or "", s["metadata"].get("topic"))
+                                                             for s in sats])
+                v_old, v_new, v_sats = vecs[0], vecs[1], vecs[2:]
+                pulls = [(_cosine_distance(v, v_old), _cosine_distance(v, v_new)) for v in v_sats]
+            except Exception:  # noqa: BLE001 - no reading: everything moved is history, the safe side
+                pass
+        moved = carried = 0
+        for s, (d_old, d_new) in zip(sats, pulls):
             parents = [new_id if p == old_id else p for p in satellite_parents(s["metadata"])]
             parents = list(dict.fromkeys(parents))
             smeta = dict(s["metadata"])
             smeta["core_id"], smeta["also_core_ids"] = parents[0], parents[1:]
             smeta["moved_from"] = old_id
+            carry = d_old is not None and d_new is not None and d_new <= d_old + 1e-9
+            smeta["carry"] = carry
+            if d_old is not None:
+                smeta["pull_old"], smeta["pull_new"] = round(d_old, 4), round(d_new, 4)
             self.long.update(ids=[s["id"]], metadatas=[_clean_meta(smeta)])
             moved += 1
+            carried += int(carry)
         meta = dict(old["metadata"])
         meta.update({"kind": "satellite", "core_id": new_id, "superseded_by": new_id,
-                     "was_core": True, "demoted_at": time.time()})
+                     "was_core": True, "carry": False, "demoted_at": time.time()})
         self.long.update(ids=[old_id], metadatas=[_clean_meta(meta)])
-        return moved
+        return moved, carried
 
     def _restate_long(self, entry_id: str, new_content: str, meta: dict[str, Any]) -> None:
         """Replace a core's wording. The distilled retrieval key is re-embedded

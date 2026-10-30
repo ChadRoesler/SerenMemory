@@ -80,18 +80,21 @@ def test_with_surroundings_the_matching_episode_rides_first(client):
     assert len(recent) == 3 and got["surroundings"]["satellites"] == 3
 
 
-def test_a_replaced_cores_trail_finds_the_core_that_replaced_it(client):
+def test_a_replaced_cores_trail_hangs_under_the_new_core_but_does_not_lift_it(client):
     """The old core and its episodes hang under the new core after a replace
-    (22 Oct 2026), so an episode of the old story finds what is true now,
-    never the old core as an answer."""
+    (22 Oct 2026). Since 29 Oct 2026 an episode that was about the OLD state
+    has a broken pull (tests/test_broken_pull.py): it does not drag the current
+    core into a question about the past, the old core is never the answer, and
+    the episode is still there when satellites are asked for."""
     old = _core(client, "The user likes blue.")
     sat = _attach(client, old, "He painted the whole minis cabinet cobalt blue in March.")
     did = client.post("/drafts", json={"operations": [{"kind": "supersede", "content": "The user likes yellow now.", "topic": "t", "target_core_id": old}]}).json()["id"]
     new = client.post(f"/drafts/{did}/review", json={"decisions": [{"op": 0, "verdict": "approve"}]}).json()["results"][0]["long_term_id"]
     hits = _search(client, "painted the minis cabinet cobalt blue in March")
     ids = [h["id"] for h in hits]
-    assert old not in ids and sat not in ids and new in ids
-    assert next(h for h in hits if h["id"] == new)["matched_via"]["id"] == sat
+    assert old not in ids and sat not in ids
+    assert not [h for h in hits if h["id"] == new and h["matched_via"]], "history does not lift the new core"
+    assert client.get(f"/long/{new}/satellites").json()["count"] == 2, "the trail still hangs under it"
     ids = [h["id"] for h in _search(client, "painted the minis cabinet cobalt blue in March", include_satellites=True)]
     assert sat in ids
 

@@ -16,6 +16,7 @@ ENDPOINTS:
     DELETE /short/{id}          - remove                   (free)
     POST /near                  - add open loop            (free write)
     GET  /near                  - list                     (debug)
+    GET  /near/due              - what is due: by trigger, not similarity
     POST /near/{id}/complete    - mark intent done
     DELETE /near/{id}           - abandon intent           (free)
     GET  /long                  - list                     (read-open)

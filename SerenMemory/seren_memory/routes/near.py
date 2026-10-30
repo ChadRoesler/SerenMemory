@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 
+from typing import Optional
+
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..models.schemas import NearTermEntry
@@ -30,6 +32,18 @@ async def list_near(request: Request, include_completed: bool = False):
         rows = [r for r in rows if not r["metadata"].get("completed", False)]
     rows.sort(key=lambda r: r["metadata"].get("created_at", 0), reverse=True)
     return {"count": len(rows), "entries": rows}
+
+
+@router.get("/due")
+async def what_is_due(request: Request, now: Optional[float] = None):
+    """The open loops read by their TRIGGERS (seren_memory.due): what is due
+    now (time intents past their moment, most overdue first), the standing
+    notes, what is still waiting (and on what), and what has expired. The
+    clock a model asks because it does not feel time pass; recall cannot
+    answer 'what's due?', since that question resembles no intent in
+    particular. `now` (unix seconds) is for tests and for 'what will be due
+    by Friday'."""
+    return request.app.state.store.what_is_due(now)
 
 
 @router.post("/{entry_id}/complete")

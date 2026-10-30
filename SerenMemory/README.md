@@ -83,6 +83,10 @@ curl -X POST localhost:7420/near \
   -d '{"intent": "ask how the cluster bring-up went", "topic": "follow_up",
        "trigger_type": "time", "trigger_value": "1750000000"}'
 
+# What is due - the open loops by their triggers, not by similarity: due now
+# (most overdue first), standing notes, waiting (and on what), expired
+curl localhost:7420/near/due
+
 # Recall - unified search across all three tiers, ranked
 curl -X POST localhost:7420/search \
   -H 'content-type: application/json' \
@@ -133,17 +137,22 @@ eidetic:
 
 ## How recall ranking works
 
-`/search` hits all three tiers in parallel, then merges by a weighted
-score:
+`/search` hits all three tiers in parallel, then merges by one score
+(`seren_memory/ranking.py`): the hit's cosine **similarity**, plus small
+additive nudges:
 
-- ShortTerm × 1.0 (working memory, most immediately relevant)
-- NearTerm × 0.9 (active intents)
-- LongTerm × 0.8 *but* with an evidence multiplier - a fact confirmed 10
-  times outranks a one-off mention.
+- NearTerm +0.05: at *equal* relevance a promise comes first
+- ShortTerm +0.02: then working memory; LongTerm +0
+- LongTerm also gets ln(evidence_count) × 0.015: a core confirmed ten times
+  wins a near tie, never a contest
 
-So recency wins by default, but a well-established truth still surfaces
-above passing chatter. The weights live in `routes/search.py` if you want
-to tune them.
+Relevance decides; the nudges only settle ties. The multipliers this used
+to run on (1/(1+distance) × a tier weight × an evidence multiplier) squeezed
+every real difference in relevance into a band a 20% tier weight could
+overrule, and short-term entries crowded intents and long cores out of the
+top 50 (29 Oct 2026; the module's docstring has the measurements). The old
+shape is kept behind `ranking.MODE = "inverse"` for side-by-side runs in
+Probe's harness, not as a setting to run on.
 
 ---
 
@@ -173,10 +182,20 @@ decision, not a hint.
 
 **Demotion is a different thing and it is not deletion.** When a newer memory
 overrides an older one ("I like blue", then a month later "I like yellow"),
-the old one is kept and demoted: it ranks below, carries `superseded_by`, and
-recall can still say "last week you said blue, now it's yellow". Both are
-valid; one supersedes the other. That is a `supersede` operation in a draft,
-triggered by the newer memory, never by the forget route.
+the old one is kept and demoted: it becomes a satellite of the core that
+replaced it, carries `superseded_by`, and recall can still say "last week you
+said blue, now it's yellow". Both are valid; one supersedes the other. That is
+a `supersede` operation in a draft, triggered by the newer memory, never by
+the forget route.
+
+A superseded core also loses its pull (29 Oct 2026). Its satellites move
+under the new core, and each is tested against it: one at least as near to
+the new core as it was to the old still supports what is true now and keeps
+its pull (`carry: true`; it may lift the new core in recall), one that was
+about the old state hangs on as history with a broken pull (`carry: false`,
+never lifts, the distances kept as `pull_old` / `pull_new`). The demoted core
+itself is always history. Measured before it was built: history that lifted
+dragged the current core into every question about the past.
 
 The flag is your voice. The purge is the hippocampus's.
 
@@ -500,13 +519,7 @@ Run by SerenHippocampus, not by this process:
 
 ### Recall ranking
 
-`/search` hits all three tiers in parallel, then merges by a weighted score:
-
-- ShortTerm × 1.0 (working memory, most immediately relevant)
-- NearTerm × 0.9 (active intents)
-- LongTerm × 0.8 *but* with an evidence multiplier — a fact confirmed 10 times outranks a one-off mention.
-
-The weights live in `routes/search.py` if you want to tune them.
+`/search` hits all three tiers in parallel, then merges by one score: cosine similarity plus small additive nudges (NearTerm +0.05 and ShortTerm +0.02 at equal relevance; LongTerm + ln(evidence_count) × 0.015). Relevance decides; the nudges settle ties. The shape and its reasons live in `seren_memory/ranking.py`.
 
 ---
 

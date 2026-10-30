@@ -184,6 +184,24 @@ def test_complete_intent_missing_id_returns_error(mcp_impl):
     assert "not-a-real-id" in r["error"]
 
 
+def test_what_is_due_reads_the_triggers(mcp_impl):
+    """What is due (29 Oct 2026): the near tier by its triggers, the clock a
+    model asks on waking; the same buckets the route /near/due gives."""
+    now = 1_800_000_000.0
+    mcp_impl.remember_for_later(intent="check the stores came back after the maintenance day", trigger_type="time",
+                                trigger_value=str(now - 5))
+    mcp_impl.remember_for_later(intent="a standing note", trigger_type="always")
+    mcp_impl.remember_for_later(intent="when the board game comes up", trigger_type="event",
+                                trigger_value="mentions:board-game")
+    r = mcp_impl.what_is_due(now=now)
+    assert [x["intent"] for x in r["due"]] == ["check the stores came back after the maintenance day"]
+    assert r["due"][0]["overdue"] == 5 and r["standing"][0]["intent"] == "a standing note"
+    assert r["waiting"][0]["waits_for"] == "mentions:board-game"
+    assert r["say"] == "1 due, 1 standing, 1 waiting."
+    mcp_impl.complete_intent(r["due"][0]["id"])
+    assert mcp_impl.what_is_due(now=now)["say"] == "1 standing, 1 waiting."
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  AGENCY SURFACE
 # ════════════════════════════════════════════════════════════════════════════
