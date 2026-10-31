@@ -382,7 +382,10 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                              # 23 Oct 2026: pruned says why, a denied op says where it went, a short-term can be taken back
                              "consumed_by", "redrafted_in", "retract", "prompt_echo_guard", "fold", "review_note",
                              # 23 Oct 2026: the Map - long-term as a constellation
-                             "map"]}
+                             "map",
+                             # 30 Oct 2026: low core orbit - a short marks the cores it sits near, lifts them
+                             # in recall, is re-tested on a supersede and released on a forget
+                             "orbit"]}
 
     # -- The Halls viewer --
     # Serves the introspection UI same-origin. This isn't just a debug tool -

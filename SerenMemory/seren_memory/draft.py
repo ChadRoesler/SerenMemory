@@ -490,6 +490,20 @@ class DraftMixin:
                                           "deny with a critique and let the hippocampus redraft")
                     if not str(edited).strip():
                         raise DraftError("edited_content must be non-empty; omit it to apply as-is")
+                    # On an attach, edited_content is the SATELLITE's text. The
+                    # core's new wording is edited_restated_content. On 29 Oct
+                    # 2026 a reviewer put the corrected core in edited_content
+                    # with "restate": true, and it landed as a satellite under
+                    # the wrong wording, which stayed. Say so before it lands.
+                    kind_now = dec.get("edited_kind") or op.kind.value
+                    if (str(kind_now).strip().lower() == DraftOpKind.ATTACH.value and dec.get("restate") is True
+                            and dec.get("edited_restated_content") is None and not (op.restated_content or "").strip()):
+                        raise DraftError(
+                            f"operation {idx}: \"restate\": true with edited_content and no rewording to approve. "
+                            "On an attach, edited_content is the episode that hangs UNDER the core; the core's new "
+                            "wording goes in edited_restated_content. Give edited_restated_content (the core as it "
+                            "should read; the old wording is kept, undo_restate brings it back), or drop "
+                            "\"restate\": true to attach the episode as written.")
                 dec = {**dec, "_final": self._final_shape(d, idx, op, dec)}
             elif verdict == "deny":
                 if not str(dec.get("critique") or "").strip():
@@ -781,6 +795,8 @@ class DraftMixin:
             if (op.status == OpStatus.PENDING and op.kind != DraftOpKind.AGE_OUT
                     and not (op.kind == DraftOpKind.RETELL and not op.source_short_ids)):
                 self._sources_check(op, earlier, view)       # a retell of a core cites nothing, by design
+            if op.status == OpStatus.PENDING and op.source_short_ids:
+                self._orbit_check(op, view)
         if d.terminal and d.status == DraftStatus.PENDING:
             # The reviewer holds the pen here, and the old note ("land each one,
             # deny only what should not be in memory at all") read as keep
@@ -794,7 +810,8 @@ class DraftMixin:
                      "so denying an age_out does not keep it")
             out["last_attempt"] = (
                 "This is the last attempt, and the pen is yours: approve each operation, approve it with your "
-                "fixes (edited_content, edited_kind, edited_target_core_id, \"restate\": false, "
+                "fixes (edited_content, edited_kind, edited_target_core_id, edited_restated_content with "
+                "\"restate\": true to reword the core yourself on an attach, \"restate\": false, "
                 "edited_source_short_ids, edited_also_core_ids), taking the best wording from earlier_attempts, "
                 "or deny it. Holding the pen does not lower the bar. Keep a memory only if it is a fact that "
                 "will be needed again, or a moment that would be missed - a joke, a first, something fun - "
@@ -835,6 +852,45 @@ class DraftMixin:
             f"{lead}. left_in_short_term has the ones still there. If your approval carries one - every "
             "sentence of it, in content or edited_content - approve with edited_source_short_ids listing it "
             "with the rest; if not, leave it for a later sleep." if left else f"{lead}.")
+
+    def _orbit_check(self, op: DraftOperation, view: dict[str, Any]) -> None:
+        """Where the fragments already belong (config.OrbitConfig): the cores
+        each source short orbits, with the distance, and a word when the
+        operation goes against it. The orbit is the attach hint the drafter
+        and the reviewer should both see (on 20 Oct 2026 a draft aimed three
+        attaches at the wrong core; on 29 Oct nine proposed satellites that
+        already existed). A short orbiting nothing is the new-core candidate;
+        one orbiting two cores is a shared episode (also_core_ids)."""
+        rows = self._shorts_present(list(op.source_short_ids))
+        orbits: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            o = self.orbit_of(r["metadata"])
+            if o:
+                orbits[r["id"]] = [{"core_id": c, **({"distance": d} if d is not None else {})} for c, d in o]
+        if not orbits and not rows:
+            return
+        view["orbit"] = orbits
+        cores = list(dict.fromkeys(c for o in orbits.values() for c in [x["core_id"] for x in o]))
+        targets = [t for t in [op.target_core_id, *op.also_target_core_ids] if t]
+        notes: list[str] = []
+        if op.kind == DraftOpKind.ATTACH and op.target_core_id and cores and op.target_core_id not in cores:
+            notes.append(f"the episode orbits {', '.join(cores)} and this attach aims at {op.target_core_id}, which "
+                         "it does not orbit: check the target (edited_target_core_id on the last attempt, or deny "
+                         "with where it belongs)")
+        if op.kind == DraftOpKind.ATTACH and len(cores) > 1 and [c for c in cores if c not in targets]:
+            notes.append("the episode orbits more than one core: if it supports both, approve with "
+                         "edited_also_core_ids naming the other")
+        if op.kind in (DraftOpKind.NEW_CORE, DraftOpKind.VERBATIM) and cores:
+            notes.append(f"its source orbits {', '.join(cores)}: an attach there may be the better shape, unless "
+                         "this is a story of its own")
+        if op.kind == DraftOpKind.AGE_OUT and cores:
+            notes.append(f"its source orbits {', '.join(cores)}: letting it go lets a connected short go. Fine when "
+                         "the connection is weak (see the distance); otherwise deny with 'attach to <core>'")
+        if not orbits and op.kind == DraftOpKind.ATTACH:
+            notes.append("its source orbits no core: nothing in the store sits close to it. A real attach is "
+                         "still possible (the orbit is a hint, not a rule), but look twice at the target")
+        if notes:
+            view["orbit_check"] = "; ".join(notes) + "."
 
     def _shorts_present(self, ids: list[str]) -> list[dict[str, Any]]:
         """The short-terms among these ids, in the order given."""
@@ -960,11 +1016,13 @@ class DraftMixin:
                                          **({"eidetic": carried} if carried else {})})
             self.add_long(entry)
             moved, carried = self._demote_into(old, entry.id)
+            orbits_moved, orbits_released = getattr(self, "_last_orbit_retest", (0, 0))
             kept = self._keep_episodes(d, op, entry.id, entry.content, entry.topic)
             archived = self._archive_sources(op.source_short_ids, d, op, entry.id, kept)
             return {"long_term_id": entry.id, "kind": "core", "superseded": op.target_core_id,
                     "satellite_ids": kept, "moved_satellites": moved, "carried": carried,
-                    "history": moved - carried, "shorts_archived": archived}
+                    "history": moved - carried, "orbits_moved": orbits_moved,
+                    "orbits_released": orbits_released, "shorts_archived": archived}
 
         if op.kind == DraftOpKind.RETELL:
             core = self._long_row(op.target_core_id)
@@ -1058,7 +1116,12 @@ class DraftMixin:
         lifted the new core cost Vellmarch's episode class 0.82 to 0.46 on
         20 Oct 2026; history that hangs without lifting cost nothing and took
         the update class to 1.00. The demoted core itself is always history.
-        Returns (satellites moved, of which carried)."""
+
+        THE SHORTS IN ORBIT get the same test (retest_orbits): a short
+        orbiting the old core moves its orbit to the new one if it is at
+        least as near, and is a plain short again if not. Never inherited.
+        Returns (satellites moved, of which carried); the orbit counts ride
+        on the store as _last_orbit_retest for the supersede's result."""
         from .collections import _retrieval_text, satellite_parents
         old_id = old["id"]
         new = self._long_row(new_id) or {}
@@ -1066,13 +1129,24 @@ class DraftMixin:
                 _retrieval_text(new.get("content") or "", (new.get("metadata") or {}).get("topic"))]
         sats = self.satellites_of(old_id)
         pulls: list[tuple[Optional[float], Optional[float]]] = [(None, None)] * len(sats)
-        if sats:
+        v_old = v_new = None
+        try:
+            vecs = self.long._embedding_function(keys + [_retrieval_text(s["content"] or "", s["metadata"].get("topic"))
+                                                         for s in sats])
+            v_old, v_new, v_sats = vecs[0], vecs[1], vecs[2:]
+            pulls = [(_cosine_distance(v, v_old), _cosine_distance(v, v_new)) for v in v_sats]
+        except Exception:  # noqa: BLE001 - no reading: everything moved is history, the safe side
+            pass
+        self._last_orbit_retest = (0, 0)
+        if v_old is not None and v_new is not None:
             try:
-                vecs = self.long._embedding_function(keys + [_retrieval_text(s["content"] or "", s["metadata"].get("topic"))
-                                                             for s in sats])
-                v_old, v_new, v_sats = vecs[0], vecs[1], vecs[2:]
-                pulls = [(_cosine_distance(v, v_old), _cosine_distance(v, v_new)) for v in v_sats]
-            except Exception:  # noqa: BLE001 - no reading: everything moved is history, the safe side
+                self._last_orbit_retest = self.retest_orbits(old_id, new_id, v_old, v_new)
+            except Exception:  # noqa: BLE001 - the orbit is a hint; a supersede never fails on it
+                pass
+        else:
+            try:
+                self._last_orbit_retest = (0, self.release_orbits([old_id]))
+            except Exception:  # noqa: BLE001
                 pass
         moved = carried = 0
         for s, (d_old, d_new) in zip(sats, pulls):

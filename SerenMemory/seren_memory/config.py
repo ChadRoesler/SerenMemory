@@ -173,8 +173,31 @@ class EideticConfig(BaseModel):
     sources: list[Union[str, dict[str, Any]]] = []   # a folder, a URL prefix, or {url, bearer_token | bearer_token_env}
 
 
+class OrbitConfig(BaseModel):
+    """LOW CORE ORBIT (29 Oct 2026; the lifecycle drawing, 30 Oct).
+    When a short-term memory is written, the store looks once at the cores
+    and marks the short as ORBITING each core within max_distance (cosine
+    distance on the retrieval key, the same measure recall uses). The orbit
+    is a hint, not an attach: no long-term is written and nothing is
+    reviewed. It does three things. In recall, a short that matches the
+    question brings the cores it orbits up with it, the way a satellite does
+    (routes/search). In review, the drafter and the reviewer see where a
+    fragment already belongs, so an attach aimed elsewhere is questioned and
+    a short orbiting nothing reads as a new-core candidate. On a supersede,
+    the orbit is RE-TESTED against the replacing core and moves or breaks
+    (the pull, applied to shorts); on a forget it is released; a short in
+    orbit still ages out like any other, an orbit is a hint and not a
+    lifeline. max_distance is the whole game: too loose and every short
+    lifts something and the 20 Oct crowding walks back in; measure it in
+    Probe's harness before moving it."""
+    enabled: bool = True
+    max_distance: float = 0.45
+    max_cores: int = 3
+
+
 class MemoryConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
+    orbit: OrbitConfig = Field(default_factory=OrbitConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     lifetimes: LifetimeConfig = Field(default_factory=LifetimeConfig)
     consolidator: ConsolidatorConfig = Field(default_factory=ConsolidatorConfig)

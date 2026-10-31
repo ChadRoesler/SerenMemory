@@ -154,6 +154,46 @@ top 50 (29 Oct 2026; the module's docstring has the measurements). The old
 shape is kept behind `ranking.MODE = "inverse"` for side-by-side runs in
 Probe's harness, not as a setting to run on.
 
+**A core is as near as its nearest satellite.** A satellite is an episode,
+worded the way a question is worded, so it is often the nearest row in the
+store. A satellite hit counts for its core: the core takes the satellite's
+distance when that is the better one and carries `matched_via`, the episode
+that found it. History never lifts (the pull, below).
+
+**Low core orbit** (30 Oct 2026). When a short-term memory is written, the
+store looks once at the cores and marks the short as *orbiting* each core
+within `orbit.max_distance` (`orbit: [core ids]`, `orbit_distances` on the
+short's metadata). It is a hint, not an attach: nothing is written to
+long-term and nothing is reviewed. In recall a short that matches the
+question brings the cores it orbits up with it the way a satellite does,
+`matched_via` naming the short (`tier: short`), so the durable context
+arrives with the fresh one in one pass. In the review view every source
+short's orbit is shown beside the operation (`orbit`), and `orbit_check`
+says when the operation goes against it: an attach aimed at a core the
+episode does not orbit, a new core whose source orbits an existing one, an
+age-out letting a connected short go, an episode in two orbits that should
+be a shared satellite. On a supersede the orbit is re-tested against the
+replacing core, the way the satellites are, and moves or breaks: never
+inherited. On a forget it is released; the short stays. A short in orbit
+still ages out like any other. The threshold is the whole game: too loose
+and every short lifts something; measure it in Probe's harness before
+moving it (`orbit.enabled`, `orbit.max_distance`, `orbit.max_cores`).
+`POST /short/reorbit` marks every short's orbit again from the cores as
+they are now: for a store from before orbits, a seeded store whose shorts
+landed before its cores, or a changed threshold.
+
+**Strength** (`ranking.STRENGTH`, off until measured). The Boy Scout
+fire: a core with a lot behind it should win a *vague* question. The term
+is what the store already knows beyond the evidence count: ln(1 + its
+satellites) × `satellites`, ln(1 + the shorts in orbit around it) × `orbit`,
+and a `warmth` that fades over `warm_days` from `last_confirmed`; summed and
+capped at `cap` (0.04), so it settles ties among near-equal matches and
+never crosses a real gap (strength that beat relevance is exactly what
+buried the current title under eleven satellite-heavy cores on 20 Oct). All
+three weights ship at 0; Probe's harness sets them in-process
+(`--memory-strength=satellites:0.01,orbit:0.01,cap:0.03`) and the numbers
+decide what, if anything, ships.
+
 ---
 
 ## The "no scalpel" philosophy
@@ -195,7 +235,11 @@ its pull (`carry: true`; it may lift the new core in recall), one that was
 about the old state hangs on as history with a broken pull (`carry: false`,
 never lifts, the distances kept as `pull_old` / `pull_new`). The demoted core
 itself is always history. Measured before it was built: history that lifted
-dragged the current core into every question about the past.
+dragged the current core into every question about the past. The shorts in
+orbit around the old core get the same test (`orbits_moved` /
+`orbits_released` on the supersede's result): one still as near to the new
+core moves its orbit there; one that was about the old state is a plain
+short again. An orbit is never inherited.
 
 The flag is your voice. The purge is the hippocampus's.
 
@@ -490,6 +534,9 @@ most likely touch:
 - `lifetimes.short_term_seconds` - how long a short-term lives unpromoted
 - `consolidator.pruned_safety_days` - how long an aged-out short-term waits in
   the pruned tier before `/tidy` sweeps it (0 = no safety net)
+- `orbit.max_distance` (0.45) and `orbit.max_cores` (3) - how near a core a
+  short has to sit to orbit it, and how many it may orbit; `orbit.enabled`
+  turns the marking off
 
 The model, the schedule and how eager a sleep is are the hippocampus's config.
 

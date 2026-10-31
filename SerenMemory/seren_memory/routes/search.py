@@ -32,6 +32,7 @@ has been confirmed - is the point; the numbers are ranking.py's.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Body, Request
 
@@ -79,6 +80,12 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
     # candidates to rank meaningfully, then trim to n_results at the end.
     fetch_n = req.n_results * 2
 
+    # STRENGTH (ranking.STRENGTH, off unless set): what stands behind each
+    # core, counted once per search - its satellites, and the shorts in orbit
+    # around it now. One scan of long and short metadata; nothing when the
+    # terms are zero.
+    strength_extra = _strength_counts(store) if ranking.strength_on() else {}
+
     tiers = []
     if req.include_short:
         tiers.append("short")
@@ -109,7 +116,7 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
                 for cid in satellite_parents(meta):          # a shared episode finds each of its cores
                     prev = via.get(cid)
                     if prev is None or hit["distance"] < prev["raw_distance"]:
-                        via[cid] = {"id": hit["id"], "content": hit["content"],
+                        via[cid] = {"id": hit["id"], "content": hit["content"], "tier": "long",
                                     "created_at": meta.get("created_at"), "raw_distance": round(hit["distance"], 6)}
                 continue
             if tier == "long" and not req.include_superseded:
@@ -121,12 +128,26 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
             if tier == "near" and meta.get("completed"):
                 continue
 
+            # LOW CORE ORBIT (config.OrbitConfig): a short that matched brings
+            # the cores it orbits up with it, as a satellite does - the core
+            # takes the short's distance when that is the better one, and the
+            # short rides as matched_via. The durable context arrives with the
+            # fresh one in one pass. Resolved at read time: a core gone or
+            # superseded since the orbit was marked is skipped by the lift.
+            # The short itself is still its own hit, below.
+            if tier == "short":
+                for cid, _ in store.orbit_of(meta):
+                    prev = via.get(cid)
+                    if prev is None or hit["distance"] < prev["raw_distance"]:
+                        via[cid] = {"id": hit["id"], "content": hit["content"], "tier": "short",
+                                    "created_at": meta.get("ts"), "raw_distance": round(hit["distance"], 6)}
+
             distance = hit["distance"]
             all_hits.append(SearchHit(
                 tier=tier,
                 content=hit["content"],
                 topic=meta.get("topic"),
-                score=ranking.score(tier, distance, meta),
+                score=ranking.score(tier, distance, meta, strength_extra.get(hit["id"])),
                 raw_distance=round(distance, 6),
                 id=hit["id"],
                 metadata=meta,
@@ -134,7 +155,8 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
 
     # A core is as near as its nearest satellite (module docstring).
     if via:
-        _lift_cores_by_satellite(store, all_hits, via, include_superseded=req.include_superseded)
+        _lift_cores_by_satellite(store, all_hits, via, include_superseded=req.include_superseded,
+                                 strength_extra=strength_extra)
 
     # Merge + rank + trim.
     all_hits.sort(key=lambda h: h.score, reverse=True)
@@ -147,23 +169,43 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
     )
 
 
-def _long_score(distance: float, meta: dict) -> float:
-    return ranking.score("long", distance, meta)
+def _long_score(distance: float, meta: dict, extra: Optional[dict] = None) -> float:
+    return ranking.score("long", distance, meta, extra)
+
+
+def _strength_counts(store) -> dict[str, dict]:
+    """Per core: how many satellites hang under it and how many shorts orbit
+    it now, for ranking.strength. One read of each tier's metadata."""
+    import time as _time
+    now = _time.time()
+    out: dict[str, dict] = {}
+    try:
+        rows = store.long.get(include=["metadatas"])
+        for meta in rows.get("metadatas") or []:
+            for cid in satellite_parents(meta or {}):
+                out.setdefault(cid, {"satellites": 0, "orbiting": 0, "now": now})["satellites"] += 1
+        for r in store.get_short_all():
+            for cid, _ in store.orbit_of(r.get("metadata") or {}):
+                out.setdefault(cid, {"satellites": 0, "orbiting": 0, "now": now})["orbiting"] += 1
+    except Exception as e:  # noqa: BLE001 - strength is a nudge; a search never fails on it
+        log.warning("search: could not count strength (%s: %s); ranking without it", type(e).__name__, e)
+    return out
 
 
 def _lift_cores_by_satellite(store, all_hits: list[SearchHit], via: dict[str, dict], *,
-                             include_superseded: bool) -> None:
+                             include_superseded: bool, strength_extra: Optional[dict] = None) -> None:
     """For every satellite the vector search returned: its core takes the
     satellite's distance when that is the better one, and says which episode
     found it. A core the search did not return at all is fetched and added;
     a superseded core stays history unless asked for."""
+    strength_extra = strength_extra or {}
     present = {h.id: h for h in all_hits if h.tier == "long"}
     for cid, sat in via.items():
         h = present.get(cid)
         if h is not None:
             if sat["raw_distance"] < h.raw_distance:
                 h.raw_distance = sat["raw_distance"]
-                h.score = _long_score(sat["raw_distance"], h.metadata)
+                h.score = _long_score(sat["raw_distance"], h.metadata, strength_extra.get(cid))
                 h.matched_via = sat
             continue
         row = store.get_by_id(cid)
@@ -176,7 +218,7 @@ def _lift_cores_by_satellite(store, all_hits: list[SearchHit], via: dict[str, di
             continue
         all_hits.append(SearchHit(
             tier="long", content=row.get("content") or "", topic=meta.get("topic"),
-            score=_long_score(sat["raw_distance"], meta), raw_distance=sat["raw_distance"],
+            score=_long_score(sat["raw_distance"], meta, strength_extra.get(cid)), raw_distance=sat["raw_distance"],
             id=cid, metadata=meta, matched_via=sat))
 
 

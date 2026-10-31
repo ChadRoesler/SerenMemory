@@ -119,10 +119,22 @@ class MemoryToolImpl:
 
         For exact-phrasing-matters facts, follow up with
         preserve_memory_verbatim on the returned id.
+
+        LOW CORE ORBIT: on the way in, the store looks once at the cores
+        and marks the memory as orbiting each core it sits near (`orbit`
+        on the answer, with the distances). A hint, not an attach: nothing
+        is written to long-term. In recall the memory brings those cores
+        up with it; in review the hippocampus and the reviewer see where it
+        already belongs. Orbiting nothing is fine: that is a new story, or
+        a one-off.
         """
         entry = ShortTermEntry(content=content, topic=topic)
         saved = self.store.add_short(entry)
         out: dict[str, Any] = {"ok": True, "id": saved.id, "tier": "short"}
+        row = self.store.get_by_id(saved.id)
+        orbit = self.store.orbit_of(row["metadata"]) if row else []
+        if orbit:
+            out["orbit"] = [{"core_id": c, **({"distance": d} if d is not None else {})} for c, d in orbit]
         if keep:
             out["kept"], out["refused"] = self._keep_many(saved.id, keep)
         return out
@@ -537,8 +549,13 @@ class MemoryToolImpl:
         the two. On a redraft, earlier_attempts shows every previous version
         of the operation and the critique that sent it back. An operation
         that would leave fragments in short-term carries sources_check and
-        left_in_short_term (see review_draft). last_attempt is set when
-        nothing comes back after this one."""
+        left_in_short_term (see review_draft). Every operation made from
+        short-terms carries `orbit`: the cores each of them already sits
+        near (low core orbit), and `orbit_check` when the operation goes
+        against it (an attach aimed where the episode does not orbit, a new
+        core whose source orbits an existing one, an age-out of a connected
+        short, an episode in two orbits that should be a shared satellite).
+        last_attempt is set when nothing comes back after this one."""
         view = self.store.review_view(draft_id)
         if view is None:
             return {"ok": False, "error": f"no draft '{draft_id}'"}
@@ -575,6 +592,7 @@ class MemoryToolImpl:
         best of the attempts, fix what is wrong, approve:
           {"op": 0, "verdict": "approve", "edited_content": "the text as it should read"}
           {"op": 1, "verdict": "approve", "edited_kind": "attach", "edited_target_core_id": "<core id>"}
+          {"op": 2, "verdict": "approve", "restate": true, "edited_restated_content": "the core as it should read"}
         edited_kind is new_core, attach, supersede, verbatim or age_out. These
         edits are refused on any earlier attempt: there, deny and let the loop
         do its job. Deny on the last attempt only what should not be in memory
@@ -582,6 +600,14 @@ class MemoryToolImpl:
         happens, so denying its age_out does not keep it: to keep it, approve
         with edited_kind - attach + edited_target_core_id keeps the memory
         itself under that core.
+
+        TO REWORD THE CORE YOURSELF on a last-attempt attach, the field is
+        edited_restated_content, with "restate": true. On an attach,
+        edited_content is the EPISODE that hangs under the core, never the
+        core: "restate": true with edited_content and no rewording is refused
+        and says so (on 29 Oct 2026 a corrected core went in as a satellite
+        that way, and the wrong wording stayed). The old wording is kept and
+        undo_restate brings it back.
 
         A SATELLITE CAN HANG ON MORE THAN ONE CORE. On an attach, on any
         attempt, name the others the episode also supports:

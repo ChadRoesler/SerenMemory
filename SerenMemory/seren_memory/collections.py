@@ -267,11 +267,140 @@ class MemoryStore(DraftMixin):
         try:
             key = _retrieval_text(entry.content, entry.topic)
             vec = self.short._embedding_function([key])[0]
+            orbit = self._orbit_for(key, vec)
+            if orbit:
+                meta = _clean_meta({**meta, "orbit": [c for c, _ in orbit],
+                                    "orbit_distances": {c: d for c, d in orbit}})
             self.short.add(documents=[entry.content], embeddings=[vec],
                            metadatas=[meta], ids=[entry.id])
         except Exception:  # noqa: BLE001 - a precompute hiccup must not lose the write
             self.short.add(documents=[entry.content], metadatas=[meta], ids=[entry.id])
         return entry
+
+    # ------------------------------------------------------------------
+    #  Low core orbit (config.OrbitConfig). A short written close to a core
+    #  is marked as orbiting it: a hint the store keeps on the short's
+    #  metadata (orbit: [core ids], orbit_distances: {core id: distance}),
+    #  resolved against the cores at read time (a core gone or superseded
+    #  since is skipped), re-tested on a supersede and released on a forget.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def orbit_of(meta: dict[str, Any]) -> list[tuple[str, Optional[float]]]:
+        """The cores a short orbits, nearest first, with the distance each was
+        marked at (None for an orbit written without one)."""
+        ids = _maybe_json(meta.get("orbit")) if meta else None
+        if not isinstance(ids, list):
+            return []
+        dists = _maybe_json(meta.get("orbit_distances"))
+        dists = dists if isinstance(dists, dict) else {}
+        out = []
+        for c in ids:
+            if not c:
+                continue
+            d = dists.get(str(c))
+            out.append((str(c), float(d) if isinstance(d, (int, float)) else None))
+        out.sort(key=lambda t: (t[1] is None, t[1] if t[1] is not None else 0.0))
+        return out
+
+    def _orbit_for(self, key: str, vec: Any) -> list[tuple[str, float]]:
+        """The live cores within orbit.max_distance of a retrieval key,
+        nearest first, at most orbit.max_cores. Never raises: a short is
+        written whether or not the cores could be read."""
+        cfg = getattr(self._config, "orbit", None)
+        if cfg is None or not cfg.enabled or cfg.max_cores <= 0:
+            return []
+        try:
+            if self.long.count() == 0:
+                return []
+            want = min(max(cfg.max_cores * 4, 8), self.long.count())
+            try:
+                res = self.long.query(query_embeddings=[[float(x) for x in vec]], n_results=want,
+                                      include=["metadatas", "distances"])
+                rows = [(i, m or {}, float(d)) for i, m, d in zip(res["ids"][0], res["metadatas"][0], res["distances"][0])]
+            except Exception:  # noqa: BLE001 - the index not on disk yet: the brute path answers
+                rows = [(h["id"], h["metadata"], h["distance"]) for h in self._query_brute(self.long, key, want)]
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[tuple[str, float]] = []
+        for cid, meta, dist in rows:
+            if meta.get("kind", "core") != "core" or meta.get("superseded_by"):
+                continue
+            if dist > cfg.max_distance:
+                continue
+            out.append((cid, round(dist, 4)))
+        out.sort(key=lambda t: t[1])
+        return out[: cfg.max_cores]
+
+    def reorbit_shorts(self) -> dict[str, int]:
+        """Mark every short-term's orbit again from the cores as they are now.
+        For a store that predates orbits (every short written before 30 Oct
+        2026), a seeded store whose shorts landed before its cores, or a
+        changed threshold. Returns {shorts, orbiting}."""
+        rows = self.get_short_all()
+        orbiting = 0
+        for r in rows:
+            meta = r.get("metadata") or {}
+            try:
+                key = _retrieval_text(r.get("content") or "", meta.get("topic"))
+                vec = self.short._embedding_function([key])[0]
+                orbit = self._orbit_for(key, vec)
+            except Exception:  # noqa: BLE001
+                orbit = []
+            self._set_orbit(r["id"], orbit)
+            orbiting += int(bool(orbit))
+        return {"shorts": len(rows), "orbiting": orbiting}
+
+    def shorts_orbiting(self, core_id: str) -> list[dict[str, Any]]:
+        """The short-terms that orbit a core."""
+        return [r for r in self.get_short_all()
+                if core_id in [c for c, _ in self.orbit_of(r["metadata"])]]
+
+    def _set_orbit(self, short_id: str, orbit: list[tuple[str, Optional[float]]]) -> bool:
+        if not orbit:
+            return self.update_short_metadata(short_id, {"orbit": None, "orbit_distances": None})
+        return self.update_short_metadata(short_id, {
+            "orbit": [c for c, _ in orbit],
+            "orbit_distances": {c: d for c, d in orbit if d is not None} or None})
+
+    def release_orbits(self, core_ids: list[str]) -> int:
+        """Take these cores out of every short's orbit (a forget: the short
+        is released, not forgotten). Returns how many shorts changed."""
+        gone = set(core_ids)
+        n = 0
+        for r in self.get_short_all():
+            orbit = self.orbit_of(r["metadata"])
+            kept = [(c, d) for c, d in orbit if c not in gone]
+            if len(kept) != len(orbit):
+                self._set_orbit(r["id"], kept)
+                n += 1
+        return n
+
+    def retest_orbits(self, old_id: str, new_id: str, v_old: Any, v_new: Any) -> tuple[int, int]:
+        """The pull, applied to shorts (the lifecycle drawing, 30 Oct 2026): when a
+        core is superseded, each short orbiting it is tested against the
+        replacing core. At least as near to the new core as it was to the
+        old: the orbit moves to the new core. Farther: the orbit breaks, and
+        the short is a plain short again (it is not history, it is working
+        memory that was about the old state). An orbit is never inherited.
+        Returns (moved, released)."""
+        from .draft import _cosine_distance
+        moved = released = 0
+        for r in self.shorts_orbiting(old_id):
+            orbit = self.orbit_of(r["metadata"])
+            rest = [(c, d) for c, d in orbit if c not in (old_id, new_id)]
+            d_old = d_new = None
+            try:
+                v = self.short._embedding_function([_retrieval_text(r["content"] or "", r["metadata"].get("topic"))])[0]
+                d_old, d_new = _cosine_distance(v, v_old), _cosine_distance(v, v_new)
+            except Exception:  # noqa: BLE001 - no reading: the orbit breaks, the safe side
+                pass
+            if d_old is not None and d_new is not None and d_new <= d_old + 1e-9:
+                rest.append((new_id, round(d_new, 4)))
+                moved += 1
+            else:
+                released += 1
+            self._set_orbit(r["id"], rest)
+        return moved, released
 
     def get_short_all(self, limit: Optional[int] = None) -> list[dict[str, Any]]:
         """All short-term entries as dicts. Used by the consolidator. No
@@ -1128,6 +1257,9 @@ class MemoryStore(DraftMixin):
                 scrubbed += 1
 
         self.long.delete(ids=ids)
+        # a short in orbit around a forgotten core is released, not forgotten:
+        # it is working memory, and was never part of the core
+        orbits_released = self.release_orbits(ids)
         swept = self.sweep_eidetic(grace=0)             # a purged picture goes now, not in an hour
 
         persist = self._config.resolved_persist_dir()
@@ -1141,7 +1273,7 @@ class MemoryStore(DraftMixin):
         tomb = {
             "id": entry_id, "kind": kind, "reason": reason, "purged_at": time.time(),
             "cascade": {"satellites": len(ids) - 1, "satellites_kept_on_another_core": rehomed,
-                        "shorts": shorts_removed,
+                        "shorts": shorts_removed, "orbits_released": orbits_released,
                         "pruned": pruned_removed, "legacy_drafts": len(dead),
                         "drafts_scrubbed": scrubbed, "backups_removed": removed,
                         "backups_retained": len(backups) - removed, "eidetic": len(swept)},

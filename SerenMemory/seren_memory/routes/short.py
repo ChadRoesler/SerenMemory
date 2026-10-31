@@ -16,6 +16,15 @@ async def add_short(request: Request, entry: ShortTermEntry = Body(...)):
     return {"ok": True, "id": saved.id, "entry": saved.model_dump()}
 
 
+@router.post("/reorbit")
+async def reorbit(request: Request):
+    """Mark every short-term's orbit again from the cores as they are now
+    (config orbit): for a store from before orbits, a store seeded shorts
+    first, or a changed threshold. Answers {shorts, orbiting}."""
+    store = request.app.state.store
+    return {"ok": True, **store.reorbit_shorts()}
+
+
 @router.get("")
 async def list_short(request: Request, limit: int = 100):
     """List short-term entries (most recent first). Mostly for debugging /
