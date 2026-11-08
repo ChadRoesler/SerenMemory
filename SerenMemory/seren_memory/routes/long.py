@@ -56,6 +56,18 @@ async def memory_map(request: Request):
     return request.app.state.store.map_view()
 
 
+@router.get("/hot-satellites")
+async def hot_satellites(request: Request, min_hits: int = 3, limit: int = 20):
+    """Glitter getting strong: the satellites that keep being the episode a
+    core was found through (the recall ledger, seren_memory.hits), most
+    recalled first, with their cores and counts. A core's own wording, a
+    kept episode, one already promoted and one flagged to forget are left
+    out. The hippocampus reads this to propose a promote; the Halls show it."""
+    store = request.app.state.store
+    entries = store.hot_satellites(min_hits=min_hits, limit=limit)
+    return {"min_hits": min_hits, "count": len(entries), "entries": entries}
+
+
 @router.get("/{entry_id}/satellites")
 async def satellites(request: Request, entry_id: str):
     """The surroundings of a core: its supporting episodes, oldest first,

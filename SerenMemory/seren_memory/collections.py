@@ -221,6 +221,11 @@ class MemoryStore(DraftMixin):
         if "seren_dockets" in existing and "seren_drafts" not in existing:
             self._client.get_collection("seren_dockets", **ef_kwargs).modify(name="seren_drafts")
         self.drafts = _open("seren_drafts")
+        # the recall ledger for satellites (seren_memory.hits): how often each one was the
+        # episode that brought its core into a packet. In the persist dir, so a snapshot carries it.
+        from pathlib import Path as _Path
+        from .hits import HitLedger
+        self.hits = HitLedger(_Path(persist) / "satellite_hits.json")
 
         # Stamp which embedder built this store (sidecar JSON in the persist
         # dir), so the next startup's guard can detect an embedder change. Only
@@ -1257,6 +1262,7 @@ class MemoryStore(DraftMixin):
                 scrubbed += 1
 
         self.long.delete(ids=ids)
+        self.hits.forget(ids)                      # a purged satellite's count goes with it
         # a short in orbit around a forgotten core is released, not forgotten:
         # it is working memory, and was never part of the core
         orbits_released = self.release_orbits(ids)

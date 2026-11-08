@@ -190,6 +190,7 @@ class DraftOpKind(str, Enum):
     VERBATIM = "verbatim"      # one episode kept word for word as its own core
     RETELL = "retell"          # the core's wording becomes the retelling; the old wording hangs under it as its episode
     AGE_OUT = "age_out"        # a short-term at the end of its week, let go: archived to pruned, nothing written to long
+    PROMOTE = "promote"        # a satellite recalled on its own, again and again, becomes a core; it stays shared under the core it grew under
 
 
 class OpStatus(str, Enum):
@@ -213,6 +214,7 @@ class DraftOperation(BaseModel):
     target_core_id: Optional[str] = Field(None, description="attach / supersede: the existing core.")
     target_op: Optional[int] = Field(None, description="attach / supersede, instead of target_core_id: the index of a "
                                      "new_core operation in this same draft - the core it creates once approved.")
+    target_satellite_id: Optional[str] = Field(None, description="promote: the satellite that becomes a core of its own.")
     restated_content: Optional[str] = Field(None, description="attach: new wording for the core, if the evidence changes it.")
     also_target_core_ids: list[str] = Field(default_factory=list, description="attach: other cores the same episode "
                                             "also supports; its satellite hangs under each of them.")

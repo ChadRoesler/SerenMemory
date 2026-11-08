@@ -385,7 +385,9 @@ def create_app(config: MemoryConfig | None = None, embedding_function=None,
                              "map",
                              # 30 Oct 2026: low core orbit - a short marks the cores it sits near, lifts them
                              # in recall, is re-tested on a supersede and released on a forget
-                             "orbit"]}
+                             "orbit",
+                             # 8 Nov 2026: satellite promotion and the recall ledger behind it
+                             "promote", "satellite_hits"]}
 
     # -- The Halls viewer --
     # Serves the introspection UI same-origin. This isn't just a debug tool -

@@ -145,7 +145,7 @@ _WORD = re.compile(r"[a-z0-9']+")
 RESTATE_KEEP = 0.5          # the share of the core's words a restatement must still carry
 _TARGETED = (DraftOpKind.ATTACH, DraftOpKind.SUPERSEDE, DraftOpKind.RETELL)   # the kinds that name a core
 # the kinds whose approval leaves a core new or newly worded: where an old episode may also belong
-_LINKABLE = (DraftOpKind.NEW_CORE, DraftOpKind.SUPERSEDE, DraftOpKind.RETELL, DraftOpKind.VERBATIM)
+_LINKABLE = (DraftOpKind.NEW_CORE, DraftOpKind.SUPERSEDE, DraftOpKind.RETELL, DraftOpKind.VERBATIM, DraftOpKind.PROMOTE)
 NEARBY_N = 5                # how many nearby satellites a review shows beside a new or reworded core
 TWIN_SIMILARITY = 0.93      # where_else shows a satellite this close to another as a look-alike (a fold candidate)
 # The hippocampus shows its drafting model each core cut short, as
@@ -306,6 +306,10 @@ class DraftMixin:
                     raise DraftError(f"operation {i}: no long-term entry '{op.target_core_id}'")
                 if target["metadata"].get("kind", "core") != "core":
                     raise DraftError(f"operation {i}: '{op.target_core_id}' is a satellite, not a core")
+            if op.kind == DraftOpKind.PROMOTE:
+                self._promote_row(i, op.target_satellite_id, op)
+            elif op.target_satellite_id:
+                raise DraftError(f"operation {i}: target_satellite_id is only for a promote, not {op.kind.value}")
             if op.also_target_core_ids:
                 if op.kind != DraftOpKind.ATTACH:
                     raise DraftError(f"operation {i}: also_target_core_ids is only for attach, not {op.kind.value}")
@@ -315,12 +319,58 @@ class DraftMixin:
                     raise DraftError(f"operation {i} (age_out) names no short-term to let go")
                 if op.target_core_id or op.target_op is not None:
                     raise DraftError(f"operation {i}: an age_out writes nothing to long-term and has no target")
-            elif not (op.content or "").strip() and op.kind != DraftOpKind.ATTACH:
+            elif not (op.content or "").strip() and op.kind not in (DraftOpKind.ATTACH, DraftOpKind.PROMOTE):
                 raise DraftError(f"operation {i} ({op.kind.value}) needs content")
         d.cluster_id = d.cluster_id or d.id
         self.drafts.add(documents=[d.summary or "(no summary)"],
                          metadatas=[_draft_meta(d)], ids=[d.id])
         return d
+
+    def _promote_row(self, i: int, sat_id: Optional[str], op: Optional[DraftOperation] = None) -> dict[str, Any]:
+        """The satellite a promote names, or the reason it cannot be promoted:
+        it must be a live satellite, and not a core's own earlier wording or
+        kept episode (promoting those would make the core twice)."""
+        if op is not None and (op.target_core_id or op.target_op is not None):
+            raise DraftError(f"operation {i}: a promote names its satellite in target_satellite_id, not a core")
+        if not (sat_id or "").strip():
+            raise DraftError(f"operation {i}: a promote needs target_satellite_id")
+        row = self._long_row(str(sat_id).strip())
+        if row is None:
+            raise DraftError(f"operation {i}: no long-term entry '{sat_id}'")
+        m = row["metadata"]
+        if m.get("kind", "core") != "satellite":
+            raise DraftError(f"operation {i}: '{sat_id}' is a core already, not a satellite")
+        if m.get("was_core") or m.get("kept_episode"):
+            raise DraftError(f"operation {i}: '{sat_id}' is a core's own wording ({'earlier wording' if m.get('was_core') else 'kept episode'}); "
+                             "promoting it would make that core twice")
+        if m.get("promoted_to"):
+            raise DraftError(f"operation {i}: '{sat_id}' was already promoted, to core '{m.get('promoted_to')}'")
+        if m.get("forget_flag"):
+            raise DraftError(f"operation {i}: '{sat_id}' is flagged to be forgotten")
+        return row
+
+    def hot_satellites(self, min_hits: int = 3, limit: int = 20) -> list[dict[str, Any]]:
+        """Satellites that keep being the episode a core was found through:
+        the recall ledger joined with the rows, most recalled first. A core's
+        own wording, a kept episode, one already promoted and one flagged to
+        be forgotten are left out. What the hippocampus reads to propose a
+        promote, and what the Halls show as 'glitter getting strong'."""
+        from .collections import satellite_parents
+        out: list[dict[str, Any]] = []
+        for sid, h in self.hits.hot(min_hits, max(1, int(limit)) * 4):
+            row = self._long_row(sid)
+            if row is None:
+                continue
+            m = row["metadata"]
+            if (m.get("kind", "core") != "satellite" or m.get("was_core") or m.get("kept_episode")
+                    or m.get("promoted_to") or m.get("forget_flag")):
+                continue
+            out.append({"id": sid, "content": row["content"], "topic": m.get("topic"),
+                        "cores": satellite_parents(m), "hits": int(h.get("n", 0) or 0),
+                        "last_hit": h.get("last"), "first_hit": h.get("first"), "created_at": m.get("created_at")})
+            if len(out) >= int(limit):
+                break
+        return out
 
     def _check_cores(self, i: int, ids: Any, field: str) -> list[str]:
         """A list of live core ids, or the reason it is not one."""
@@ -602,7 +652,7 @@ class DraftMixin:
                 raise DraftError(f"operation {idx}: edited_kind must be one of "
                                  f"{', '.join(k.value for k in DraftOpKind)}")
         target, target_op = op.target_core_id, op.target_op
-        if kind in (DraftOpKind.NEW_CORE, DraftOpKind.VERBATIM, DraftOpKind.AGE_OUT):
+        if kind in (DraftOpKind.NEW_CORE, DraftOpKind.VERBATIM, DraftOpKind.AGE_OUT, DraftOpKind.PROMOTE):
             target, target_op = None, None
         elif et is not None:
             target, target_op = str(et).strip(), None
@@ -620,7 +670,15 @@ class DraftMixin:
                 if row["metadata"].get("kind", "core") != "core":
                     raise DraftError(f"operation {idx}: '{target}' is a satellite, not a core")
                 core_text = row["content"]
+        sat_id: Optional[str] = None
+        if kind == DraftOpKind.PROMOTE:
+            es = dec.get("edited_target_satellite_id")
+            sat_id = str(es).strip() if es is not None else op.target_satellite_id
+            sat_row = self._promote_row(idx, sat_id)
+            sat_id = sat_row["id"]
         content = dec.get("edited_content") if dec.get("edited_content") is not None else op.content
+        if kind == DraftOpKind.PROMOTE and not str(content or "").strip():
+            content = sat_row["content"]              # the episode's own words stand as the core until retold
         if kind not in (DraftOpKind.ATTACH, DraftOpKind.AGE_OUT) and not str(content or "").strip():
             raise DraftError(f"operation {idx}: a {kind.value} needs content; give edited_content")
         sources = self._edited_sources(idx, op, dec.get("edited_source_short_ids"))
@@ -661,7 +719,8 @@ class DraftMixin:
                                  f"not a {kind.value}{' that keeps the wording' if kind == DraftOpKind.ATTACH else ''}")
             links = self._check_satellites(idx, dec["link_satellite_ids"], "link_satellite_ids")
         return {"kind": kind, "target_core_id": target, "target_op": target_op, "restated_content": restated,
-                "source_short_ids": sources, "also_target_core_ids": also, "link_satellite_ids": links}
+                "source_short_ids": sources, "also_target_core_ids": also, "link_satellite_ids": links,
+                "target_satellite_id": sat_id}
 
     def _check_satellites(self, i: int, ids: Any, field: str) -> list[str]:
         """A list of live satellite ids, or the reason it is not one."""
@@ -698,7 +757,7 @@ class DraftMixin:
         """Put the checked shape on the operation; what was drafted is kept
         in review_edits for the audit."""
         for field in ("kind", "target_core_id", "target_op", "restated_content", "source_short_ids",
-                      "also_target_core_ids"):
+                      "also_target_core_ids", "target_satellite_id"):
             was, now = getattr(op, field), final[field]
             if was != now:
                 op.review_edits[field] = was.value if isinstance(was, DraftOpKind) else was
@@ -754,6 +813,24 @@ class DraftMixin:
                         "these existing episodes sit closest to this core. If one is part of this story too, approve "
                         "with link_satellite_ids to hang it under this core as well; it keeps the cores it hangs on "
                         "now. Sitting close is not the same as belonging: name only the ones that do.")
+            if op.kind == DraftOpKind.PROMOTE and op.status == OpStatus.PENDING:
+                srow = self._long_row(op.target_satellite_id or "")
+                if srow is None:
+                    view["target_satellite"] = {"id": op.target_satellite_id, "gone": True}
+                else:
+                    from .collections import satellite_parents
+                    hit = self.hits.get(srow["id"]) or {}
+                    view["target_satellite"] = {"id": srow["id"], "content": srow["content"],
+                                                "cores": satellite_parents(srow["metadata"]),
+                                                "recall_hits": int(hit.get("n", 0) or 0), "last_hit": hit.get("last")}
+                    own = not str(op.content or "").strip() or str(op.content).strip() == (srow["content"] or "").strip()
+                    view["promote_check"] = (
+                        "approving makes this episode a core of its own: content becomes the new core's text, and the "
+                        "episode stays a satellite under the core it grew under AND under the new core (the link both "
+                        "ways; the old core loses nothing). "
+                        + ("content is the episode's own words: a core is the retelling, so deny with 'retell it', or on "
+                           "the last attempt approve with edited_content." if own else
+                           "Read the retelling against the episode: names, dates, numbers and quotes kept, nothing added."))
             if op.kind == DraftOpKind.AGE_OUT and op.status == OpStatus.PENDING:
                 gone = self._shorts_present(list(op.source_short_ids))
                 view["letting_go"] = [{"id": r["id"], "content": r["content"],
@@ -793,8 +870,8 @@ class DraftMixin:
                 view["redrafted_in"] = later or [{"draft_id": nxt.id, "attempt": nxt.attempt,
                                                   "withdrawn": "the redraft carried nothing for this operation"}]
             if (op.status == OpStatus.PENDING and op.kind != DraftOpKind.AGE_OUT
-                    and not (op.kind == DraftOpKind.RETELL and not op.source_short_ids)):
-                self._sources_check(op, earlier, view)       # a retell of a core cites nothing, by design
+                    and not (op.kind in (DraftOpKind.RETELL, DraftOpKind.PROMOTE) and not op.source_short_ids)):
+                self._sources_check(op, earlier, view)       # a retell or a promote cites no short-term, by design
             if op.status == OpStatus.PENDING and op.source_short_ids:
                 self._orbit_check(op, view)
         if d.terminal and d.status == DraftStatus.PENDING:
@@ -1000,6 +1077,9 @@ class DraftMixin:
                     "kind": "attach", "restated": bool(restated),
                     "evidence_count": meta["evidence_count"], "shorts_archived": archived}
 
+        if op.kind == DraftOpKind.PROMOTE:
+            return self._apply_promote(d, op, content, base_extra, inherited)
+
         if op.kind == DraftOpKind.SUPERSEDE:
             old = self._long_row(op.target_core_id)
             if old is None:
@@ -1053,6 +1133,39 @@ class DraftMixin:
                     "shorts_archived": archived}
 
         raise DraftError(f"unknown operation kind {op.kind!r}")
+
+    def _apply_promote(self, d: Draft, op: DraftOperation, content: str, base_extra: dict[str, Any],
+                       inherited: Any) -> dict[str, Any]:
+        """Glitter strong enough becomes a core (the lifecycle design, 21 Oct 2026). The
+        satellite becomes a core of its own with `content` as its retelling;
+        the episode itself stays where it hung AND hangs under the new core
+        too (a shared satellite, the link both ways), so the old core loses
+        nothing and the new one starts with its first episode in place."""
+        from .collections import satellite_parents
+        sat = self._promote_row(op.index, op.target_satellite_id)
+        smeta = dict(sat["metadata"])
+        parents = satellite_parents(smeta)
+        hit = self.hits.get(sat["id"]) or {}
+        text = str(content or "").strip() or (sat["content"] or "")
+        core = LongTermEntry(content=text, topic=op.topic or smeta.get("topic"), kind="core",
+                             evidence_count=max(1, op.evidence_count), source=Source.CONSOLIDATOR,
+                             extra={**base_extra, "promoted_from_satellite": sat["id"], "grew_under": list(parents),
+                                    "recall_hits_at_promotion": int(hit.get("n", 0) or 0)})
+        pics = self.eidetic_in(smeta)
+        if pics:
+            core.extra["eidetic"] = self.merge_eidetic(pics, inherited or [])
+        elif inherited:
+            core.extra["eidetic"] = inherited
+        self.add_long(core)
+        # the episode hangs under the new core as well, and remembers what it became
+        self._set_parents(sat, [*parents, core.id], {"promote": core.id, "reason": "promoted to a core of its own"})
+        row = self._long_row(sat["id"])
+        if row is not None:
+            m = dict(row["metadata"])
+            m["promoted_to"] = core.id
+            self.long.update(ids=[sat["id"]], metadatas=[_clean_meta(m)])
+        return {"long_term_id": core.id, "kind": "core", "promoted_from": sat["id"], "grew_under": list(parents),
+                "satellite_ids": [sat["id"]], "shorts_archived": 0}
 
     def _keep_episodes(self, d: Draft, op: DraftOperation, core_id: str, core_text: str,
                        topic: Optional[str], also: Optional[list[str]] = None) -> list[str]:
@@ -1511,6 +1624,7 @@ class DraftMixin:
                           "hung_on": theirs, **({} if same else {"content": dup["content"]})}]
         self.long.update(ids=[into_id], metadatas=[_clean_meta(meta)])
         self.long.delete(ids=[dup_id])
+        self.hits.merge(dup_id, into_id)              # the recall counts add up on the one kept
         return {"id": dup_id, "into": into_id, "folded": True, "hangs_on": parents, "reason": why}
 
     # -- the map -----------------------------------------------------------------

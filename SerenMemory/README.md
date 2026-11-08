@@ -596,3 +596,28 @@ don't need the rest of Seren to use it. If you've got an LLM and you want it
 to remember things in a way that doesn't degrade into noise, this is for you.
 
 Rip it and win.
+
+## Promotion: glitter that gets strong enough becomes a core
+
+A satellite that keeps being the episode a core is found through is a core
+wearing a satellite's coat (the lifecycle design, 21 Oct 2026). Since 8 Nov 2026:
+
+- **The recall ledger.** Every `/search` counts, once, each satellite that was
+  the `matched_via` of a core in the final packet (`<persist_dir>/satellite_hits.json`,
+  `seren_memory/hits.py`). A purge forgets the count; a fold adds the two
+  counts together. An orbiting short is not counted here.
+- **`GET /long/hot-satellites?min_hits=3&limit=20`**: the satellites past the
+  bar, most recalled first, with their cores and counts. A core's own earlier
+  wording, a kept episode, one already promoted and one flagged to forget are
+  left out.
+- **The `promote` operation** (`target_satellite_id`, optional `content` as the
+  new core's retelling; defaults to the episode's words, which the review view
+  flags): on approval the satellite becomes a core of its own and the episode
+  stays a satellite under the core it grew under AND under the new core (the
+  link both ways; the old core loses nothing). The new core carries
+  `promoted_from_satellite`, `grew_under` and `recall_hits_at_promotion`; the
+  satellite carries `promoted_to`. `link_satellite_ids` works on approval like
+  any new core. The hippocampus proposes one per hot satellite at sleep
+  (`sleep.promote_satellite_min_hits`), retold by its model when it can.
+- `/health` features: `promote`, `satellite_hits`.
+

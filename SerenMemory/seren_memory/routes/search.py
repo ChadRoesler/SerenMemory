@@ -161,6 +161,14 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
     # Merge + rank + trim.
     all_hits.sort(key=lambda h: h.score, reverse=True)
     top = all_hits[:req.n_results]
+    # The recall ledger (seren_memory.hits): a satellite that was the episode
+    # behind a core in the FINAL packet is counted once. A core found again
+    # and again through the same episode is how a promotion gets noticed.
+    try:
+        store.hits.bump({h.matched_via["id"] for h in top
+                         if h.matched_via and h.matched_via.get("tier") == "long" and h.matched_via.get("id")})
+    except Exception as e:  # noqa: BLE001 - a count never fails a search
+        log.warning("search: could not count satellite hits (%s: %s)", type(e).__name__, e)
     _attach_surroundings(store, top, inline=req.with_surroundings)
     return SearchResponse(
         query=req.query,
