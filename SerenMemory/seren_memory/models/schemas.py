@@ -297,7 +297,11 @@ class EideticCreate(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str
-    n_results: int = Field(default=5, ge=1, le=50)
+    # le was 50 until 24 Nov 2026. A reader that packs a PAGE (the Corpus
+    # Callosum's budget_tokens) wants candidates by the token, not by the row:
+    # a 4,000-token page asks for 250 and was handed 50. The default is
+    # unchanged, and a caller that knew the old ceiling still asks under it.
+    n_results: int = Field(default=5, ge=1, le=200)
     # Which tiers to search. Default all three.
     include_short: bool = True
     include_near: bool = True
@@ -310,6 +314,15 @@ class SearchRequest(BaseModel):
     # Bring a core hit's surroundings along inline: its most recent satellites
     # and the core it superseded. The counts ride on every core hit regardless.
     with_surroundings: bool = False
+    # How many satellites ride inline per core, and which. "recent" (the
+    # default, and what every Memory before 24 Nov 2026 did): the newest, with
+    # the episode the core was found through moved to the front. "match": the
+    # episodes that matched THIS question first, nearest first, each carrying
+    # its raw_distance, then the newest to fill. Any other word reads as
+    # "recent", so a caller from the future never gets a 422 for a mode this
+    # Memory has not learned.
+    surroundings_n: int = Field(default=3, ge=0, le=50)
+    surroundings_by: str = "recent"
 
 
 class SearchHit(BaseModel):
@@ -323,8 +336,10 @@ class SearchHit(BaseModel):
     # A core's surroundings, so a hit says there is a story behind it instead
     # of hiding it: {"satellites": n, "latest_satellite_at": ts|None,
     # "supersedes": id|None, "superseded_by": id|None} on every long-tier core,
-    # plus "recent": [{id, content, created_at}] (newest first, a few) and
-    # "supersedes_entry" when the search asked with_surroundings.
+    # plus "recent": [{id, content, created_at}] (newest first, a few; with
+    # surroundings_by "match", best match first and a raw_distance on every
+    # row, None where the episode did not match) and "supersedes_entry" when
+    # the search asked with_surroundings.
     surroundings: Optional[dict[str, Any]] = None
     # When a core is in the packet because one of its SATELLITES matched the
     # query (a core is as near as its nearest episode): that satellite - id,

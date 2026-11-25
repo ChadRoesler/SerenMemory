@@ -412,7 +412,13 @@ how many satellites stand behind it, when the latest landed, what it
 superseded and what superseded it; `with_surroundings: true` brings the most
 recent satellites and the superseded core along in full. Having the
 surroundings is one thing; a hit that does not say they exist is how they
-stay unread.
+stay unread. `surroundings_n` says how many satellites ride per core (3
+unasked), and `surroundings_by: match` hands over the episodes that matched
+the question, nearest first with a `raw_distance` on each row, then the
+newest to fill, where the default (`recent`) hands over the newest whatever
+was asked. Match order reads the rows the search already fetched: no second
+query, no second embedding. `/search` takes `n_results` up to 200 (50 until
+24 Nov 2026): a reader packing a page asks by the token, not by the row.
 
 Until 25 Sept 2026 these were called *dockets*. In Probe and the Corpus
 Callosum a docket is the briefing packet a search hands back, so here the

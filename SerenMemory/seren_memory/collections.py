@@ -615,11 +615,20 @@ class MemoryStore(DraftMixin):
         existing = col.get(ids=[entry_id], include=["metadatas"])
         if not existing.get("ids"):
             return False
-        meta = dict(existing["metadatas"][0]) if existing.get("metadatas") else {}
-        removals = [k for k, v in updates.items() if v is None]
+        before = dict(existing["metadatas"][0]) if existing.get("metadatas") else {}
+        meta = dict(before)
+        # A removal is only a removal when the key is THERE. Asking to drop a key the
+        # entry never had used to delete and re-add the entry all the same: every
+        # reorbit did that to every short-term with no orbit (nearly all of them), each
+        # one a read of the stored vector, which chroma cannot always give (24 Nov 2026:
+        # "Error creating hnsw segment reader: Nothing found on disk" took the route
+        # down), and each one the window in which a crash loses the entry.
+        removals = [k for k, v in updates.items() if v is None and k in meta]
         for k in removals:
             meta.pop(k, None)
         meta.update(_clean_meta(updates))
+        if meta == before:
+            return True                                  # nothing to write
         if removals:
             return self._replace_metadata(col, entry_id, meta)
         col.update(ids=[entry_id], metadatas=[meta])

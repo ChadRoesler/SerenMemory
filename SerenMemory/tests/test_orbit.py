@@ -176,6 +176,29 @@ def test_reorbit_marks_the_shorts_written_before_the_cores(client):
     assert _short_row(client, near)["metadata"]["orbit"] == [core]
 
 
+def test_reorbit_leaves_a_short_with_no_orbit_alone(client, monkeypatch):
+    """A short that orbits nothing has no orbit to clear. Clearing it anyway deleted and
+    re-added the entry: a read of its stored vector, which chroma cannot always give
+    ("Error creating hnsw segment reader: Nothing found on disk" took /short/reorbit down
+    on 24 Nov 2026), and a window in which a crash loses the memory. Every reorbit did it
+    to nearly every short."""
+    store = client.app.state.store
+    core = _core(client, CORE)
+    far = _short(client, FAR, topic="errands")
+    near = _short(client, NEAR)
+    before = _short_row(client, far)
+    rewrites = []
+    real = store._replace_metadata
+    monkeypatch.setattr(store, "_replace_metadata", lambda col, eid, meta: rewrites.append(eid) or real(col, eid, meta))
+    assert client.post("/short/reorbit").json() == {"ok": True, "shorts": 2, "orbiting": 1}
+    assert rewrites == [], "nothing was removed from anyone, so nobody was deleted and re-added"
+    assert _short_row(client, far) == before
+    assert _short_row(client, near)["metadata"]["orbit"] == [core]
+    # and a removal that IS one still goes through: the orbit comes off when its core is gone
+    assert store.update_short_metadata(near, {"orbit": None, "orbit_distances": None}) is True
+    assert rewrites == [near] and "orbit" not in _short_row(client, near)["metadata"]
+
+
 def test_strength_settles_a_tie_and_never_crosses_a_gap(client, monkeypatch):
     """ranking.STRENGTH: a core with episodes and orbiting shorts behind it
     gains a capped nudge; off by default."""

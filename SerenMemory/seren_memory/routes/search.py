@@ -75,6 +75,13 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
     searched: list[str] = []
     all_hits: list[SearchHit] = []
     via: dict[str, dict] = {}                  # core id -> the nearest satellite of it that matched
+    # core id -> every satellite of it the vector search returned, by id, with
+    # its distance. Kept only when the caller wants a core's surroundings in
+    # MATCH order: the rows are already here (the search fetched them and used
+    # to keep one per core), so ordering by them costs no second query and no
+    # second embedding of the question.
+    by_match = req.with_surroundings and req.surroundings_by == "match"
+    near: dict[str, dict[str, dict]] = {}
 
     # Over-fetch from each tier (n_results * 2) so the merge has enough
     # candidates to rank meaningfully, then trim to n_results at the end.
@@ -110,6 +117,14 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
 
             # Long-term filtering: satellites are the surroundings, not the
             # answer, and superseded cores are history - both off unless asked.
+            if by_match and tier == "long" and meta.get("kind") == "satellite":
+                # History included: it never LIFTS a core (below), but once the
+                # core is in the packet its trail is surroundings like any
+                # other, as it already is in "recent" order.
+                for cid in satellite_parents(meta):
+                    near.setdefault(cid, {})[hit["id"]] = {
+                        "id": hit["id"], "content": hit["content"], "created_at": meta.get("created_at"),
+                        "raw_distance": round(hit["distance"], 6)}
             if tier == "long" and not req.include_satellites and meta.get("kind") == "satellite":
                 if _broken_pull(meta):                      # history hangs on the core and never lifts it
                     continue
@@ -169,7 +184,8 @@ async def search(request: Request, req: SearchRequest = Body(...)) -> SearchResp
                          if h.matched_via and h.matched_via.get("tier") == "long" and h.matched_via.get("id")})
     except Exception as e:  # noqa: BLE001 - a count never fails a search
         log.warning("search: could not count satellite hits (%s: %s)", type(e).__name__, e)
-    _attach_surroundings(store, top, inline=req.with_surroundings)
+    _attach_surroundings(store, top, inline=req.with_surroundings, recent=req.surroundings_n,
+                         near=near if by_match else None)
     return SearchResponse(
         query=req.query,
         hits=top,
@@ -230,12 +246,45 @@ def _lift_cores_by_satellite(store, all_hits: list[SearchHit], via: dict[str, di
             id=cid, metadata=meta, matched_via=sat))
 
 
-def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: int = 3) -> None:
+def _by_match(mine: list[tuple[float, str, str]], matched: dict[str, dict], via: Optional[dict],
+              n: int) -> list[dict]:
+    """A core's satellites in MATCH order, at most n: the episode it was found
+    through, the others that matched nearest first, then the newest. Every row
+    says its raw_distance (None where the episode did not match). `mine` is
+    every satellite of the core, newest first."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def add(row: dict) -> None:
+        if row.get("id") and row["id"] not in seen and len(out) < n:
+            seen.add(row["id"])
+            out.append(row)
+
+    if via and via.get("id"):
+        add({"id": via["id"], "content": via.get("content"), "created_at": via.get("created_at"),
+             "raw_distance": via.get("raw_distance")})
+    when = {i: ts for ts, i, _ in mine}           # one created_at per episode, whichever way it is listed
+    for m in sorted(matched.values(), key=lambda m: (m["raw_distance"], m["id"])):
+        add({**m, "created_at": when.get(m["id"], m.get("created_at"))})
+    for ts, i, doc in mine:
+        add({"id": i, "content": doc, "created_at": ts, "raw_distance": None})
+    return out
+
+
+def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: int = 3,
+                         near: Optional[dict[str, dict[str, dict]]] = None) -> None:
     """Give every long-tier CORE hit its surroundings: how many satellites
     stand behind it and when the latest landed, what it superseded, what
     superseded it. With inline=True the most recent satellites and the
     superseded core ride along in full. Having the surroundings is one thing;
-    a hit that does not say they exist is how they stay unread."""
+    a hit that does not say they exist is how they stay unread.
+
+    `recent` is how many satellites ride per core. `near` (a core's satellites
+    that matched the question, by id, with their distances) switches the order
+    from newest-first to MATCH (see _by_match). Newest-first handed a question
+    about one episode the three latest ones: on the Vellmarch ladder (24 Nov
+    2026) detail questions scored the same on a 1,000- and a 4,000-token page,
+    because a bigger page never brought a different episode."""
     cores = [h for h in hits if h.tier == "long" and h.metadata.get("kind", "core") != "satellite"]
     if not cores:
         return
@@ -258,12 +307,17 @@ def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: 
             "superseded_by": h.metadata.get("superseded_by"),
         }
         if inline:
-            out["recent"] = [{"id": i, "content": doc, "created_at": ts} for ts, i, doc in mine[:recent]]
-            if h.matched_via:
-                # the episode that found this core rides first: it is the reason the hit is here
-                rest = [r for r in out["recent"] if r["id"] != h.matched_via.get("id")]
-                out["recent"] = [{"id": h.matched_via["id"], "content": h.matched_via.get("content"),
-                                  "created_at": h.matched_via.get("created_at")}] + rest[: max(0, recent - 1)]
+            if recent <= 0:
+                out["recent"] = []
+            elif near is not None:
+                out["recent"] = _by_match(mine, near.get(h.id) or {}, h.matched_via, recent)
+            else:
+                out["recent"] = [{"id": i, "content": doc, "created_at": ts} for ts, i, doc in mine[:recent]]
+                if h.matched_via:
+                    # the episode that found this core rides first: it is the reason the hit is here
+                    rest = [r for r in out["recent"] if r["id"] != h.matched_via.get("id")]
+                    out["recent"] = [{"id": h.matched_via["id"], "content": h.matched_via.get("content"),
+                                      "created_at": h.matched_via.get("created_at")}] + rest[: max(0, recent - 1)]
             if sup and sup in by_id:
                 out["supersedes_entry"] = {"id": sup, "content": by_id[sup][0],
                                            "created_at": by_id[sup][1].get("created_at")}
