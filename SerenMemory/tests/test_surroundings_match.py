@@ -131,3 +131,26 @@ def test_a_mode_or_a_field_this_memory_does_not_know_is_not_an_error(client, cam
 def test_a_page_may_ask_for_two_hundred_rows_and_no_more(client, campaign):
     assert client.post("/search", json={"query": "q", "n_results": 200}).status_code == 200
     assert client.post("/search", json={"query": "q", "n_results": 201}).status_code == 422
+
+
+def test_an_episode_on_two_cores_says_which_other_core(client):
+    # Chad, 25 Nov 2026: "sats that hang on two core bring their other core id".
+    # An id, not content: it costs next to nothing, and it is a second look for whoever wants one.
+    a = _core(client, "The user's tabletop campaign stories.")
+    b = _core(client, "The friends the user played board games with at an old job.")
+    did = client.post("/drafts", json={"operations": [{"kind": "attach", "content": FEET, "topic": "t", "target_core_id": a}]}).json()["id"]
+    r = client.post(f"/drafts/{did}/review", json={"decisions": [
+        {"op": 0, "verdict": "approve", "restate": False, "edited_also_core_ids": [b]}]}).json()
+    shared = r["results"][0]["satellite_id"]
+    alone = _attach(client, a, SMELL)
+    hits = {h["id"]: h for h in _search(client, "tabletop campaign stories and the friends from the old job",
+                                        with_surroundings=True, surroundings_n=5)}
+    under_a = {x["id"]: x for x in hits[a]["surroundings"]["recent"]}
+    assert under_a[shared]["also_core_ids"] == [b], "listed under one core, it names the other"
+    assert "also_core_ids" not in under_a[alone], "an episode with one home carries no such key"
+    under_b = {x["id"]: x for x in hits[b]["surroundings"]["recent"]}
+    assert under_b[shared]["also_core_ids"] == [a], "and the other way round"
+    by_match = {h["id"]: h for h in _search(client, "all four survivors bit the stone feet",
+                                            with_surroundings=True, surroundings_by="match", surroundings_n=5)}
+    row = next(x for x in by_match[a]["surroundings"]["recent"] if x["id"] == shared)
+    assert row["also_core_ids"] == [b] and row["raw_distance"] is not None, "in match order too"

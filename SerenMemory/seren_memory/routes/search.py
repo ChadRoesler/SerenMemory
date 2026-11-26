@@ -294,8 +294,12 @@ def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: 
     metas = rows.get("metadatas") or []
     by_id = {i: (docs[k] if k < len(docs) else "", metas[k] or {}) for k, i in enumerate(ids)}
     sats: dict[str, list[tuple[float, str, str]]] = {}
+    parents: dict[str, list[str]] = {}          # satellite id -> every core it hangs on
     for i, (doc, meta) in by_id.items():
-        for cid in satellite_parents(meta):
+        on = satellite_parents(meta)
+        if on:
+            parents[i] = on
+        for cid in on:
             sats.setdefault(cid, []).append((float(meta.get("created_at", 0) or 0), i, doc))
     for h in cores:
         mine = sorted(sats.get(h.id, []), reverse=True)
@@ -318,6 +322,15 @@ def _attach_surroundings(store, hits: list[SearchHit], *, inline: bool, recent: 
                     rest = [r for r in out["recent"] if r["id"] != h.matched_via.get("id")]
                     out["recent"] = [{"id": h.matched_via["id"], "content": h.matched_via.get("content"),
                                       "created_at": h.matched_via.get("created_at")}] + rest[: max(0, recent - 1)]
+            # An episode that hangs on other cores too says which (Chad, 25 Nov
+            # 2026: "sats that hang on two core bring their other core id").
+            # Ids, not content: a pointer costs next to nothing to carry, and
+            # get_satellites on one of them is the second look for whoever
+            # wants it. Absent when this core is the episode's only home.
+            for r in out["recent"]:
+                others = [c for c in parents.get(r.get("id"), []) if c != h.id]
+                if others:
+                    r["also_core_ids"] = others
             if sup and sup in by_id:
                 out["supersedes_entry"] = {"id": sup, "content": by_id[sup][0],
                                            "created_at": by_id[sup][1].get("created_at")}
