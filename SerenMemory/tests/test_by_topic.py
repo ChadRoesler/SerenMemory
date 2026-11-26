@@ -150,3 +150,42 @@ def test_hit_fields_present(client):
     for field in ("tier", "content", "topic", "matched_topics", "overlap", "id", "metadata"):
         assert field in h, f"missing field: {field}"
     assert h["overlap"] == 2 and sorted(h["matched_topics"]) == ["cft", "iam"]
+
+
+# -- with a question (26 Nov 2026): the tags decide who is in, the question orders them --------
+def test_with_a_question_the_nearest_tagged_entry_leads_whatever_its_tier(client):
+    # A match is usually on ONE tag, so everything tied and the date decided alone:
+    # short-term, always the newest, won every time. Memory is three stores with one
+    # embedder, so inside it a distance is a fair ruler.
+    store = client.app.state.store
+    core = LongTermEntry(content="the licence moved from GPL to AGPL so nobody can resell the gift", topic="license, history")
+    store.add_long(core)
+    noise = _add_short(client, "restarted the build box after lunch", "license")
+    plain = _by_topic(client, ["license"])
+    assert _ids(plain)[:2] == [noise, core.id], "without a question: newest first, as it always was"
+    assert all(h["raw_distance"] is None for h in plain["hits"])
+    asked = _by_topic(client, ["license"], query="why did the licence move from GPL to AGPL")
+    assert _ids(asked)[:2] == [core.id, noise], "with one: the settled core that is about it leads this week's stray note"
+    d = {h["id"]: h["raw_distance"] for h in asked["hits"]}
+    assert d[core.id] is not None and d[core.id] < d[noise]
+    assert {h["id"]: h["matched_topics"] for h in asked["hits"]} == {core.id: ["license"], noise: ["license"]}, \
+        "who is in is still the tags' business"
+
+
+def test_a_tie_goes_to_short_then_long(client):
+    store = client.app.state.store
+    core = LongTermEntry(content="the same words in both places", topic="tie")
+    store.add_long(core)
+    short = _add_short(client, "the same words in both places", "tie")
+    assert _ids(_by_topic(client, ["tie"], query="the same words")) == [short, core.id]
+    short2 = _add_short(client, "another pair with the same words", "tie2")
+    core2 = LongTermEntry(content="another pair with the same words", topic="tie2")
+    store.add_long(core2)
+    assert _ids(_by_topic(client, ["tie2"])) == [core2.id, short2], "no question: the newer one, here the core"
+    assert _ids(_by_topic(client, ["tie2"], query="another pair")) == [short2, core2.id], "a question and a tie: short before long"
+
+
+def test_more_shared_tags_still_lead_a_nearer_entry(client):
+    two = _add_short(client, "nothing to do with the question at all", "alpha, beta")
+    near = _add_short(client, "why the licence moved", "alpha")
+    assert _ids(_by_topic(client, ["alpha", "beta"], query="why the licence moved")) == [two, near]

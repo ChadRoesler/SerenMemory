@@ -1031,7 +1031,8 @@ class MemoryStore(DraftMixin):
                        include_short: bool = True, include_near: bool = True,
                        include_long: bool = True, include_superseded: bool = False,
                        include_satellites: bool = False,
-                       exclude_ids: Optional[list[str]] = None) -> list[dict[str, Any]]:
+                       exclude_ids: Optional[list[str]] = None,
+                       query: Optional[str] = None) -> list[dict[str, Any]]:
         """Retrieve entries TAGGED with any of `topics`, by exact tag match -
         the ASSOCIATION edge, not vector similarity. The read-side use of the
         topic tags the consolidator already clusters on: it surfaces an entry
@@ -1057,6 +1058,22 @@ class MemoryStore(DraftMixin):
         exclude_ids drops entries the caller already has, so an edge join after
         a vector search returns only genuinely NEW context, not duplicates.
         Tier/superseded/completed filtering mirrors /search exactly.
+
+        WITH A QUESTION (`query`, 26 Nov 2026) the tie is broken by how near
+        each tagged entry sits to it, and only then by tier and date. A match
+        is usually on ONE tag, so nearly everything tied, the date decided
+        alone, and short-term, always the newest, won every time: a fact asked
+        for the story behind it and got this week's notes that happened to
+        carry the tag. The tags still decide WHO is in (this stays an
+        association, never a vector search); the question only orders them.
+        The three tiers share one embedder and one unit, so their distances
+        are fair to set side by side here, as two stores' never are. Chad:
+        "memory is 3 vdbs in a trench coat. all using the same style, this is
+        where i think a distance or weighting or something would be a thing,
+        and a tie breaker is the db its from, short, near, long". Each row
+        then carries raw_distance (cosine, as /search reports it), and rows
+        within a hundredth of each other count as tied. Without a question it
+        is what it was: most shared tags, then newest.
         """
         wanted = {t.strip().lower() for t in topics if t and t.strip()}
         if not wanted:
@@ -1102,7 +1119,54 @@ class MemoryStore(DraftMixin):
             return float(m.get("ts") or m.get("created_at")
                          or m.get("last_confirmed") or 0)
 
-        out.sort(key=lambda r: (r["overlap"], _recency(r)), reverse=True)
+        if not (query and query.strip() and out):
+            out.sort(key=lambda r: (r["overlap"], _recency(r)), reverse=True)
+            return out[:n]
+
+        # Each tagged entry's distance to the question. The stored vector when
+        # it can be read; the entry re-embedded when it cannot (an index not on
+        # disk yet, the same case _query_brute meets). One embedding function
+        # serves all three tiers.
+        ef = self.short._embedding_function
+        try:
+            q_vec = [float(x) for x in ef([query])[0]]
+        except Exception:  # noqa: BLE001 - no embedder, no question: the old order
+            out.sort(key=lambda r: (r["overlap"], _recency(r)), reverse=True)
+            return out[:n]
+
+        def _cosine_dist(a, b) -> float:
+            dot = sum(float(x) * float(y) for x, y in zip(a, b))
+            na = math.sqrt(sum(float(x) * float(x) for x in a))
+            nb = math.sqrt(sum(float(y) * float(y) for y in b))
+            return 1.0 if na == 0.0 or nb == 0.0 else 1.0 - dot / (na * nb)
+
+        for tier, col in tiers:
+            mine = [r for r in out if r["tier"] == tier]
+            if not mine:
+                continue
+            vecs: dict[str, Any] = {}
+            try:
+                got = col.get(ids=[r["id"] for r in mine], include=["embeddings"])
+                embs = got.get("embeddings")
+                if embs is not None:
+                    vecs = {i: e for i, e in zip(got.get("ids") or [], embs) if e is not None}
+            except Exception:  # noqa: BLE001 - the index is not on disk yet
+                vecs = {}
+            lost = [r for r in mine if r["id"] not in vecs]
+            if lost:
+                try:
+                    again = ef([_retrieval_text(r["content"] or "", r["metadata"].get("topic")) for r in lost])
+                    vecs.update({r["id"]: v for r, v in zip(lost, again)})
+                except Exception:  # noqa: BLE001
+                    pass
+            for r in mine:
+                v = vecs.get(r["id"])
+                r["raw_distance"] = round(_cosine_dist(q_vec, v), 6) if v is not None else None
+
+        rank = {"short": 0, "near": 1, "long": 2}
+        out.sort(key=lambda r: (-r["overlap"],
+                                round(r["raw_distance"], 2) if r.get("raw_distance") is not None else 9.0,
+                                rank.get(r["tier"], 3), -_recency(r)))
         return out[:n]
 
     def counts(self) -> dict[str, int]:

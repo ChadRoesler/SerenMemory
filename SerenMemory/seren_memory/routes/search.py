@@ -359,10 +359,11 @@ async def by_topic(request: Request,
         include_long=req.include_long, include_superseded=req.include_superseded,
         include_satellites=req.include_satellites,
         exclude_ids=req.exclude_ids,
+        query=req.query,
     )
     hits = [TopicHit(
         tier=r["tier"], content=r["content"], topic=r["metadata"].get("topic"),
-        matched_topics=r["matched_topics"], overlap=r["overlap"],
+        matched_topics=r["matched_topics"], overlap=r["overlap"], raw_distance=r.get("raw_distance"),
         id=r["id"], metadata=r["metadata"],
     ) for r in rows]
     return TopicSearchResponse(topics=req.topics, hits=hits, searched_tiers=searched)

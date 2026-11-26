@@ -373,6 +373,10 @@ class TopicSearchRequest(BaseModel):
     # Entry ids to omit - e.g. the vector hits a caller already has, so an edge
     # join after a /search returns only genuinely NEW context, not duplicates.
     exclude_ids: list[str] = Field(default_factory=list)
+    # The question being asked, when there is one: the tags still decide who is
+    # in, and the question orders them (nearest first, then tier, then date).
+    # Left out, the order is what it always was: most shared tags, then newest.
+    query: Optional[str] = None
 
 
 class TopicHit(BaseModel):
@@ -381,6 +385,7 @@ class TopicHit(BaseModel):
     topic: Optional[str]
     matched_topics: list[str]      # which requested tags this entry carries
     overlap: int                   # how many requested tags matched (association strength)
+    raw_distance: Optional[float] = None   # cosine distance to the question, when one was given
     id: str
     metadata: dict[str, Any]
 
